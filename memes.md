@@ -10,6 +10,6 @@ Q:能用Zed接入吗
 
 A:这你要问Zed-industries
 
-Q:有JetBrians插件吗
+Q:有JetBrains插件吗
 
 A:有的，迟早会做，不过这边建议用Logos Editor
