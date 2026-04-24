@@ -9,4 +9,4 @@
 
 冷知识：~~在塔卫二上打开会App unavailable~~ 因为在塔卫二没有服务器啊
 
-还有用Github Actions做竞品平台的滚动升级整的没问题吗（~~小声bb~~）
+还有用Github Actions做竞品平台的构建和部署真的没问题吗（~~小声bb~~）
