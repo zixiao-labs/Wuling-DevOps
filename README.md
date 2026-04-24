@@ -1,6 +1,6 @@
 # Wuling-DevOps
 
-武陵城DevOps（玩终末地的都懂）
+武陵DevOps（玩终末地的都懂）
 
 
 因为[前一个版本](https://github.com/zixiao-labs/yuxupalace-server)的话@HwlloChen回来就没办法维护了，再加上改名改到底，直接用Go和C++（Libgit2）重写🙃
