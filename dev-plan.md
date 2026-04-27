@@ -8,7 +8,7 @@ Repo，Issue，Merge Request，Pipelines（需要容器运行时），Wiki，Ins
 
 Project Setup（类似Azure DevOps的操作逻辑）
 
-Project Dashbaord（看板和Scrum并记录所有BackLog）
+Project Dashboard（看板和Scrum并记录所有BackLog）
 
 Repo Setup（类似GitHub操作逻辑）
 
@@ -22,7 +22,7 @@ Artifacts（Release，Docker Registry）
 
 Channels（是的，忘掉Discord和钉钉吧）
 
-Workspase（基于内置武陵容器运行时的远程开发容器，与[Logos](https://github.com/zixiao-labs/logos)深度集成，类似于Github Codespase，你的VS Code Server可以扔了）
+Workspace（基于内置武陵容器运行时的远程开发容器，与[Logos](https://github.com/zixiao-labs/logos)深度集成，类似于Github Codespase，你的VS Code Server可以扔了）
 
 Audio/Video Channels（是的，你没看错，我们连Zoom和腾讯会议的饭碗都抢，基于WebRTC）
 
@@ -38,12 +38,12 @@ MCP服务器和Skills可以和Github Copilot，Claude Code CLI，Cursor，Zed，
 
 内置AI自动Triage和Code Review（需要自行提供API Key，目前只支持OpenAI，Anthropic，DeepSeek的API）
 
-## Stage5 移动APP
+## Stage 5 移动APP
 
 React Native
 
 iOS，安卓发布（~~所以写成“武陵DevOps by 宏山科学院”真的能过App Store和Google Play审核吗~~）
 
-## Stage6 Apple Vision Pro适配
+## Stage 6 Apple Vision Pro适配
 
 SwiftUI（~~所以写成“武陵DevOps by 宏山科学院”真的能过App Store审核吗~~）
