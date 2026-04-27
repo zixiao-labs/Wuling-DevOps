@@ -22,7 +22,7 @@ Artifacts（Release，Docker Registry）
 
 Channels（是的，忘掉Discord和钉钉吧）
 
-Workspace（基于内置武陵容器运行时的远程开发容器，与[Logos](https://github.com/zixiao-labs/logos)深度集成，类似于Github Codespase，你的VS Code Server可以扔了）
+Workspace（基于内置武陵容器运行时的远程开发容器，与[Logos](https://github.com/zixiao-labs/logos)深度集成，类似于Github Codespace，你的VS Code Server可以扔了）
 
 Audio/Video Channels（是的，你没看错，我们连Zoom和腾讯会议的饭碗都抢，基于WebRTC）
 
