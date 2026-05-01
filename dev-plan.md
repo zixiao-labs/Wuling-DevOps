@@ -8,7 +8,7 @@ Repo，Issue，Merge Request，Pipelines（需要容器运行时），Wiki，Ins
 
 Project Setup（类似Azure DevOps的操作逻辑）
 
-Project Dashboard（看板和Scrum并记录所有BackLog）
+Project Dashboard（看板和Scrum并记录所有Backlog）
 
 Repo Setup（类似GitHub操作逻辑）
 
@@ -22,7 +22,7 @@ Artifacts（Release，Docker Registry）
 
 Channels（是的，忘掉Discord和钉钉吧）
 
-Workspace（基于内置武陵容器运行时的远程开发容器，与[Logos](https://github.com/zixiao-labs/logos)深度集成，类似于GitHub Codespace，你的VS Code Server可以扔了）
+Workspace（基于内置武陵容器运行时的远程开发容器，与[Logos](https://github.com/zixiao-labs/logos)深度集成，类似于 GitHub Codespaces，你的VS Code Server可以扔了）
 
 Audio/Video Channels（是的，你没看错，我们连Zoom和腾讯会议的饭碗都抢，基于WebRTC）
 
