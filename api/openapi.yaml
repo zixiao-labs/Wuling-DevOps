@@ -1,0 +1,664 @@
+openapi: 3.1.0
+info:
+  title: Wuling DevOps API
+  version: 0.1.0-stage1
+  description: |
+    Stage 1 of the Wuling DevOps platform.
+
+    What's implemented:
+      - Auth (register, login, /me, personal access tokens)
+      - Orgs and Projects (CRUD)
+      - Repositories (CRUD + libgit2-backed read APIs)
+      - Git smart HTTP (clone/fetch/push)
+
+    Planned for later stages (URLs reserved, not yet served):
+      - Issues, Merge Requests, Pipelines, Wiki, Insight
+
+    All errors use the JSON envelope:
+      { "error": { "code": "<stable_code>", "message": "<human msg>", "details": {} } }
+
+servers:
+  - url: http://localhost:8080
+    description: Local dev
+
+security:
+  - bearerAuth: []
+
+paths:
+  /healthz:
+    get:
+      summary: Liveness + DB health check
+      security: []
+      responses:
+        "200": { description: ok }
+        "503": { description: unavailable }
+
+  /version:
+    get:
+      summary: Version metadata
+      security: []
+      responses:
+        "200":
+          description: ok
+
+  # ---------------- auth ----------------
+
+  /api/v1/auth/register:
+    post:
+      summary: Create an account
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterRequest" }
+      responses:
+        "201":
+          description: account created (response includes a fresh JWT)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenResponse" }
+        "409": { $ref: "#/components/responses/ConflictError" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+
+  /api/v1/auth/login:
+    post:
+      summary: Exchange username/password for a JWT
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenResponse" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+
+  /api/v1/auth/me:
+    get:
+      summary: Return the authenticated user
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+
+  /api/v1/auth/tokens:
+    get:
+      summary: List the caller's personal access tokens
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tokens:
+                    type: array
+                    items: { $ref: "#/components/schemas/AccessTokenView" }
+    post:
+      summary: Create a new personal access token (raw value returned ONCE)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 64 }
+                scopes:
+                  type: array
+                  items: { type: string, enum: [repo:read, repo:write] }
+                expires_at: { type: string, format: date-time }
+      responses:
+        "201":
+          description: created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessTokenView" }
+
+  /api/v1/auth/tokens/{token_id}:
+    delete:
+      summary: Revoke a PAT
+      parameters:
+        - in: path
+          name: token_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: deleted }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  # ---------------- orgs ----------------
+
+  /api/v1/orgs:
+    get:
+      summary: List orgs the caller belongs to
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  orgs:
+                    type: array
+                    items: { $ref: "#/components/schemas/Org" }
+    post:
+      summary: Create a new (non-personal) org; caller becomes its owner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slug]
+              properties:
+                slug: { type: string, minLength: 2, maxLength: 64 }
+                display_name: { type: string, maxLength: 128 }
+                description: { type: string, maxLength: 512 }
+      responses:
+        "201":
+          description: created
+          content: { application/json: { schema: { $ref: "#/components/schemas/Org" } } }
+        "409": { $ref: "#/components/responses/ConflictError" }
+
+  /api/v1/orgs/{org_slug}:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+    get:
+      summary: Fetch an org by slug
+      responses:
+        "200":
+          description: ok
+          content: { application/json: { schema: { $ref: "#/components/schemas/Org" } } }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/orgs/{org_slug}/projects:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+    get:
+      summary: List projects in an org
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  projects:
+                    type: array
+                    items: { $ref: "#/components/schemas/Project" }
+    post:
+      summary: Create a project under an org
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slug]
+              properties:
+                slug: { type: string, minLength: 2, maxLength: 64 }
+                display_name: { type: string }
+                description: { type: string }
+                visibility: { type: string, enum: [private, internal, public] }
+      responses:
+        "201":
+          description: created
+          content: { application/json: { schema: { $ref: "#/components/schemas/Project" } } }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "409": { $ref: "#/components/responses/ConflictError" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+    get:
+      summary: Fetch a project by slug
+      responses:
+        "200":
+          description: ok
+          content: { application/json: { schema: { $ref: "#/components/schemas/Project" } } }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  # ---------------- repos ----------------
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/repos:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+    get:
+      summary: List repos in a project
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  repos:
+                    type: array
+                    items: { $ref: "#/components/schemas/Repo" }
+    post:
+      summary: Create a repo (initialises a bare repo on disk via libgit2)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slug]
+              properties:
+                slug: { type: string, minLength: 2, maxLength: 64 }
+                display_name: { type: string }
+                description: { type: string }
+                default_branch: { type: string, default: "main" }
+                visibility: { type: string, enum: [private, internal, public] }
+      responses:
+        "201":
+          description: created
+          content: { application/json: { schema: { $ref: "#/components/schemas/Repo" } } }
+        "409": { $ref: "#/components/responses/ConflictError" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/repos/{repo_slug}:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - $ref: "#/components/parameters/RepoSlug"
+    get:
+      summary: Fetch a repo by slug
+      responses:
+        "200":
+          description: ok
+          content: { application/json: { schema: { $ref: "#/components/schemas/Repo" } } }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/repos/{repo_slug}/refs:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - $ref: "#/components/parameters/RepoSlug"
+    get:
+      summary: List refs (branches + tags), backed by libgit2
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  refs:
+                    type: array
+                    items: { $ref: "#/components/schemas/Ref" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/repos/{repo_slug}/commits:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - $ref: "#/components/parameters/RepoSlug"
+      - in: query
+        name: ref
+        schema: { type: string }
+        description: Branch, tag, or commit oid; defaults to the default branch.
+      - in: query
+        name: limit
+        schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    get:
+      summary: List commits reachable from ref
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  commits:
+                    type: array
+                    items: { $ref: "#/components/schemas/Commit" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/repos/{repo_slug}/tree:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - $ref: "#/components/parameters/RepoSlug"
+      - in: query
+        name: ref
+        schema: { type: string }
+      - in: query
+        name: path
+        schema: { type: string }
+    get:
+      summary: List entries in a tree (defaults to repo root at default branch)
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  oid: { type: string }
+                  entries:
+                    type: array
+                    items: { $ref: "#/components/schemas/TreeEntry" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/repos/{repo_slug}/blob:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - $ref: "#/components/parameters/RepoSlug"
+      - in: query
+        name: oid
+        schema: { type: string }
+      - in: query
+        name: ref
+        schema: { type: string }
+      - in: query
+        name: path
+        schema: { type: string }
+    get:
+      summary: Read a blob; supply either oid or (ref, path)
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  oid: { type: string }
+                  size: { type: integer }
+                  is_binary: { type: boolean }
+                  encoding: { type: string, enum: [utf-8, base64] }
+                  content: { type: string }
+
+  # ---------------- Git smart HTTP ----------------
+
+  /{org}/{project}/{repo}.git/info/refs:
+    get:
+      summary: Git smart HTTP ref advertisement
+      security:
+        - basicAuth: []
+        - {} # public repos may be anonymous
+      parameters:
+        - in: path
+          name: org
+          required: true
+          schema: { type: string }
+        - in: path
+          name: project
+          required: true
+          schema: { type: string }
+        - in: path
+          name: repo
+          required: true
+          schema: { type: string }
+        - in: query
+          name: service
+          required: true
+          schema: { type: string, enum: [git-upload-pack, git-receive-pack] }
+      responses:
+        "200":
+          description: pkt-line ref advertisement
+          content:
+            application/x-git-upload-pack-advertisement: {}
+            application/x-git-receive-pack-advertisement: {}
+
+  /{org}/{project}/{repo}.git/git-upload-pack:
+    post:
+      summary: Git smart HTTP upload-pack (clone/fetch)
+      security:
+        - basicAuth: []
+        - {}
+      parameters:
+        - in: path
+          name: org
+          required: true
+          schema: { type: string }
+        - in: path
+          name: project
+          required: true
+          schema: { type: string }
+        - in: path
+          name: repo
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/x-git-upload-pack-request: {}
+      responses:
+        "200":
+          description: packfile stream
+
+  /{org}/{project}/{repo}.git/git-receive-pack:
+    post:
+      summary: Git smart HTTP receive-pack (push)
+      security:
+        - basicAuth: []
+      parameters:
+        - in: path
+          name: org
+          required: true
+          schema: { type: string }
+        - in: path
+          name: project
+          required: true
+          schema: { type: string }
+        - in: path
+          name: repo
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/x-git-receive-pack-request: {}
+      responses:
+        "200":
+          description: report-status stream
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    basicAuth:
+      type: http
+      scheme: basic
+      description: |
+        Used by Git CLI only. The "password" is either a personal access token
+        (preferred — recognised by the `wlpat_` prefix) or the user's account
+        password.
+
+  parameters:
+    OrgSlug:
+      in: path
+      name: org_slug
+      required: true
+      schema: { type: string }
+    ProjectSlug:
+      in: path
+      name: project_slug
+      required: true
+      schema: { type: string }
+    RepoSlug:
+      in: path
+      name: repo_slug
+      required: true
+      schema: { type: string }
+
+  responses:
+    UnauthorizedError:
+      description: missing or invalid credentials
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    ForbiddenError:
+      description: caller lacks permission
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    NotFoundError:
+      description: resource not found
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    ConflictError:
+      description: resource already exists
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    ValidationError:
+      description: request validation failed
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - validation
+                - unauthorized
+                - forbidden
+                - not_found
+                - conflict
+                - already_exists
+                - rate_limited
+                - unsupported
+                - bad_request
+                - internal
+                - unavailable
+            message: { type: string }
+            details: { type: object, additionalProperties: true }
+
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        email: { type: string }
+        display_name: { type: string }
+        is_admin: { type: boolean }
+        is_active: { type: boolean }
+        created_at: { type: string, format: date-time }
+
+    RegisterRequest:
+      type: object
+      required: [username, email, password]
+      properties:
+        username: { type: string, minLength: 2, maxLength: 64 }
+        email:    { type: string, format: email }
+        password: { type: string, minLength: 8, maxLength: 256 }
+        display_name: { type: string, maxLength: 128 }
+
+    LoginRequest:
+      type: object
+      required: [login, password]
+      properties:
+        login:    { type: string, description: "username or email" }
+        password: { type: string }
+
+    TokenResponse:
+      type: object
+      properties:
+        access_token: { type: string }
+        token_type:   { type: string, example: Bearer }
+        expires_at:   { type: string, format: date-time }
+        user:         { $ref: "#/components/schemas/User" }
+
+    AccessTokenView:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        scopes:
+          type: array
+          items: { type: string }
+        expires_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        token:
+          type: string
+          description: Raw token value, returned only on creation.
+
+    Org:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        display_name: { type: string }
+        description: { type: string }
+        is_personal: { type: boolean }
+        created_at: { type: string, format: date-time }
+
+    Project:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        org_id: { type: string, format: uuid }
+        slug: { type: string }
+        display_name: { type: string }
+        description: { type: string }
+        visibility: { type: string, enum: [private, internal, public] }
+        created_at: { type: string, format: date-time }
+
+    Repo:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        slug: { type: string }
+        display_name: { type: string }
+        description: { type: string }
+        default_branch: { type: string }
+        visibility: { type: string, enum: [private, internal, public] }
+        is_empty: { type: boolean }
+        size_bytes: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+
+    Ref:
+      type: object
+      properties:
+        name: { type: string }
+        oid:  { type: string }
+        is_branch: { type: boolean }
+        is_tag: { type: boolean }
+
+    TreeEntry:
+      type: object
+      properties:
+        name: { type: string }
+        oid:  { type: string }
+        filemode: { type: integer }
+        kind: { type: string, enum: [blob, tree, submodule, tag, other] }
+
+    Signature:
+      type: object
+      properties:
+        name: { type: string }
+        email: { type: string }
+        when: { type: string, format: date-time }
+
+    Commit:
+      type: object
+      properties:
+        oid: { type: string }
+        tree_oid: { type: string }
+        author: { $ref: "#/components/schemas/Signature" }
+        committer: { $ref: "#/components/schemas/Signature" }
+        message: { type: string }
+        parents:
+          type: array
+          items: { type: string }

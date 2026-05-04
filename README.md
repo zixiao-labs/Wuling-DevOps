@@ -12,3 +12,5 @@
 
 还有用Github Actions做竞品平台的构建和部署真的没问题吗（~~小声bb~~）
 
+还有Zed集成终于回来了（只不过是Fork，出门右拐[Kal'tsit·Esperanta](https://github.com/zixiao-labs/Esperanta)）
+
