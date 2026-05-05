@@ -65,3 +65,51 @@ type AccessTokenView struct {
 	// Token is non-empty only on the create response.
 	Token string `json:"token,omitempty"`
 }
+
+// Label is the public shape of a project-scoped issue label.
+type Label struct {
+	ID          uuid.UUID `json:"id"`
+	ProjectID   uuid.UUID `json:"project_id"`
+	Name        string    `json:"name"`
+	Color       string    `json:"color"`
+	Description string    `json:"description"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// UserRef is a thin reference to a user, used inside issue/comment payloads
+// so the API can return author/assignee identity without a second round-trip.
+// Email is intentionally omitted from this shape.
+type UserRef struct {
+	ID          uuid.UUID `json:"id"`
+	Username    string    `json:"username"`
+	DisplayName string    `json:"display_name"`
+}
+
+// Issue is the public shape of an issue. Labels and assignees are eagerly
+// embedded so the most common views don't need follow-up calls.
+type Issue struct {
+	ID         uuid.UUID  `json:"id"`
+	ProjectID  uuid.UUID  `json:"project_id"`
+	Number     int64      `json:"number"`
+	Title      string     `json:"title"`
+	Body       string     `json:"body"`
+	State      string     `json:"state"`
+	Author     *UserRef   `json:"author,omitempty"`
+	ClosedAt   *time.Time `json:"closed_at,omitempty"`
+	ClosedBy   *UserRef   `json:"closed_by,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+	Labels     []Label    `json:"labels"`
+	Assignees  []UserRef  `json:"assignees"`
+	CommentCnt int64      `json:"comment_count"`
+}
+
+// IssueComment is the public shape of a comment on an issue.
+type IssueComment struct {
+	ID        uuid.UUID `json:"id"`
+	IssueID   uuid.UUID `json:"issue_id"`
+	Author    *UserRef  `json:"author,omitempty"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}

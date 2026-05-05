@@ -10,9 +10,10 @@ info:
       - Orgs and Projects (CRUD)
       - Repositories (CRUD + libgit2-backed read APIs)
       - Git smart HTTP (clone/fetch/push)
+      - Issues (CRUD, labels, comments, assignees)
 
     Planned for later stages (URLs reserved, not yet served):
-      - Issues, Merge Requests, Pipelines, Wiki, Insight
+      - Merge Requests, Pipelines, Wiki, Insight
 
     All errors use the JSON envelope:
       { "error": { "code": "<stable_code>", "message": "<human msg>", "details": {} } }
@@ -407,6 +408,198 @@ paths:
         "401": { $ref: "#/components/responses/UnauthorizedError" }
         "404": { $ref: "#/components/responses/NotFoundError" }
 
+  # ---------------- issues ----------------
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/issues:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+    get:
+      summary: List issues in a project
+      parameters:
+        - in: query
+          name: state
+          schema: { type: string, enum: [open, closed] }
+        - in: query
+          name: label
+          schema: { type: string }
+          description: Filter by label name (case-insensitive).
+        - in: query
+          name: assignee
+          schema: { type: string }
+          description: User UUID or username.
+        - in: query
+          name: author
+          schema: { type: string }
+          description: User UUID or username.
+        - in: query
+          name: search
+          schema: { type: string }
+          description: Substring match against title and body (case-insensitive).
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  issues:
+                    type: array
+                    items: { $ref: "#/components/schemas/Issue" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+    post:
+      summary: Create an issue
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateIssueRequest" }
+      responses:
+        "201":
+          description: created
+          content: { application/json: { schema: { $ref: "#/components/schemas/Issue" } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/issues/{number}:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - $ref: "#/components/parameters/IssueNumber"
+    get:
+      summary: Get an issue by its per-project number
+      responses:
+        "200":
+          description: ok
+          content: { application/json: { schema: { $ref: "#/components/schemas/Issue" } } }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+    patch:
+      summary: Edit an issue (author or org owner/admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatchIssueRequest" }
+      responses:
+        "200":
+          description: ok
+          content: { application/json: { schema: { $ref: "#/components/schemas/Issue" } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+    delete:
+      summary: Delete an issue (org owner/admin only)
+      responses:
+        "204": { description: deleted }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/issues/{number}/comments:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - $ref: "#/components/parameters/IssueNumber"
+    get:
+      summary: List comments on an issue
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  comments:
+                    type: array
+                    items: { $ref: "#/components/schemas/IssueComment" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+    post:
+      summary: Post a comment on an issue
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string, minLength: 1, maxLength: 65536 }
+      responses:
+        "201":
+          description: created
+          content: { application/json: { schema: { $ref: "#/components/schemas/IssueComment" } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/labels:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+    get:
+      summary: List labels in a project
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  labels:
+                    type: array
+                    items: { $ref: "#/components/schemas/Label" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+    post:
+      summary: Create a label (org owner/admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 64 }
+                color:
+                  type: string
+                  description: 6-character hex (with or without leading "#"). Defaults to 888888.
+                description: { type: string, maxLength: 256 }
+      responses:
+        "201":
+          description: created
+          content: { application/json: { schema: { $ref: "#/components/schemas/Label" } } }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/labels/{label_id}:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - in: path
+        name: label_id
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      summary: Delete a label (org owner/admin only)
+      responses:
+        "204": { description: deleted }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
   # ---------------- Git smart HTTP ----------------
 
   /{org}/{project}/{repo}.git/info/refs:
@@ -531,6 +724,12 @@ components:
       name: repo_slug
       required: true
       schema: { type: string }
+    IssueNumber:
+      in: path
+      name: number
+      required: true
+      schema: { type: integer, format: int64, minimum: 1 }
+      description: Per-project monotonically increasing issue number (e.g. 1, 2, 3 ...).
 
   responses:
     UnauthorizedError:
@@ -693,3 +892,88 @@ components:
         parents:
           type: array
           items: { type: string }
+
+    UserRef:
+      type: object
+      description: Lightweight user reference embedded in issue/comment payloads.
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        display_name: { type: string }
+
+    Label:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        name: { type: string }
+        color:
+          type: string
+          description: 6-character hex (no leading "#").
+        description: { type: string }
+        created_at: { type: string, format: date-time }
+
+    IssueState:
+      type: string
+      enum: [open, closed]
+
+    Issue:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        number: { type: integer, format: int64 }
+        title: { type: string }
+        body: { type: string }
+        state: { $ref: "#/components/schemas/IssueState" }
+        author: { $ref: "#/components/schemas/UserRef" }
+        closed_at: { type: string, format: date-time, nullable: true }
+        closed_by: { $ref: "#/components/schemas/UserRef", nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        labels:
+          type: array
+          items: { $ref: "#/components/schemas/Label" }
+        assignees:
+          type: array
+          items: { $ref: "#/components/schemas/UserRef" }
+        comment_count: { type: integer, format: int64 }
+
+    CreateIssueRequest:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 256 }
+        body: { type: string, maxLength: 65536 }
+        labels:
+          type: array
+          items: { type: string, format: uuid }
+        assignees:
+          type: array
+          items: { type: string, format: uuid }
+
+    PatchIssueRequest:
+      type: object
+      description: |
+        Patch an issue. Omitted fields are left untouched; arrays (labels,
+        assignees) are replaced wholesale when present (use [] to clear).
+      properties:
+        title: { type: string, minLength: 1, maxLength: 256 }
+        body: { type: string, maxLength: 65536 }
+        state: { $ref: "#/components/schemas/IssueState" }
+        labels:
+          type: array
+          items: { type: string, format: uuid }
+        assignees:
+          type: array
+          items: { type: string, format: uuid }
+
+    IssueComment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        issue_id: { type: string, format: uuid }
+        author: { $ref: "#/components/schemas/UserRef" }
+        body: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
