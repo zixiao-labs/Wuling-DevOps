@@ -29,6 +29,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -50,9 +51,21 @@ type Handler struct {
 	PWReslv  auth.PasswordResolver
 	PATReslv auth.PATResolver
 
+	// Logger is used for non-fatal post-RPC bookkeeping (e.g. failure to
+	// mark a repo non-empty after a successful push). May be nil; callers
+	// fall through to slog.Default in that case via logger().
+	Logger *slog.Logger
+
 	// GitBinary lets ops override the path (e.g. for a vendored git). Empty =
 	// look up "git" on PATH.
 	GitBinary string
+}
+
+func (h *Handler) logger() *slog.Logger {
+	if h.Logger != nil {
+		return h.Logger
+	}
+	return slog.Default()
 }
 
 // Mount registers the smart-HTTP routes. Path style is GitHub-compatible:
@@ -273,7 +286,14 @@ func (h *Handler) servicePack(w http.ResponseWriter, r *http.Request, sub string
 
 	// On a successful push, mark the repo non-empty.
 	if needWrite {
-		_ = h.Store.MarkRepoNotEmpty(r.Context(), ar.Repo.ID)
+		// Best-effort: a failure here doesn't break the push (the pack is
+		// already on disk and the response has been streamed), but we want
+		// the error to be visible so a stale is_empty=true row doesn't
+		// silently mask UI bugs ("repo shows empty after push").
+		if err := h.Store.MarkRepoNotEmpty(r.Context(), ar.Repo.ID); err != nil {
+			h.logger().Warn("mark repo non-empty failed",
+				"repo_id", ar.Repo.ID, "err", err)
+		}
 	}
 }
 

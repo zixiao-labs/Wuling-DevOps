@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -24,8 +25,9 @@ type Identity struct {
 type IdentitySource string
 
 const (
-	IdentitySourceJWT IdentitySource = "jwt"
-	IdentitySourcePAT IdentitySource = "pat"
+	IdentitySourceJWT      IdentitySource = "jwt"
+	IdentitySourcePAT      IdentitySource = "pat"
+	IdentitySourcePassword IdentitySource = "password"
 )
 
 type identityCtxKey struct{}
@@ -119,7 +121,19 @@ func writeAuthError(w http.ResponseWriter, e *apperr.Error) {
 }
 
 func jsonEscape(s string) string {
-	// Cheap escape — only quotes and backslashes appear in our messages today.
-	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\r", `\r`)
-	return r.Replace(s)
+	// Use encoding/json so all JSON control characters (U+0000..U+001F),
+	// quotes, and backslashes are escaped correctly. json.Marshal of a string
+	// returns a quoted JSON literal; strip the surrounding quotes since the
+	// caller already provides them.
+	b, err := json.Marshal(s)
+	if err != nil {
+		// Fall back to a conservative replacer; json.Marshal of a string
+		// effectively cannot fail, but stay safe.
+		r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\r", `\r`, "\t", `\t`)
+		return r.Replace(s)
+	}
+	if len(b) >= 2 {
+		return string(b[1 : len(b)-1])
+	}
+	return ""
 }

@@ -102,6 +102,7 @@ paths:
                 properties:
                   tokens:
                     type: array
+                    maxItems: 100
                     items: { $ref: "#/components/schemas/AccessTokenView" }
     post:
       summary: Create a new personal access token (raw value returned ONCE)
@@ -116,6 +117,7 @@ paths:
                 name: { type: string, maxLength: 64 }
                 scopes:
                   type: array
+                  maxItems: 10
                   items: { type: string, enum: [repo:read, repo:write] }
                 expires_at: { type: string, format: date-time }
       responses:
@@ -283,6 +285,9 @@ paths:
         "200":
           description: ok
           content: { application/json: { schema: { $ref: "#/components/schemas/Repo" } } }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
 
   /api/v1/orgs/{org_slug}/projects/{project_slug}/repos/{repo_slug}/refs:
     parameters:
@@ -483,6 +488,15 @@ components:
         Used by Git CLI only. The "password" is either a personal access token
         (preferred — recognised by the `wlpat_` prefix) or the user's account
         password.
+
+        **Security:** credentials are sent on every request, so basic auth
+        MUST be used over HTTPS in production — configure server URLs as
+        `https://` and terminate TLS in front of the API. For local
+        development against `localhost` plain HTTP is acceptable.
+
+        Operators should prefer personal access tokens (`wlpat_…`) over
+        account passwords, and consider OAuth/bearer-token flows for
+        non-CLI clients.
 
   parameters:
     OrgSlug:

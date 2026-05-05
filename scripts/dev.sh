@@ -17,12 +17,18 @@ export WULING_LOG_FORMAT=${WULING_LOG_FORMAT:-text}
 mkdir -p "$WULING_REPO_ROOT"
 
 # Wait for postgres to accept connections.
+pg_ready=0
 for i in {1..30}; do
   if docker compose -f deploy/docker-compose.yml exec -T postgres pg_isready -U wuling -d wuling >/dev/null 2>&1; then
+    pg_ready=1
     break
   fi
   sleep 1
 done
+if [ "$pg_ready" -ne 1 ]; then
+  echo "error: postgres did not become ready within 30s; aborting." >&2
+  exit 1
+fi
 
 go run ./cmd/wuling-migrate up
 exec go run ./cmd/wuling-api

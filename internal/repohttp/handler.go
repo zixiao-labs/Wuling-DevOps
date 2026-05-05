@@ -121,7 +121,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req createRepoReq
-	if err := httpapi.DecodeJSON(r, &req); err != nil {
+	if err := httpapi.DecodeJSON(w, r, &req); err != nil {
 		httpapi.RenderError(w, r, err)
 		return
 	}
@@ -139,6 +139,14 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	path := h.Layout.Path(org.ID, project.ID, repo.ID)
 	if gerr := git.InitBare(path, repo.DefaultBranch); gerr != nil {
+		// Roll back the DB row so we don't leave an orphaned repo record
+		// pointing at a non-existent on-disk repository. Best-effort: log
+		// the cleanup error but surface the original InitBare failure.
+		if derr := h.Store.DeleteRepo(r.Context(), repo.ID); derr != nil {
+			httpapi.RenderError(w, r, apperr.Wrap(apperr.CodeInternal,
+				"init bare repo (and rollback failed)", gerr))
+			return
+		}
 		httpapi.RenderError(w, r, apperr.Wrap(apperr.CodeInternal, "init bare repo", gerr))
 		return
 	}
@@ -241,7 +249,11 @@ func (h *Handler) readTree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	subPath, _ := url.PathUnescape(q.Get("path"))
+	subPath, perr := url.PathUnescape(q.Get("path"))
+	if perr != nil {
+		httpapi.RenderError(w, r, apperr.New(apperr.CodeBadRequest, "invalid url-encoded path"))
+		return
+	}
 	if subPath != "" {
 		// walk to the subtree
 		walkedOID, werr := walkPath(path, oid, subPath, "tree")

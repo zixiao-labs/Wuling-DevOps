@@ -29,7 +29,11 @@ func corsMiddleware(allowed []string) func(http.Handler) http.Handler {
 					w.Header().Set("Access-Control-Allow-Origin", "*")
 				} else {
 					w.Header().Set("Access-Control-Allow-Origin", origin)
-					w.Header().Set("Vary", "Origin")
+					// Append "Origin" to Vary instead of overwriting it —
+					// other middleware (compression, content negotiation)
+					// may have already set Vary, and Set would clobber that
+					// and break downstream caches.
+					addVary(w, "Origin")
 				}
 				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-Id")
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
@@ -47,4 +51,18 @@ func corsMiddleware(allowed []string) func(http.Handler) http.Handler {
 func originAllowed(origin string, allow map[string]struct{}) bool {
 	_, ok := allow[origin]
 	return ok
+}
+
+// addVary appends a token to the Vary header without clobbering existing
+// values. Vary tokens are case-insensitive and comma-separated.
+func addVary(w http.ResponseWriter, token string) {
+	existing := w.Header().Values("Vary")
+	for _, v := range existing {
+		for _, part := range strings.Split(v, ",") {
+			if strings.EqualFold(strings.TrimSpace(part), token) {
+				return
+			}
+		}
+	}
+	w.Header().Add("Vary", token)
 }

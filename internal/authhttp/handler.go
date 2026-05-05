@@ -98,7 +98,7 @@ func init() {
 
 func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 	var req registerReq
-	if err := httpapi.DecodeJSON(r, &req); err != nil {
+	if err := httpapi.DecodeJSON(w, r, &req); err != nil {
 		httpapi.RenderError(w, r, err)
 		return
 	}
@@ -132,7 +132,7 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	var req loginReq
-	if err := httpapi.DecodeJSON(r, &req); err != nil {
+	if err := httpapi.DecodeJSON(w, r, &req); err != nil {
 		httpapi.RenderError(w, r, err)
 		return
 	}
@@ -146,6 +146,15 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		httpapi.RenderError(w, r, err)
 		return
 	}
+	// Check IsActive before doing the expensive argon2 verification: this
+	// avoids both wasted work for disabled accounts and a timing oracle
+	// distinguishing "active wrong-password" from "disabled wrong-password".
+	// We collapse to "invalid credentials" to keep the same response shape
+	// as the unknown-user case and avoid leaking account state to attackers.
+	if !user.IsActive {
+		httpapi.RenderError(w, r, apperr.Unauthorized("invalid credentials"))
+		return
+	}
 	ok, verr := auth.VerifyPassword(req.Password, hash)
 	if verr != nil {
 		httpapi.RenderError(w, r, apperr.Internal(verr))
@@ -153,10 +162,6 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	}
 	if !ok {
 		httpapi.RenderError(w, r, apperr.Unauthorized("invalid credentials"))
-		return
-	}
-	if !user.IsActive {
-		httpapi.RenderError(w, r, apperr.Forbidden("account is disabled"))
 		return
 	}
 	tok, exp, err := h.Issuer.Issue(user.ID, user.Username)
@@ -193,7 +198,7 @@ func (h *Handler) createToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req createTokenReq
-	if err := httpapi.DecodeJSON(r, &req); err != nil {
+	if err := httpapi.DecodeJSON(w, r, &req); err != nil {
 		httpapi.RenderError(w, r, err)
 		return
 	}
@@ -277,7 +282,7 @@ func (p *PasswordResolver) ResolvePassword(ctx context.Context, username, passwo
 	return &auth.Identity{
 		UserID:   id,
 		Username: username,
-		Source:   auth.IdentitySourceJWT, // password-derived JWT-equivalent
+		Source:   auth.IdentitySourcePassword,
 	}, nil
 }
 

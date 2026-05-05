@@ -31,18 +31,19 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         git \
-        libgit2-1.7 \
+        libgit2-1.5 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --create-home --uid 10001 wuling
 
 COPY --from=builder /out/wuling-api     /usr/local/bin/wuling-api
 COPY --from=builder /out/wuling-migrate /usr/local/bin/wuling-migrate
 
+# Create the repo root as root so the non-root runtime user can read/write it.
+ENV WULING_REPO_ROOT=/var/lib/wuling/repos
+RUN mkdir -p "$WULING_REPO_ROOT" && chown -R wuling:wuling /var/lib/wuling
+
 USER wuling
 WORKDIR /home/wuling
-
-ENV WULING_REPO_ROOT=/var/lib/wuling/repos
-RUN mkdir -p "$WULING_REPO_ROOT"
 
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/wuling-api"]

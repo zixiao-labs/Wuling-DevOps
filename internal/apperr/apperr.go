@@ -80,9 +80,15 @@ func Wrap(code Code, message string, cause error) *Error {
 	return &Error{Code: code, Message: message, Cause: cause}
 }
 
+// WithDetails returns a copy of err with Details set. The original *Error is
+// not mutated, so callers can safely re-decorate shared error sentinels.
 func WithDetails(err *Error, details map[string]any) *Error {
-	err.Details = details
-	return err
+	if err == nil {
+		return nil
+	}
+	newErr := *err
+	newErr.Details = details
+	return &newErr
 }
 
 // Helpers for common cases.

@@ -36,6 +36,11 @@ type HTTPConfig struct {
 	BasePath        string        `env:"WULING_HTTP_BASE_PATH" envDefault:""`
 }
 
+// defaultDBDSN mirrors the envDefault on DBConfig.DSN. Kept as a constant so
+// the validator can detect "operator forgot to set the DSN in production"
+// without duplicating the literal.
+const defaultDBDSN = "postgres://wuling:wuling@localhost:5432/wuling?sslmode=disable"
+
 // DBConfig configures the PostgreSQL connection pool.
 type DBConfig struct {
 	DSN             string        `env:"WULING_DB_DSN" envDefault:"postgres://wuling:wuling@localhost:5432/wuling?sslmode=disable"`
@@ -105,6 +110,12 @@ func (c *Config) validate() error {
 	}
 	if c.DB.DSN == "" {
 		problems = append(problems, "WULING_DB_DSN must not be empty")
+	}
+	// In production we additionally reject the built-in default DSN — pointing
+	// a real deployment at the local-dev `wuling:wuling@localhost` is almost
+	// certainly an operator mistake (and the credentials are public).
+	if c.IsProd() && c.DB.DSN == defaultDBDSN {
+		problems = append(problems, "WULING_DB_DSN must be set in production")
 	}
 	if c.Storage.RepoRoot == "" {
 		problems = append(problems, "WULING_REPO_ROOT must not be empty")

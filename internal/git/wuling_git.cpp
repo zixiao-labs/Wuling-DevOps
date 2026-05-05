@@ -355,6 +355,19 @@ int wg_repo_log(const char* path, const char* start_oid_hex, int max_count, wg_c
             for (unsigned int i = 0; i < pn; ++i) {
                 const git_oid* poid = git_commit_parent_id(c, i);
                 wc.parent_oids[i] = static_cast<char*>(std::malloc(41));
+                if (!wc.parent_oids[i]) {
+                    // Roll back the partially-built parent_oids array so the
+                    // caller's wg_commit_list_free isn't asked to walk past a
+                    // NULL into uninitialised slots.
+                    for (unsigned int j = 0; j < i; ++j) {
+                        std::free(wc.parent_oids[j]);
+                    }
+                    std::free(wc.parent_oids);
+                    wc.parent_oids = nullptr;
+                    git_commit_free(c);
+                    fill_err(err, -1, "oom");
+                    return -1;
+                }
                 if (poid) oid_to_hex(poid, wc.parent_oids[i]);
                 else wc.parent_oids[i][0] = '\0';
             }

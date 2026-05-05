@@ -24,8 +24,14 @@ var Validator = validator.New(validator.WithRequiredStructEnabled())
 const MaxJSONBodyBytes = 1 << 20 // 1 MiB
 
 // DecodeJSON reads JSON into v with size limits and unknown-field rejection.
-func DecodeJSON(r *http.Request, v any) error {
-	r.Body = http.MaxBytesReader(nil, r.Body, MaxJSONBodyBytes)
+// It also rejects trailing data after the JSON value so requests with extra
+// payload (e.g. "{}<garbage>") fail loudly instead of being silently ignored.
+//
+// w is required so MaxBytesReader can close the connection when an oversized
+// body is presented; passing a nil ResponseWriter would leave the connection
+// in an undefined state on overlong requests.
+func DecodeJSON(w http.ResponseWriter, r *http.Request, v any) error {
+	r.Body = http.MaxBytesReader(w, r.Body, MaxJSONBodyBytes)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
@@ -38,6 +44,11 @@ func DecodeJSON(r *http.Request, v any) error {
 		default:
 			return apperr.Wrap(apperr.CodeBadRequest, "invalid JSON body", err)
 		}
+	}
+	// Reject trailing data: the request body must contain exactly one JSON value.
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		return apperr.New(apperr.CodeBadRequest, "request body must only contain a single JSON value")
 	}
 	if err := Validator.Struct(v); err != nil {
 		return validationToAppErr(err)

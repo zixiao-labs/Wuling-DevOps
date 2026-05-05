@@ -104,8 +104,20 @@ func LoadMigrations() ([]Migration, error) {
 	return out, nil
 }
 
+// migrationAdvisoryLockKey is a stable session-level advisory lock key so
+// multiple API/CLI processes booting concurrently can't race each other into
+// running the same migration twice. Any constant within the int64 range works
+// — the value just needs to be the same everywhere we lock.
+const migrationAdvisoryLockKey int64 = 0x77756c6e6d696772 // "wulnmigr"
+
 // MigrateUp applies any unapplied migrations in order. Each migration runs in
 // its own transaction so a failure leaves earlier ones committed.
+//
+// Concurrency: a Postgres advisory lock serialises migration runs across
+// processes. Without it, two boots could both observe an empty
+// schema_migrations table and try to apply the same DDL — which usually fails
+// on `CREATE TABLE`, but could leave half-applied state on idempotent
+// migrations. The lock is held only for the duration of MigrateUp.
 func MigrateUp(ctx context.Context, pool *Pool, log *slog.Logger) error {
 	migrations, err := LoadMigrations()
 	if err != nil {
@@ -114,6 +126,26 @@ func MigrateUp(ctx context.Context, pool *Pool, log *slog.Logger) error {
 	if err := ensureMigrationsTable(ctx, pool); err != nil {
 		return err
 	}
+
+	// Acquire the cross-process lock on a single connection so the
+	// matching unlock targets the same backend. pg_advisory_lock blocks
+	// until the lock is granted; concurrent bootstrappers will queue.
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire migration lock conn: %w", err)
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, migrationAdvisoryLockKey); err != nil {
+		return fmt.Errorf("acquire migration lock: %w", err)
+	}
+	defer func() {
+		// Release on the same connection. Use a fresh context so we don't
+		// skip the unlock if the caller's ctx is already canceled.
+		_, _ = conn.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, migrationAdvisoryLockKey)
+	}()
+
+	// Re-check applied versions *after* taking the lock — another process
+	// may have applied migrations while we were waiting.
 	applied, err := appliedVersions(ctx, pool)
 	if err != nil {
 		return err

@@ -97,6 +97,12 @@ func (s *Store) CreateUser(ctx context.Context, p CreateUserParams) (*model.User
 
 // GetUserByLogin looks up a user by username OR email (case-insensitive).
 // Returns the user plus their password hash so the auth handler can verify.
+//
+// When two users could plausibly match (e.g. user A whose username equals
+// user B's email), we deterministically prefer the username match. Without
+// the explicit ORDER BY the OR predicate would let Postgres return either
+// row, depending on plan/index choice — that would surface as confusing
+// "wrong account logged in" reports.
 func (s *Store) GetUserByLogin(ctx context.Context, login string) (*model.User, string, error) {
 	var u model.User
 	var hash *string
@@ -104,6 +110,7 @@ func (s *Store) GetUserByLogin(ctx context.Context, login string) (*model.User, 
 		SELECT id, username, email, display_name, is_admin, is_active, created_at, password_hash
 		FROM users
 		WHERE LOWER(username) = LOWER($1) OR LOWER(email) = LOWER($1)
+		ORDER BY (LOWER(username) = LOWER($1)) DESC
 		LIMIT 1
 	`, login).Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &u.IsAdmin, &u.IsActive, &u.CreatedAt, &hash)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -253,7 +260,10 @@ func (s *Store) ListOrgsForUser(ctx context.Context, userID uuid.UUID) ([]model.
 		}
 		out = append(out, o)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return out, nil
 }
 
 // MemberRole returns the user's role in the org, or "" if not a member.
@@ -339,7 +349,10 @@ func (s *Store) ListProjects(ctx context.Context, orgID uuid.UUID) ([]model.Proj
 		}
 		out = append(out, p)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return out, nil
 }
 
 // ----------------------------------------------------------------------------
@@ -430,7 +443,10 @@ func (s *Store) ListRepos(ctx context.Context, projectID uuid.UUID) ([]model.Rep
 		}
 		out = append(out, r)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return out, nil
 }
 
 // MarkRepoNotEmpty flips is_empty=false. Called after first push.
@@ -438,6 +454,20 @@ func (s *Store) MarkRepoNotEmpty(ctx context.Context, id uuid.UUID) error {
 	_, err := s.pool.Exec(ctx, `UPDATE repos SET is_empty = FALSE, updated_at = now() WHERE id = $1`, id)
 	if err != nil {
 		return apperr.Internal(err)
+	}
+	return nil
+}
+
+// DeleteRepo removes a repo row by id. Used by the create path to roll back
+// the metadata when bare-repo initialisation on disk fails, so we don't end
+// up with orphaned DB rows pointing at non-existent on-disk repos.
+func (s *Store) DeleteRepo(ctx context.Context, id uuid.UUID) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM repos WHERE id = $1`, id)
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return apperr.NotFound("repo")
 	}
 	return nil
 }
@@ -521,7 +551,10 @@ func (s *Store) ListPATsForUser(ctx context.Context, userID uuid.UUID) ([]model.
 		}
 		out = append(out, v)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return out, nil
 }
 
 // ListPATHashesForUser returns (id, hash, scopes, expires_at) for matching all
@@ -553,7 +586,10 @@ func (s *Store) ListPATAuthRowsForUser(ctx context.Context, userID uuid.UUID) ([
 		}
 		out = append(out, r)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return out, nil
 }
 
 // TouchPAT updates last_used_at to now().

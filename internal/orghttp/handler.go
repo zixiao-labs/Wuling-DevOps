@@ -75,7 +75,7 @@ func (h *Handler) createOrg(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req createOrgReq
-	if err := httpapi.DecodeJSON(r, &req); err != nil {
+	if err := httpapi.DecodeJSON(w, r, &req); err != nil {
 		httpapi.RenderError(w, r, err)
 		return
 	}
@@ -171,12 +171,20 @@ func (h *Handler) createProject(w http.ResponseWriter, r *http.Request) {
 		httpapi.RenderError(w, r, err)
 		return
 	}
+	// Empty role means the caller is not a member of this org. Don't leak
+	// org existence by returning Forbidden — mirror the read paths and
+	// 404 instead. Forbidden is reserved for known-but-underprivileged
+	// callers (members who aren't owner/admin).
+	if role == "" {
+		httpapi.RenderError(w, r, apperr.NotFound("org"))
+		return
+	}
 	if role != "owner" && role != "admin" {
 		httpapi.RenderError(w, r, apperr.Forbidden("only org owners/admins can create projects"))
 		return
 	}
 	var req createProjectReq
-	if err := httpapi.DecodeJSON(r, &req); err != nil {
+	if err := httpapi.DecodeJSON(w, r, &req); err != nil {
 		httpapi.RenderError(w, r, err)
 		return
 	}

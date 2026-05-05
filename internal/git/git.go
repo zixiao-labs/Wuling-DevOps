@@ -78,7 +78,14 @@ func InitBare(path, defaultBranch string) error {
 }
 
 // Exists reports whether path is a libgit2-recognized repository.
+//
+// We initialise libgit2 (idempotently via sync.Once in Init) before probing,
+// so that an init failure surfaces as the boolean false plus implicit "not
+// initialised" rather than being silently misread as "no repo at this path".
 func Exists(path string) bool {
+	if err := Init(); err != nil {
+		return false
+	}
 	cPath := C.CString(path)
 	defer C.free(unsafe.Pointer(cPath))
 	return C.wg_repo_exists(cPath) == 1

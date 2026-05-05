@@ -47,7 +47,11 @@ func New(d Deps) http.Handler {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*1e9)
 		defer cancel()
 		if err := d.Pool.Ping(ctx); err != nil {
-			httpapi.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "db down", "err": err.Error()})
+			// Log full driver error server-side, but only return a generic
+			// "db down" to clients — leaking err.Error() can expose DSNs,
+			// connection-string bits, or internal hostnames.
+			d.Log.Error("healthz db ping failed", "err", err)
+			httpapi.WriteJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "db down"})
 			return
 		}
 		httpapi.WriteJSON(w, http.StatusOK, map[string]any{"status": "ok"})
@@ -76,6 +80,7 @@ func New(d Deps) http.Handler {
 	(&githttp.Handler{
 		Store:    d.Store,
 		Layout:   d.Layout,
+		Logger:   d.Log,
 		PWReslv:  &authhttp.PasswordResolver{Store: d.Store},
 		PATReslv: &authhttp.PATResolver{Store: d.Store},
 	}).Mount(r)
