@@ -1,0 +1,44 @@
+# Stage 1 dev compose: Postgres + the API server.
+# The Pipelines runner is a separate service that lives in its own compose
+# fragment once it's built — keeping it out of this file matches the
+# "core monolith + pipelines split" architecture decision.
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: wuling
+      POSTGRES_PASSWORD: wuling
+      POSTGRES_DB: wuling
+    ports:
+      - "5432:5432"
+    volumes:
+      - wuling-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wuling -d wuling"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      WULING_ENV: dev
+      WULING_HTTP_ADDR: ":8080"
+      WULING_DB_DSN: "postgres://wuling:wuling@postgres:5432/wuling?sslmode=disable"
+      WULING_REPO_ROOT: "/var/lib/wuling/repos"
+      WULING_JWT_SECRET: "dev-only-not-a-real-secret"
+      WULING_LOG_FORMAT: "json"
+    ports:
+      - "8080:8080"
+    volumes:
+      - wuling-repos:/var/lib/wuling/repos
+
+volumes:
+  wuling-pg:
+  wuling-repos:
