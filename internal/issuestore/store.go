@@ -45,6 +45,9 @@ func (s *Store) CreateLabel(ctx context.Context, p CreateLabelParams) (*model.La
 		Color:       defaultIfEmpty(p.Color, "888888"),
 		Description: p.Description,
 	}
+	if l.Name == "" {
+		return nil, apperr.Validation("label name cannot be empty", nil)
+	}
 	err := s.pool.QueryRow(ctx, `
 		INSERT INTO labels (id, project_id, name, color, description)
 		VALUES ($1, $2, $3, $4, $5)
@@ -410,7 +413,8 @@ func (s *Store) UpdateIssue(ctx context.Context, projectID uuid.UUID, number int
 		}
 	}
 
-	if len(sets) > 0 {
+	// If labels or assignees are being modified, ensure updated_at is set even if no other fields changed
+	if len(sets) > 0 || p.LabelIDs != nil || p.AssigneeIDs != nil {
 		sets = append(sets, "updated_at = now()")
 		idArg := nextArg(issueID)
 		sql := "UPDATE issues SET " + strings.Join(sets, ", ") + " WHERE id = " + idArg

@@ -359,7 +359,7 @@ func (h *Handler) createComment(w http.ResponseWriter, r *http.Request) {
 
 type createLabelReq struct {
 	Name        string `json:"name"        validate:"required,min=1,max=64"`
-	Color       string `json:"color"       validate:"omitempty,len=6,hexadecimal"`
+	Color       string `json:"color"       validate:"omitempty,hexadecimal"`
 	Description string `json:"description" validate:"max=256"`
 }
 
@@ -393,7 +393,12 @@ func (h *Handler) createLabel(w http.ResponseWriter, r *http.Request) {
 		httpapi.RenderError(w, r, err)
 		return
 	}
-	color := strings.TrimPrefix(strings.TrimSpace(req.Color), "#")
+	// Normalize color before validation
+	color := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(req.Color), "#"))
+	if color != "" && len(color) != 6 {
+		httpapi.RenderError(w, r, apperr.Validation("color must be exactly 6 hexadecimal characters", nil))
+		return
+	}
 	l, err := h.Issues.CreateLabel(r.Context(), issuestore.CreateLabelParams{
 		ProjectID:   pc.ProjectID,
 		Name:        req.Name,

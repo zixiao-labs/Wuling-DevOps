@@ -36,6 +36,14 @@ type Deps struct {
 
 // New returns a router fully wired with all current Stage-1 domains.
 func New(d Deps) http.Handler {
+	// Fail-fast nil checks for critical dependencies
+	if d.Issues == nil {
+		panic("server.Deps.Issues cannot be nil")
+	}
+	if d.Layout == nil {
+		panic("server.Deps.Layout cannot be nil")
+	}
+
 	verifier := auth.NewVerifier(d.Cfg.JWT)
 	issuer := auth.NewIssuer(d.Cfg.JWT)
 

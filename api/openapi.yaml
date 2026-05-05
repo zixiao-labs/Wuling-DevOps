@@ -450,6 +450,7 @@ paths:
                   issues:
                     type: array
                     items: { $ref: "#/components/schemas/Issue" }
+        "400": { $ref: "#/components/responses/ValidationError" }
         "401": { $ref: "#/components/responses/UnauthorizedError" }
         "404": { $ref: "#/components/responses/NotFoundError" }
     post:
@@ -580,6 +581,7 @@ paths:
         "201":
           description: created
           content: { application/json: { schema: { $ref: "#/components/schemas/Label" } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
         "401": { $ref: "#/components/responses/UnauthorizedError" }
         "403": { $ref: "#/components/responses/ForbiddenError" }
         "404": { $ref: "#/components/responses/NotFoundError" }
@@ -596,6 +598,7 @@ paths:
       summary: Delete a label (org owner/admin only)
       responses:
         "204": { description: deleted }
+        "400": { $ref: "#/components/responses/ValidationError" }
         "401": { $ref: "#/components/responses/UnauthorizedError" }
         "403": { $ref: "#/components/responses/ForbiddenError" }
         "404": { $ref: "#/components/responses/NotFoundError" }
