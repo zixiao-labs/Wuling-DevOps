@@ -13,7 +13,11 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - wuling-pg:/var/lib/postgresql/data
+      # postgres:18+ images expect a single mount at /var/lib/postgresql and
+      # manage a major-version-specific subdirectory themselves. Mounting at
+      # /var/lib/postgresql/data (the pre-18 layout) makes the container
+      # refuse to start. See docker-library/postgres#1259.
+      - wuling-pg:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U wuling -d wuling"]
       interval: 3s

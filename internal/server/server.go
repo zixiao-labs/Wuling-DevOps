@@ -16,6 +16,8 @@ import (
 	"github.com/zixiao-labs/wuling-devops/internal/db"
 	"github.com/zixiao-labs/wuling-devops/internal/githttp"
 	"github.com/zixiao-labs/wuling-devops/internal/httpapi"
+	"github.com/zixiao-labs/wuling-devops/internal/issuehttp"
+	"github.com/zixiao-labs/wuling-devops/internal/issuestore"
 	"github.com/zixiao-labs/wuling-devops/internal/orghttp"
 	"github.com/zixiao-labs/wuling-devops/internal/repohttp"
 	"github.com/zixiao-labs/wuling-devops/internal/repostore"
@@ -28,11 +30,20 @@ type Deps struct {
 	Log    *slog.Logger
 	Pool   *db.Pool
 	Store  *userstore.Store
+	Issues *issuestore.Store
 	Layout *repostore.Layout
 }
 
 // New returns a router fully wired with all current Stage-1 domains.
 func New(d Deps) http.Handler {
+	// Fail-fast nil checks for critical dependencies
+	if d.Issues == nil {
+		panic("server.Deps.Issues cannot be nil")
+	}
+	if d.Layout == nil {
+		panic("server.Deps.Layout cannot be nil")
+	}
+
 	verifier := auth.NewVerifier(d.Cfg.JWT)
 	issuer := auth.NewIssuer(d.Cfg.JWT)
 
@@ -72,6 +83,10 @@ func New(d Deps) http.Handler {
 
 		(&repohttp.Handler{
 			Store: d.Store, Layout: d.Layout, Verifier: verifier,
+		}).Mount(api)
+
+		(&issuehttp.Handler{
+			Users: d.Store, Issues: d.Issues, Verifier: verifier,
 		}).Mount(api)
 	})
 
