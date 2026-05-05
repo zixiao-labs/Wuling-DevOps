@@ -201,6 +201,7 @@ paths:
                   projects:
                     type: array
                     items: { $ref: "#/components/schemas/Project" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
     post:
       summary: Create a project under an org
       requestBody:
@@ -220,6 +221,7 @@ paths:
           description: created
           content: { application/json: { schema: { $ref: "#/components/schemas/Project" } } }
         "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
         "409": { $ref: "#/components/responses/ConflictError" }
 
   /api/v1/orgs/{org_slug}/projects/{project_slug}:
@@ -253,6 +255,8 @@ paths:
                   repos:
                     type: array
                     items: { $ref: "#/components/schemas/Repo" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
     post:
       summary: Create a repo (initialises a bare repo on disk via libgit2)
       requestBody:
@@ -272,6 +276,9 @@ paths:
         "201":
           description: created
           content: { application/json: { schema: { $ref: "#/components/schemas/Repo" } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
         "409": { $ref: "#/components/responses/ConflictError" }
 
   /api/v1/orgs/{org_slug}/projects/{project_slug}/repos/{repo_slug}:
@@ -307,6 +314,8 @@ paths:
                   refs:
                     type: array
                     items: { $ref: "#/components/schemas/Ref" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
 
   /api/v1/orgs/{org_slug}/projects/{project_slug}/repos/{repo_slug}/commits:
     parameters:
@@ -333,6 +342,8 @@ paths:
                   commits:
                     type: array
                     items: { $ref: "#/components/schemas/Commit" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
 
   /api/v1/orgs/{org_slug}/projects/{project_slug}/repos/{repo_slug}/tree:
     parameters:
@@ -359,6 +370,9 @@ paths:
                   entries:
                     type: array
                     items: { $ref: "#/components/schemas/TreeEntry" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
 
   /api/v1/orgs/{org_slug}/projects/{project_slug}/repos/{repo_slug}/blob:
     parameters:
@@ -389,6 +403,9 @@ paths:
                   is_binary: { type: boolean }
                   encoding: { type: string, enum: [utf-8, base64] }
                   content: { type: string }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
 
   # ---------------- Git smart HTTP ----------------
 

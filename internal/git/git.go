@@ -7,6 +7,12 @@
 // Build dependencies: libgit2 + a C++ compiler. pkg-config provides the
 // flags. On macOS: brew install libgit2 pkg-config. On Debian: apt install
 // libgit2-dev pkg-config build-essential.
+//
+// Builds with CGO_ENABLED=0 use the stub in git_stub.go and every entry
+// point returns ErrCGOUnsupported.
+
+//go:build cgo
+
 package git
 
 /*

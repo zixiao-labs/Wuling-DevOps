@@ -54,6 +54,41 @@ private:
     git_repository* repo_;
 };
 
+// scoped_revwalk owns a git_revwalk* and frees it on scope exit, mirroring
+// scoped_repo. Lets wg_repo_log error paths just `return rc` without
+// remembering to free the walker.
+class scoped_revwalk {
+public:
+    scoped_revwalk() : walk_(nullptr) {}
+    ~scoped_revwalk() { if (walk_) git_revwalk_free(walk_); }
+    scoped_revwalk(const scoped_revwalk&) = delete;
+    scoped_revwalk& operator=(const scoped_revwalk&) = delete;
+
+    int new_for(git_repository* repo) {
+        return git_revwalk_new(&walk_, repo);
+    }
+    git_revwalk* get() { return walk_; }
+private:
+    git_revwalk* walk_;
+};
+
+// free_commit_vector frees the heap allocations attached to each wg_commit
+// already pushed into `commits`. Used on the OOM error path of wg_repo_log so
+// that previously-built commits don't leak their parent_oids when a later
+// allocation fails. The wg_commit POD itself is owned by the std::vector and
+// destroyed when the vector goes out of scope.
+void free_commit_vector(std::vector<wg_commit>& commits) {
+    for (auto& wc : commits) {
+        if (wc.parent_oids) {
+            for (int j = 0; j < wc.parent_count; ++j) {
+                if (wc.parent_oids[j]) std::free(wc.parent_oids[j]);
+            }
+            std::free(wc.parent_oids);
+            wc.parent_oids = nullptr;
+        }
+    }
+}
+
 void oid_to_hex(const git_oid* oid, char out[41]) {
     git_oid_fmt(out, oid);
     out[40] = '\0';
@@ -124,18 +159,16 @@ int wg_repo_list_refs(const char* path, wg_ref_list* out, wg_error* err) {
         git_reference* ref = nullptr;
         if (git_reference_lookup(&ref, r.get(), name) < 0) continue;
 
+        // Peel through symbolic refs and annotated tag objects to a commit so
+        // target_oid always points at a commit (matching wg_ref_entry's
+        // contract documented in wuling_git.h: "peeled for tags").
         git_oid resolved;
         bool have_oid = false;
-        if (git_reference_type(ref) == GIT_REFERENCE_DIRECT) {
-            const git_oid* oid = git_reference_target(ref);
+        git_object* peeled_obj = nullptr;
+        if (git_reference_peel(&peeled_obj, ref, GIT_OBJECT_COMMIT) == 0) {
+            const git_oid* oid = git_object_id(peeled_obj);
             if (oid) { resolved = *oid; have_oid = true; }
-        } else {
-            git_reference* peeled = nullptr;
-            if (git_reference_resolve(&peeled, ref) == 0) {
-                const git_oid* oid = git_reference_target(peeled);
-                if (oid) { resolved = *oid; have_oid = true; }
-                git_reference_free(peeled);
-            }
+            git_object_free(peeled_obj);
         }
         git_reference_free(ref);
         if (!have_oid) continue;
@@ -297,25 +330,22 @@ int wg_repo_log(const char* path, const char* start_oid_hex, int max_count, wg_c
     scoped_repo r;
     if (int rc = r.open(path); rc < 0) { fill_err(err, rc, "open repo"); return rc; }
 
-    git_revwalk* walk = nullptr;
-    if (int rc = git_revwalk_new(&walk, r.get()); rc < 0) {
+    scoped_revwalk walk;
+    if (int rc = walk.new_for(r.get()); rc < 0) {
         fill_err(err, rc, "revwalk_new"); return rc;
     }
-    git_revwalk_sorting(walk, GIT_SORT_TOPOLOGICAL | GIT_SORT_TIME);
+    git_revwalk_sorting(walk.get(), GIT_SORT_TOPOLOGICAL | GIT_SORT_TIME);
 
     if (start_oid_hex && start_oid_hex[0] != '\0') {
         git_oid oid;
         if (int rc = git_oid_fromstr(&oid, start_oid_hex); rc < 0) {
-            git_revwalk_free(walk);
             fill_err(err, rc, "bad start oid"); return rc;
         }
-        if (int rc = git_revwalk_push(walk, &oid); rc < 0) {
-            git_revwalk_free(walk);
+        if (int rc = git_revwalk_push(walk.get(), &oid); rc < 0) {
             fill_err(err, rc, "revwalk_push"); return rc;
         }
     } else {
-        if (int rc = git_revwalk_push_head(walk); rc < 0) {
-            git_revwalk_free(walk);
+        if (int rc = git_revwalk_push_head(walk.get()); rc < 0) {
             fill_err(err, rc, "revwalk_push_head"); return rc;
         }
     }
@@ -323,7 +353,7 @@ int wg_repo_log(const char* path, const char* start_oid_hex, int max_count, wg_c
     std::vector<wg_commit> commits;
     commits.reserve(max_count);
     git_oid id;
-    while (commits.size() < (size_t)max_count && git_revwalk_next(&id, walk) == 0) {
+    while (commits.size() < (size_t)max_count && git_revwalk_next(&id, walk.get()) == 0) {
         git_commit* c = nullptr;
         if (git_commit_lookup(&c, r.get(), &id) < 0) continue;
 
@@ -350,6 +380,7 @@ int wg_repo_log(const char* path, const char* start_oid_hex, int max_count, wg_c
             wc.parent_oids = static_cast<char**>(std::calloc(pn, sizeof(char*)));
             if (!wc.parent_oids) {
                 git_commit_free(c);
+                free_commit_vector(commits);
                 fill_err(err, -1, "oom"); return -1;
             }
             for (unsigned int i = 0; i < pn; ++i) {
@@ -365,6 +396,7 @@ int wg_repo_log(const char* path, const char* start_oid_hex, int max_count, wg_c
                     std::free(wc.parent_oids);
                     wc.parent_oids = nullptr;
                     git_commit_free(c);
+                    free_commit_vector(commits);
                     fill_err(err, -1, "oom");
                     return -1;
                 }
@@ -375,12 +407,14 @@ int wg_repo_log(const char* path, const char* start_oid_hex, int max_count, wg_c
         commits.push_back(wc);
         git_commit_free(c);
     }
-    git_revwalk_free(walk);
 
     if (commits.empty()) return 0;
     out->count = static_cast<int>(commits.size());
     out->commits = static_cast<wg_commit*>(std::calloc(commits.size(), sizeof(wg_commit)));
-    if (!out->commits) { fill_err(err, -1, "oom"); return -1; }
+    if (!out->commits) {
+        free_commit_vector(commits);
+        fill_err(err, -1, "oom"); return -1;
+    }
     std::memcpy(out->commits, commits.data(), commits.size() * sizeof(wg_commit));
     return 0;
 }

@@ -111,8 +111,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpapi.RenderError(w, r, err)
 		return
 	}
+	// Empty role means the caller isn't a member of this org. Don't leak the
+	// org's existence — mirror the read paths and the orghttp.createProject
+	// handler by returning 404 instead of 403.
 	if role == "" {
-		httpapi.RenderError(w, r, apperr.Forbidden("not a member of org"))
+		httpapi.RenderError(w, r, apperr.NotFound("org"))
 		return
 	}
 	project, err := h.Store.GetProjectBySlug(r.Context(), org.ID, chi.URLParam(r, "project_slug"))
@@ -312,6 +315,10 @@ func (h *Handler) readBlob(w http.ResponseWriter, r *http.Request) {
 	}
 	blob, gerr := git.ReadBlob(path, oidStr)
 	if gerr != nil {
+		if git.IsNotFound(gerr) {
+			httpapi.RenderError(w, r, apperr.NotFound("blob"))
+			return
+		}
 		httpapi.RenderError(w, r, apperr.Wrap(apperr.CodeInternal, "read blob", gerr))
 		return
 	}

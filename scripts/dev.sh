@@ -14,11 +14,15 @@ export WULING_REPO_ROOT=${WULING_REPO_ROOT:-$(pwd)/var/repos}
 export WULING_JWT_SECRET=${WULING_JWT_SECRET:-dev-only-not-a-real-secret}
 export WULING_LOG_FORMAT=${WULING_LOG_FORMAT:-text}
 
+if [ "$WULING_JWT_SECRET" = "dev-only-not-a-real-secret" ]; then
+  echo "WARNING: using dev-only-not-a-real-secret default JWT secret — for local development only; override WULING_JWT_SECRET in staging/CI/prod" >&2
+fi
+
 mkdir -p "$WULING_REPO_ROOT"
 
 # Wait for postgres to accept connections.
 pg_ready=0
-for i in {1..30}; do
+for _ in {1..30}; do
   if docker compose -f deploy/docker-compose.yml exec -T postgres pg_isready -U wuling -d wuling >/dev/null 2>&1; then
     pg_ready=1
     break
