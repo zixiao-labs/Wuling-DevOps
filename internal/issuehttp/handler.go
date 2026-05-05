@@ -178,9 +178,13 @@ func (h *Handler) listIssues(w http.ResponseWriter, r *http.Request) {
 		f.AuthorID = uid
 	}
 	if l := q.Get("limit"); l != "" {
-		if n, perr := strconv.Atoi(l); perr == nil {
-			f.Limit = n
+		n, perr := strconv.Atoi(l)
+		if perr != nil {
+			httpapi.RenderError(w, r,
+				apperr.New(apperr.CodeBadRequest, "invalid limit parameter"))
+			return
 		}
+		f.Limit = n
 	}
 	issues, err := h.Issues.ListIssues(r.Context(), pc.ProjectID, f)
 	if err != nil {
