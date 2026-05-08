@@ -113,3 +113,64 @@ type IssueComment struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
+
+// MergeRequest is the public shape of a merge request. State transitions are
+// open -> merged | closed; reopen flips closed back to open. The merge_*
+// fields are only populated once state is "merged".
+type MergeRequest struct {
+	ID               uuid.UUID  `json:"id"`
+	RepoID           uuid.UUID  `json:"repo_id"`
+	ProjectID        uuid.UUID  `json:"project_id"`
+	Number           int64      `json:"number"`
+	Title            string     `json:"title"`
+	Body             string     `json:"body"`
+	State            string     `json:"state"`
+	SourceRef        string     `json:"source_ref"`
+	TargetRef        string     `json:"target_ref"`
+	SourceOIDAtOpen  string     `json:"source_oid_at_open"`
+	TargetOIDAtOpen  string     `json:"target_oid_at_open"`
+	MergeStrategy    *string    `json:"merge_strategy,omitempty"`
+	MergeCommitOID   *string    `json:"merge_commit_oid,omitempty"`
+	Author           *UserRef   `json:"author,omitempty"`
+	MergedBy         *UserRef   `json:"merged_by,omitempty"`
+	ClosedBy         *UserRef   `json:"closed_by,omitempty"`
+	MergedAt         *time.Time `json:"merged_at,omitempty"`
+	ClosedAt         *time.Time `json:"closed_at,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+	CommentCnt       int64      `json:"comment_count"`
+	ReviewCnt        int64      `json:"review_count"`
+}
+
+// MRComment is the public shape of a comment on a merge request.
+type MRComment struct {
+	ID        uuid.UUID `json:"id"`
+	MRID      uuid.UUID `json:"mr_id"`
+	Author    *UserRef  `json:"author,omitempty"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// MRReview is the public shape of a review event on a merge request. State
+// is one of "approved", "changes_requested", or "commented".
+type MRReview struct {
+	ID        uuid.UUID `json:"id"`
+	MRID      uuid.UUID `json:"mr_id"`
+	Author    *UserRef  `json:"author,omitempty"`
+	State     string    `json:"state"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// MRDiffEntry is one file's worth of diff between two commits, used by the
+// /merge-requests/{n}/diff endpoint. Patch is empty unless the caller asked
+// for ?include=patch — keeping it off by default keeps responses small.
+type MRDiffEntry struct {
+	Path      string `json:"path"`
+	OldPath   string `json:"old_path,omitempty"`
+	Status    string `json:"status"` // added | modified | deleted | renamed | copied | typechange
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+	Patch     string `json:"patch,omitempty"`
+}

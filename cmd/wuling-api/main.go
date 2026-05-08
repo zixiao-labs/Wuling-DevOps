@@ -21,6 +21,7 @@ import (
 	"github.com/zixiao-labs/wuling-devops/internal/db"
 	"github.com/zixiao-labs/wuling-devops/internal/git"
 	"github.com/zixiao-labs/wuling-devops/internal/issuestore"
+	"github.com/zixiao-labs/wuling-devops/internal/mrstore"
 	"github.com/zixiao-labs/wuling-devops/internal/repostore"
 	"github.com/zixiao-labs/wuling-devops/internal/server"
 	"github.com/zixiao-labs/wuling-devops/internal/userstore"
@@ -73,6 +74,7 @@ func run() error {
 
 	store := userstore.New(pool)
 	issues := issuestore.New(pool)
+	mrs := mrstore.New(pool)
 	layout := repostore.New(cfg.Storage.RepoRoot)
 
 	handler := server.New(server.Deps{
@@ -81,6 +83,7 @@ func run() error {
 		Pool:   pool,
 		Store:  store,
 		Issues: issues,
+		MRs:    mrs,
 		Layout: layout,
 	})
 
