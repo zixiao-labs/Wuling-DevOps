@@ -458,6 +458,22 @@ func (s *Store) MarkRepoNotEmpty(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// UpdateRepoSize writes size_bytes for a repo. Called by the MR merge path
+// after a successful ref-write so repos.size_bytes stays roughly in sync
+// with on-disk reality. Negative values are rejected.
+func (s *Store) UpdateRepoSize(ctx context.Context, id uuid.UUID, sizeBytes int64) error {
+	if sizeBytes < 0 {
+		return apperr.Validation("size_bytes must be non-negative", nil)
+	}
+	_, err := s.pool.Exec(ctx,
+		`UPDATE repos SET size_bytes = $1, updated_at = now() WHERE id = $2`,
+		sizeBytes, id)
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	return nil
+}
+
 // DeleteRepo removes a repo row by id. Used by the create path to roll back
 // the metadata when bare-repo initialisation on disk fails, so we don't end
 // up with orphaned DB rows pointing at non-existent on-disk repos.

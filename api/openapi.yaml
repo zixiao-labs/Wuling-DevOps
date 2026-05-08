@@ -11,9 +11,10 @@ info:
       - Repositories (CRUD + libgit2-backed read APIs)
       - Git smart HTTP (clone/fetch/push)
       - Issues (CRUD, labels, comments, assignees)
+      - Merge Requests (open/diff/merge with FF/merge-commit/squash, comments, reviews)
 
     Planned for later stages (URLs reserved, not yet served):
-      - Merge Requests, Pipelines, Wiki, Insight
+      - Pipelines, Wiki, Insight
 
     All errors use the JSON envelope:
       { "error": { "code": "<stable_code>", "message": "<human msg>", "details": {} } }
@@ -603,6 +604,300 @@ paths:
         "403": { $ref: "#/components/responses/ForbiddenError" }
         "404": { $ref: "#/components/responses/NotFoundError" }
 
+  # ---------------- merge requests ----------------
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/repos/{repo_slug}/merge-requests:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - $ref: "#/components/parameters/RepoSlug"
+    get:
+      summary: List merge requests on a repo
+      parameters:
+        - in: query
+          name: state
+          schema: { type: string, enum: [open, merged, closed] }
+        - in: query
+          name: target_ref
+          schema: { type: string }
+          description: Exact match on the target ref (e.g. "refs/heads/main").
+        - in: query
+          name: author
+          schema: { type: string }
+          description: User UUID or username.
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  merge_requests:
+                    type: array
+                    items: { $ref: "#/components/schemas/MergeRequest" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+    post:
+      summary: Open a merge request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateMergeRequestRequest" }
+      responses:
+        "201":
+          description: created
+          content: { application/json: { schema: { $ref: "#/components/schemas/MergeRequest" } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/repos/{repo_slug}/merge-requests/{number}:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - $ref: "#/components/parameters/RepoSlug"
+      - $ref: "#/components/parameters/MRNumber"
+    get:
+      summary: Get a merge request by its per-project number
+      responses:
+        "200":
+          description: ok
+          content: { application/json: { schema: { $ref: "#/components/schemas/MergeRequest" } } }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+    patch:
+      summary: Edit title/body (author or org owner/admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatchMergeRequestRequest" }
+      responses:
+        "200":
+          description: ok
+          content: { application/json: { schema: { $ref: "#/components/schemas/MergeRequest" } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/repos/{repo_slug}/merge-requests/{number}/diff:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - $ref: "#/components/parameters/RepoSlug"
+      - $ref: "#/components/parameters/MRNumber"
+    get:
+      summary: Per-file diff between merge base and source tip
+      description: |
+        For open MRs, the diff is computed from the live source/target refs.
+        For merged/closed MRs, the snapshot OIDs recorded at open time are
+        used so the historical view stays stable even if the source ref is
+        later deleted.
+
+        By default each file entry omits the unified patch text to keep
+        responses small; pass `include=patch` to populate it.
+      parameters:
+        - in: query
+          name: include
+          schema: { type: string }
+          description: |
+            Comma-separated optional fields. Currently the only recognised
+            token is `patch`, which adds a unified diff string to each file
+            entry.
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  base_oid: { type: string }
+                  source_oid: { type: string }
+                  target_oid: { type: string }
+                  files:
+                    type: array
+                    items: { $ref: "#/components/schemas/MRDiffEntry" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/repos/{repo_slug}/merge-requests/{number}/commits:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - $ref: "#/components/parameters/RepoSlug"
+      - $ref: "#/components/parameters/MRNumber"
+    get:
+      summary: Commits reachable from source but not target
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  commits:
+                    type: array
+                    items: { $ref: "#/components/schemas/Commit" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/repos/{repo_slug}/merge-requests/{number}/merge:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - $ref: "#/components/parameters/RepoSlug"
+      - $ref: "#/components/parameters/MRNumber"
+    post:
+      summary: Merge an open MR with a chosen strategy
+      description: |
+        Three strategies are supported. `ff` requires the target to be an
+        ancestor of the source; pick `merge-commit` (true 2-parent merge
+        commit) or `squash` (single-parent commit with the merged tree)
+        when the branches have diverged.
+
+        On a merge conflict the response is 409 and the MR remains open.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MergeMRRequest" }
+      responses:
+        "200":
+          description: merged
+          content: { application/json: { schema: { $ref: "#/components/schemas/MergeRequest" } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+        "409": { $ref: "#/components/responses/ConflictError" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/repos/{repo_slug}/merge-requests/{number}/close:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - $ref: "#/components/parameters/RepoSlug"
+      - $ref: "#/components/parameters/MRNumber"
+    post:
+      summary: Close an open MR without merging
+      responses:
+        "200":
+          description: ok
+          content: { application/json: { schema: { $ref: "#/components/schemas/MergeRequest" } } }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+        "409": { $ref: "#/components/responses/ConflictError" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/repos/{repo_slug}/merge-requests/{number}/reopen:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - $ref: "#/components/parameters/RepoSlug"
+      - $ref: "#/components/parameters/MRNumber"
+    post:
+      summary: Reopen a previously closed MR (merged MRs cannot be reopened)
+      responses:
+        "200":
+          description: ok
+          content: { application/json: { schema: { $ref: "#/components/schemas/MergeRequest" } } }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+        "409": { $ref: "#/components/responses/ConflictError" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/repos/{repo_slug}/merge-requests/{number}/comments:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - $ref: "#/components/parameters/RepoSlug"
+      - $ref: "#/components/parameters/MRNumber"
+    get:
+      summary: List comments on an MR
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  comments:
+                    type: array
+                    items: { $ref: "#/components/schemas/MRComment" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+    post:
+      summary: Post a comment on an MR
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string, minLength: 1, maxLength: 65536 }
+      responses:
+        "201":
+          description: created
+          content: { application/json: { schema: { $ref: "#/components/schemas/MRComment" } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/repos/{repo_slug}/merge-requests/{number}/reviews:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - $ref: "#/components/parameters/RepoSlug"
+      - $ref: "#/components/parameters/MRNumber"
+    get:
+      summary: List reviews on an MR
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reviews:
+                    type: array
+                    items: { $ref: "#/components/schemas/MRReview" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+    post:
+      summary: Post a review on an MR
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateMRReviewRequest" }
+      responses:
+        "201":
+          description: created
+          content: { application/json: { schema: { $ref: "#/components/schemas/MRReview" } } }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
   # ---------------- Git smart HTTP ----------------
 
   /{org}/{project}/{repo}.git/info/refs:
@@ -733,6 +1028,12 @@ components:
       required: true
       schema: { type: integer, format: int64, minimum: 1 }
       description: Per-project monotonically increasing issue number (e.g. 1, 2, 3 ...).
+    MRNumber:
+      in: path
+      name: number
+      required: true
+      schema: { type: integer, format: int64, minimum: 1 }
+      description: Per-project monotonically increasing merge-request number.
 
   responses:
     UnauthorizedError:
@@ -980,3 +1281,124 @@ components:
         body: { type: string }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    MRState:
+      type: string
+      enum: [open, merged, closed]
+
+    MergeStrategy:
+      type: string
+      enum: [ff, merge-commit, squash]
+
+    MergeRequest:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        repo_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        number: { type: integer, format: int64 }
+        title: { type: string }
+        body: { type: string }
+        state: { $ref: "#/components/schemas/MRState" }
+        source_ref: { type: string }
+        target_ref: { type: string }
+        source_oid_at_open: { type: string }
+        target_oid_at_open: { type: string }
+        merge_strategy:
+          allOf:
+            - $ref: "#/components/schemas/MergeStrategy"
+          nullable: true
+        merge_commit_oid: { type: string, nullable: true }
+        author: { $ref: "#/components/schemas/UserRef" }
+        merged_by: { $ref: "#/components/schemas/UserRef", nullable: true }
+        closed_by: { $ref: "#/components/schemas/UserRef", nullable: true }
+        merged_at: { type: string, format: date-time, nullable: true }
+        closed_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        comment_count: { type: integer, format: int64 }
+        review_count: { type: integer, format: int64 }
+
+    CreateMergeRequestRequest:
+      type: object
+      required: [title, source_ref, target_ref]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 256 }
+        body: { type: string, maxLength: 65536 }
+        source_ref:
+          type: string
+          description: |
+            Branch to merge from. Bare names like "feat/x" are accepted and
+            promoted to "refs/heads/feat/x".
+        target_ref:
+          type: string
+          description: Branch to merge into.
+
+    PatchMergeRequestRequest:
+      type: object
+      description: Update title or body. Omitted fields are left untouched.
+      properties:
+        title: { type: string, minLength: 1, maxLength: 256 }
+        body: { type: string, maxLength: 65536 }
+
+    MergeMRRequest:
+      type: object
+      required: [strategy]
+      properties:
+        strategy: { $ref: "#/components/schemas/MergeStrategy" }
+        message:
+          type: string
+          maxLength: 65536
+          description: |
+            Optional commit message override for merge-commit and squash. The
+            ff strategy ignores this field — fast-forward updates don't make
+            new commits.
+
+    MRComment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        mr_id: { type: string, format: uuid }
+        author: { $ref: "#/components/schemas/UserRef" }
+        body: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ReviewState:
+      type: string
+      enum: [approved, changes_requested, commented]
+
+    MRReview:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        mr_id: { type: string, format: uuid }
+        author: { $ref: "#/components/schemas/UserRef" }
+        state: { $ref: "#/components/schemas/ReviewState" }
+        body: { type: string }
+        created_at: { type: string, format: date-time }
+
+    CreateMRReviewRequest:
+      type: object
+      required: [state]
+      properties:
+        state: { $ref: "#/components/schemas/ReviewState" }
+        body: { type: string, maxLength: 65536 }
+
+    MRDiffEntry:
+      type: object
+      properties:
+        path: { type: string }
+        old_path:
+          type: string
+          description: Set on renames/copies; otherwise empty.
+        status:
+          type: string
+          enum: [added, modified, deleted, renamed, copied, typechange, other]
+        additions: { type: integer }
+        deletions: { type: integer }
+        patch:
+          type: string
+          description: |
+            Unified diff text for this file. Populated only when the request
+            included `?include=patch`.

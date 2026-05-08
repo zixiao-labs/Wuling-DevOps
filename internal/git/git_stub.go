@@ -93,3 +93,40 @@ func Log(string, string, int) ([]Commit, error) { return nil, ErrCGOUnsupported 
 // IsNotFound returns false in the stub build — without libgit2, callers
 // never see a real "not found" error, only ErrCGOUnsupported.
 func IsNotFound(error) bool { return false }
+
+// IsConflict returns false in the stub build.
+func IsConflict(error) bool { return false }
+
+// Author mirrors the cgo type.
+type Author struct {
+	Name  string
+	Email string
+	When  time.Time
+}
+
+// DiffEntry mirrors the cgo type.
+type DiffEntry struct {
+	Path      string
+	OldPath   string
+	Status    string
+	Additions int
+	Deletions int
+	Patch     string
+}
+
+// MergeBase reports the build is missing libgit2.
+func MergeBase(string, string, string) (string, error) { return "", ErrCGOUnsupported }
+
+// DiffOIDs reports the build is missing libgit2.
+func DiffOIDs(string, string, string, bool) ([]DiffEntry, error) { return nil, ErrCGOUnsupported }
+
+// LogRange reports the build is missing libgit2.
+func LogRange(string, string, string, int) ([]Commit, error) { return nil, ErrCGOUnsupported }
+
+// FFUpdateRef reports the build is missing libgit2.
+func FFUpdateRef(string, string, string, string) error { return ErrCGOUnsupported }
+
+// CreateMergeCommit reports the build is missing libgit2.
+func CreateMergeCommit(string, string, string, string, string, Author, string, string, bool) (string, error) {
+	return "", ErrCGOUnsupported
+}

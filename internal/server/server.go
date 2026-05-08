@@ -18,6 +18,8 @@ import (
 	"github.com/zixiao-labs/wuling-devops/internal/httpapi"
 	"github.com/zixiao-labs/wuling-devops/internal/issuehttp"
 	"github.com/zixiao-labs/wuling-devops/internal/issuestore"
+	"github.com/zixiao-labs/wuling-devops/internal/mrhttp"
+	"github.com/zixiao-labs/wuling-devops/internal/mrstore"
 	"github.com/zixiao-labs/wuling-devops/internal/orghttp"
 	"github.com/zixiao-labs/wuling-devops/internal/repohttp"
 	"github.com/zixiao-labs/wuling-devops/internal/repostore"
@@ -31,6 +33,7 @@ type Deps struct {
 	Pool   *db.Pool
 	Store  *userstore.Store
 	Issues *issuestore.Store
+	MRs    *mrstore.Store
 	Layout *repostore.Layout
 }
 
@@ -39,6 +42,9 @@ func New(d Deps) http.Handler {
 	// Fail-fast nil checks for critical dependencies
 	if d.Issues == nil {
 		panic("server.Deps.Issues cannot be nil")
+	}
+	if d.MRs == nil {
+		panic("server.Deps.MRs cannot be nil")
 	}
 	if d.Layout == nil {
 		panic("server.Deps.Layout cannot be nil")
@@ -87,6 +93,10 @@ func New(d Deps) http.Handler {
 
 		(&issuehttp.Handler{
 			Users: d.Store, Issues: d.Issues, Verifier: verifier,
+		}).Mount(api)
+
+		(&mrhttp.Handler{
+			Users: d.Store, MRs: d.MRs, Layout: d.Layout, Verifier: verifier,
 		}).Mount(api)
 	})
 

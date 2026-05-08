@@ -335,6 +335,285 @@ func IsNotFound(err error) bool {
 	return false
 }
 
+// IsConflict reports whether err is a merge-conflict error from
+// CreateMergeCommit. The C wrapper tags the error message with "conflict:"
+// (which may appear anywhere in the formatted text produced by errFromC), so
+// IsConflict uses a case-insensitive substring check (see contains) rather
+// than a strict prefix test.
+func IsConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	return contains(err.Error(), "conflict:")
+}
+
+// ----------------------------------------------------------------------------
+// Merge / diff helpers (used by the MR domain)
+// ----------------------------------------------------------------------------
+
+// Author is the author/committer signature passed when creating commits via
+// CreateMergeCommit. When is converted to unix seconds in UTC.
+type Author struct {
+	Name  string
+	Email string
+	When  time.Time
+}
+
+// DiffEntry is one file's diff between two commit OIDs. Patch is empty
+// unless DiffOIDs was called with includePatch=true.
+type DiffEntry struct {
+	Path      string
+	OldPath   string
+	Status    string // added | modified | deleted | renamed | copied | typechange | other
+	Additions int
+	Deletions int
+	Patch     string
+}
+
+func diffStatusString(k C.int) string {
+	switch k {
+	case 0:
+		return "added"
+	case 1:
+		return "modified"
+	case 2:
+		return "deleted"
+	case 3:
+		return "renamed"
+	case 4:
+		return "copied"
+	case 5:
+		return "typechange"
+	default:
+		return "other"
+	}
+}
+
+// MergeBase returns the best common ancestor OID of oidA and oidB.
+func MergeBase(path, oidA, oidB string) (string, error) {
+	if err := Init(); err != nil {
+		return "", err
+	}
+	cPath := C.CString(path)
+	defer C.free(unsafe.Pointer(cPath))
+	cA := C.CString(oidA)
+	defer C.free(unsafe.Pointer(cA))
+	cB := C.CString(oidB)
+	defer C.free(unsafe.Pointer(cB))
+
+	var oid [41]C.char
+	var cerr C.wg_error
+	if rc := C.wg_repo_merge_base(cPath, cA, cB, &oid[0], &cerr); rc != 0 {
+		return "", errFromC(rc, cerr, "merge_base")
+	}
+	return C.GoString(&oid[0]), nil
+}
+
+// DiffOIDs returns the per-file diff between two commit OIDs (base..head).
+// When includePatch is true, each entry's Patch field is populated with the
+// full unified diff text.
+func DiffOIDs(path, baseOID, headOID string, includePatch bool) ([]DiffEntry, error) {
+	if err := Init(); err != nil {
+		return nil, err
+	}
+	cPath := C.CString(path)
+	defer C.free(unsafe.Pointer(cPath))
+	cBase := C.CString(baseOID)
+	defer C.free(unsafe.Pointer(cBase))
+	cHead := C.CString(headOID)
+	defer C.free(unsafe.Pointer(cHead))
+
+	var ip C.int
+	if includePatch {
+		ip = 1
+	}
+
+	var list C.wg_diff_list
+	var cerr C.wg_error
+	if rc := C.wg_repo_diff_oids(cPath, cBase, cHead, ip, &list, &cerr); rc != 0 {
+		return nil, errFromC(rc, cerr, "diff")
+	}
+	defer C.wg_diff_list_free(&list)
+
+	n := int(list.count)
+	if n == 0 {
+		return nil, nil
+	}
+	entries := unsafe.Slice(list.entries, n)
+	out := make([]DiffEntry, n)
+	for i := 0; i < n; i++ {
+		e := entries[i]
+		entry := DiffEntry{
+			Path:      C.GoString(&e.path[0]),
+			OldPath:   C.GoString(&e.old_path[0]),
+			Status:    diffStatusString(e.status),
+			Additions: int(e.additions),
+			Deletions: int(e.deletions),
+		}
+		if e.patch != nil && e.patch_size > 0 {
+			entry.Patch = C.GoStringN(e.patch, C.int(e.patch_size))
+		}
+		out[i] = entry
+	}
+	return out, nil
+}
+
+// LogRange returns commits reachable from includeOID but not from excludeOID,
+// up to max entries (max==0 -> 50). Used by MR commits endpoint to list the
+// commits being introduced by a source branch over its target.
+func LogRange(path, includeOID, excludeOID string, max int) ([]Commit, error) {
+	if err := Init(); err != nil {
+		return nil, err
+	}
+	cPath := C.CString(path)
+	defer C.free(unsafe.Pointer(cPath))
+	cInc := C.CString(includeOID)
+	defer C.free(unsafe.Pointer(cInc))
+	var cExc *C.char
+	if excludeOID != "" {
+		cExc = C.CString(excludeOID)
+		defer C.free(unsafe.Pointer(cExc))
+	}
+
+	var list C.wg_commit_list
+	var cerr C.wg_error
+	if rc := C.wg_repo_log_range(cPath, cInc, cExc, C.int(max), &list, &cerr); rc != 0 {
+		return nil, errFromC(rc, cerr, "log_range")
+	}
+	defer C.wg_commit_list_free(&list)
+
+	n := int(list.count)
+	if n == 0 {
+		return nil, nil
+	}
+	commits := unsafe.Slice(list.commits, n)
+	out := make([]Commit, n)
+	for i := 0; i < n; i++ {
+		c := commits[i]
+		commit := Commit{
+			OID:     C.GoString(&c.oid[0]),
+			TreeOID: C.GoString(&c.tree_oid[0]),
+			Message: C.GoString(&c.message[0]),
+			Author: Signature{
+				Name:  C.GoString(&c.author_name[0]),
+				Email: C.GoString(&c.author_email[0]),
+				When:  time.Unix(int64(c.author_time), 0).UTC(),
+			},
+			Committer: Signature{
+				Name:  C.GoString(&c.committer_name[0]),
+				Email: C.GoString(&c.committer_email[0]),
+				When:  time.Unix(int64(c.committer_time), 0).UTC(),
+			},
+		}
+		pn := int(c.parent_count)
+		if pn > 0 && c.parent_oids != nil {
+			parents := unsafe.Slice(c.parent_oids, pn)
+			commit.Parents = make([]string, pn)
+			for j := 0; j < pn; j++ {
+				commit.Parents[j] = C.GoString(parents[j])
+			}
+		}
+		out[i] = commit
+	}
+	return out, nil
+}
+
+// FFUpdateRef writes refName (a fully qualified ref like "refs/heads/main")
+// to point at newOID. It does NOT verify fast-forwardability — the caller
+// must call MergeBase first and confirm the result equals the current ref
+// tip. logMsg goes into the reflog (may be empty).
+func FFUpdateRef(path, refName, newOID, logMsg string) error {
+	if err := Init(); err != nil {
+		return err
+	}
+	cPath := C.CString(path)
+	defer C.free(unsafe.Pointer(cPath))
+	cRef := C.CString(refName)
+	defer C.free(unsafe.Pointer(cRef))
+	cOID := C.CString(newOID)
+	defer C.free(unsafe.Pointer(cOID))
+	cLog := C.CString(logMsg)
+	defer C.free(unsafe.Pointer(cLog))
+
+	var cerr C.wg_error
+	if rc := C.wg_repo_ff_update_ref(cPath, cRef, cOID, cLog, &cerr); rc != 0 {
+		return errFromC(rc, cerr, "ff_update_ref")
+	}
+	return nil
+}
+
+// CreateMergeCommit performs a 3-way merge of the trees at baseOID
+// (merge-base), oursOID (target tip), and theirsOID (source tip), and writes
+// the resulting commit into targetRef.
+//
+// When squash is false the new commit has two parents [oursOID, theirsOID]
+// (true merge commit). When squash is true the parent list is just [oursOID].
+//
+// On a merge conflict the returned error satisfies IsConflict — callers
+// should map it to apperr.Conflict and leave the MR open.
+func CreateMergeCommit(
+	path, targetRef, baseOID, oursOID, theirsOID string,
+	sig Author,
+	message, logMsg string,
+	squash bool,
+) (string, error) {
+	if err := Init(); err != nil {
+		return "", err
+	}
+	cPath := C.CString(path)
+	defer C.free(unsafe.Pointer(cPath))
+	cRef := C.CString(targetRef)
+	defer C.free(unsafe.Pointer(cRef))
+	cBase := C.CString(baseOID)
+	defer C.free(unsafe.Pointer(cBase))
+	cOurs := C.CString(oursOID)
+	defer C.free(unsafe.Pointer(cOurs))
+	cTheirs := C.CString(theirsOID)
+	defer C.free(unsafe.Pointer(cTheirs))
+	cMsg := C.CString(message)
+	defer C.free(unsafe.Pointer(cMsg))
+	cLog := C.CString(logMsg)
+	defer C.free(unsafe.Pointer(cLog))
+
+	var sq C.int
+	if squash {
+		sq = 1
+	}
+
+	var csig C.wg_signature
+	// Copy name/email into the fixed-size buffers via Go-side slices over the
+	// underlying memory; reserves a byte for the NUL terminator. Anything past
+	// the buffer length is truncated, matching the safe_copy semantics on the
+	// C side.
+	copyToCBuf := func(dst *C.char, dstLen int, src string) {
+		buf := unsafe.Slice((*byte)(unsafe.Pointer(dst)), dstLen)
+		n := copy(buf, src)
+		if n < dstLen {
+			buf[n] = 0
+		} else {
+			buf[dstLen-1] = 0
+		}
+	}
+	copyToCBuf(&csig.name[0], len(csig.name), sig.Name)
+	copyToCBuf(&csig.email[0], len(csig.email), sig.Email)
+	when := sig.When
+	if when.IsZero() {
+		when = time.Now()
+	}
+	csig.when = C.int64_t(when.Unix())
+
+	var oid [41]C.char
+	var cerr C.wg_error
+	if rc := C.wg_repo_create_merge_commit(
+		cPath, cRef, cBase, cOurs, cTheirs, sq,
+		&csig, cMsg, cLog,
+		&oid[0], &cerr,
+	); rc != 0 {
+		return "", errFromC(rc, cerr, "create_merge_commit")
+	}
+	return C.GoString(&oid[0]), nil
+}
+
 func contains(s, sub string) bool {
 	if len(sub) == 0 {
 		return true
