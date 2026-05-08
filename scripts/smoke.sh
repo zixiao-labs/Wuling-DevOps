@@ -27,11 +27,15 @@ ORG_SLUG="org${SUFFIX}"
 PROJECT_SLUG="proj${SUFFIX}"
 
 server_pid=""
+WORK=""
 cleanup() {
   if [ -n "$server_pid" ] && kill -0 "$server_pid" 2>/dev/null; then
     echo "stopping wuling-api ($server_pid)"
     kill "$server_pid" 2>/dev/null || true
     wait "$server_pid" 2>/dev/null || true
+  fi
+  if [ -n "$WORK" ]; then
+    rm -rf "$WORK"
   fi
 }
 trap cleanup EXIT
@@ -169,7 +173,6 @@ host_port="${BASE#*://}"
 REPO_URL="${proto}://${USER}:${PAT}@${host_port}/${ORG_SLUG}/${PROJECT_SLUG}/${REPO_SLUG}.git"
 
 WORK=$(mktemp -d -t wuling-smoke-XXXXXX)
-trap 'cleanup; rm -rf "$WORK"' EXIT
 (
   cd "$WORK"
   git init -q -b main

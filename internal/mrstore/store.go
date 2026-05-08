@@ -176,8 +176,10 @@ type ListMRsFilter struct {
 // ListMRs returns MRs in a repo matching filter, newest first.
 func (s *Store) ListMRs(ctx context.Context, repoID uuid.UUID, f ListMRsFilter) ([]model.MergeRequest, error) {
 	limit := f.Limit
-	if limit <= 0 || limit > 100 {
+	if limit <= 0 {
 		limit = 50
+	} else if limit > 100 {
+		limit = 100
 	}
 
 	args := []any{repoID}
@@ -252,6 +254,13 @@ type PatchMRParams struct {
 // dedicated MarkMerged / MarkClosed / MarkReopened methods so each carries
 // its own validation and audit field updates.
 func (s *Store) PatchMR(ctx context.Context, projectID uuid.UUID, number int64, p PatchMRParams) (*model.MergeRequest, error) {
+	// An empty patch (both fields nil) is a no-op and almost always a client
+	// bug — surface it as 400 instead of silently opening a transaction and
+	// returning the unchanged MR.
+	if p.Title == nil && p.Body == nil {
+		return nil, apperr.Validation("at least one field must be provided", nil)
+	}
+
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, apperr.Internal(err)

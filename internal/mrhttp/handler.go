@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -38,6 +39,14 @@ type Handler struct {
 	MRs      *mrstore.Store
 	Layout   *repostore.Layout
 	Verifier *auth.Verifier
+
+	// mergeLocks serialises concurrent merges that target the same branch in
+	// the same repo, so two MRs landing on refs/heads/main can't race the
+	// ref-write and produce a lost-update (we'd write the second merge
+	// without acknowledging the first, while MarkMerged still records the
+	// stale result). Process-local; sufficient for single-process deploys.
+	mergeMu    sync.Mutex
+	mergeLocks map[string]*sync.Mutex
 }
 
 // Mount registers routes under "/api/v1".
@@ -243,7 +252,15 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpapi.RenderError(w, r, err)
 		return
 	}
-	if req.SourceRef == req.TargetRef {
+	// MRs target branches only — reject explicit tag refs up-front so we
+	// don't try to fast-forward or merge-commit onto a tag.
+	if isTagRef(req.SourceRef) || isTagRef(req.TargetRef) {
+		httpapi.RenderError(w, r, apperr.New(apperr.CodeBadRequest, "source_ref and target_ref must be branches, not tags"))
+		return
+	}
+	// Compare on the qualified form so "main" and "refs/heads/main" don't
+	// sneak past the equality check.
+	if qualifyBranch(req.SourceRef) == qualifyBranch(req.TargetRef) {
 		httpapi.RenderError(w, r, apperr.Validation("source_ref and target_ref must differ", nil))
 		return
 	}
@@ -528,6 +545,13 @@ func (h *Handler) merge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Serialise concurrent merges into the same target ref. Without this two
+	// merges resolving the same target tip can both call FFUpdateRef
+	// non-atomically and lose one of the resulting commits, while MarkMerged
+	// still records both as merged.
+	unlock := h.lockTarget(rc.Repo.ID, mr.TargetRef)
+	defer unlock()
+
 	// Re-resolve both refs to current tips. We never trust the snapshot OIDs
 	// for the actual ref-write — other pushes may have advanced either side
 	// since the MR was opened.
@@ -646,13 +670,21 @@ func (h *Handler) close(w http.ResponseWriter, r *http.Request) {
 		httpapi.RenderError(w, r, err)
 		return
 	}
-	mr, err := h.MRs.MarkClosed(r.Context(), rc.ProjectID, number, rc.UserID)
+	// Validate the MR belongs to this repo BEFORE mutating state. (project_id,
+	// number) is unique but a project can hold several repos, so close-by-
+	// number alone could cross-close an MR that isn't ours to touch.
+	current, err := h.MRs.GetMRByNumber(r.Context(), rc.ProjectID, number)
 	if err != nil {
 		httpapi.RenderError(w, r, err)
 		return
 	}
-	if mr.RepoID != rc.Repo.ID {
+	if current.RepoID != rc.Repo.ID {
 		httpapi.RenderError(w, r, apperr.NotFound("merge request"))
+		return
+	}
+	mr, err := h.MRs.MarkClosed(r.Context(), rc.ProjectID, number, rc.UserID)
+	if err != nil {
+		httpapi.RenderError(w, r, err)
 		return
 	}
 	httpapi.WriteJSON(w, http.StatusOK, mr)
@@ -673,13 +705,18 @@ func (h *Handler) reopen(w http.ResponseWriter, r *http.Request) {
 		httpapi.RenderError(w, r, err)
 		return
 	}
-	mr, err := h.MRs.MarkReopened(r.Context(), rc.ProjectID, number)
+	current, err := h.MRs.GetMRByNumber(r.Context(), rc.ProjectID, number)
 	if err != nil {
 		httpapi.RenderError(w, r, err)
 		return
 	}
-	if mr.RepoID != rc.Repo.ID {
+	if current.RepoID != rc.Repo.ID {
 		httpapi.RenderError(w, r, apperr.NotFound("merge request"))
+		return
+	}
+	mr, err := h.MRs.MarkReopened(r.Context(), rc.ProjectID, number)
+	if err != nil {
+		httpapi.RenderError(w, r, err)
 		return
 	}
 	httpapi.WriteJSON(w, http.StatusOK, mr)
@@ -846,6 +883,12 @@ func qualifyBranch(spec string) string {
 	return "refs/heads/" + spec
 }
 
+// isTagRef reports whether spec is an explicit tag ref. Used by the create
+// handler to reject MRs targeting tags before we resolve them.
+func isTagRef(spec string) bool {
+	return strings.HasPrefix(spec, "refs/tags/")
+}
+
 // wantPatch returns true if the include= query parameter contains "patch".
 // We accept comma-separated tokens to leave room for future flags
 // (?include=patch,stats etc.) without breaking the URL shape.
@@ -868,4 +911,24 @@ func firstNonEmpty(vs ...string) string {
 		}
 	}
 	return ""
+}
+
+// lockTarget returns a function that releases a per-(repo, target_ref) lock
+// the caller must defer. The map of locks is grown lazily; entries stay
+// resident for the process lifetime, which is fine — the keyspace is bounded
+// by (repo × branch) and the per-key footprint is one sync.Mutex.
+func (h *Handler) lockTarget(repoID uuid.UUID, targetRef string) func() {
+	key := repoID.String() + "\x00" + targetRef
+	h.mergeMu.Lock()
+	if h.mergeLocks == nil {
+		h.mergeLocks = make(map[string]*sync.Mutex)
+	}
+	mu, ok := h.mergeLocks[key]
+	if !ok {
+		mu = &sync.Mutex{}
+		h.mergeLocks[key] = mu
+	}
+	h.mergeMu.Unlock()
+	mu.Lock()
+	return mu.Unlock
 }

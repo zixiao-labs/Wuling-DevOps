@@ -205,6 +205,11 @@ typedef struct wg_signature {
 // is moved to it atomically. If the merged index has conflicts, the function
 // returns rc < 0 and `err->message` starts with "conflict:" so the Go layer
 // can map to apperr.Conflict.
+//
+// `log_msg` is currently unused: libgit2 derives the reflog entry for the
+// commit from the message itself, and the ref move uses a fixed reflog string.
+// The parameter is kept in the signature for ABI stability and to leave room
+// for a custom reflog message in a future revision.
 int wg_repo_create_merge_commit(const char* path,
                                 const char* target_ref,
                                 const char* base_oid,

@@ -726,14 +726,18 @@ int wg_repo_diff_oids(const char* path,
 
         wg_diff_entry e{};
         e.status = status_to_int(delta->status);
-        if (delta->new_file.path) safe_copy(e.path, sizeof(e.path), delta->new_file.path);
-        if (delta->old_file.path && std::strcmp(delta->old_file.path, delta->new_file.path) != 0) {
-            safe_copy(e.old_path, sizeof(e.old_path), delta->old_file.path);
-        }
-        // For deletions the meaningful path is the old one.
-        if (delta->status == GIT_DELTA_DELETED && delta->old_file.path) {
-            safe_copy(e.path, sizeof(e.path), delta->old_file.path);
-            e.old_path[0] = '\0';
+        // For deletions the meaningful path is the old one; new_file.path is
+        // typically NULL there, so handle that case before any strcmp on it.
+        if (delta->status == GIT_DELTA_DELETED) {
+            if (delta->old_file.path) {
+                safe_copy(e.path, sizeof(e.path), delta->old_file.path);
+            }
+        } else {
+            if (delta->new_file.path) safe_copy(e.path, sizeof(e.path), delta->new_file.path);
+            if (delta->old_file.path && delta->new_file.path &&
+                std::strcmp(delta->old_file.path, delta->new_file.path) != 0) {
+                safe_copy(e.old_path, sizeof(e.old_path), delta->old_file.path);
+            }
         }
 
         size_t ctx = 0, adds = 0, dels = 0;
@@ -817,7 +821,7 @@ int wg_repo_create_merge_commit(const char* path,
                                 int squash,
                                 const wg_signature* sig,
                                 const char* message,
-                                const char* /*log_msg*/,
+                                const char* /*log_msg*/, // reserved; libgit2 derives the reflog entry from `message` for the commit and uses a fixed string for the ref move.
                                 char oid_out[41],
                                 wg_error* err) {
     if (!sig) { fill_err(err, -1, "missing signature"); return -1; }

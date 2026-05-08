@@ -4,6 +4,7 @@
 package repostore
 
 import (
+	"errors"
 	"io/fs"
 	"path/filepath"
 
@@ -28,26 +29,28 @@ func (l *Layout) Path(orgID, projectID, repoID uuid.UUID) string {
 // "roughly" because Git's pack files compress, so the on-disk size lags real
 // content size, but it's enough for UI sorting and quota signals.
 //
-// Errors during the walk other than the root being absent are surfaced; an
-// absent root path returns size 0 with no error so the caller can fall back
-// to the existing DB value rather than blowing up. Symlinks aren't followed.
+// An absent root path returns size 0 with no error so the caller can fall
+// back to the existing DB value rather than blowing up. Any other traversal
+// error is surfaced. Symlinks aren't followed.
 func DirSize(path string) (int64, error) {
 	var total int64
 	err := filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			// If the root itself doesn't exist, propagate so callers can
-			// distinguish "couldn't even open" from "empty repo".
-			if p == path {
-				return err
+			// Absent root → 0,nil. Other root errors (permission denied,
+			// I/O) propagate so the caller sees the real failure.
+			if p == path && errors.Is(err, fs.ErrNotExist) {
+				return nil
 			}
-			// Otherwise skip the offending entry.
-			return nil
+			return err
 		}
 		if d.IsDir() {
 			return nil
 		}
 		info, err := d.Info()
 		if err != nil {
+			// Best-effort: a concurrent delete (e.g. git GC removing a pack
+			// file mid-walk) shouldn't fail the whole estimate. Intentionally
+			// ignored — silences golangci-lint nilerr; do not "fix".
 			return nil
 		}
 		// Mode().IsRegular() filters symlinks, sockets, devices, etc.

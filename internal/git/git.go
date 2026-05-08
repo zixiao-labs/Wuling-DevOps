@@ -336,9 +336,10 @@ func IsNotFound(err error) bool {
 }
 
 // IsConflict reports whether err is a merge-conflict error from
-// CreateMergeCommit. The C wrapper prefixes the error message with
-// "conflict:" so the Go side can map it to apperr.Conflict without a
-// separate error code.
+// CreateMergeCommit. The C wrapper tags the error message with "conflict:"
+// (which may appear anywhere in the formatted text produced by errFromC), so
+// IsConflict uses a case-insensitive substring check (see contains) rather
+// than a strict prefix test.
 func IsConflict(err error) bool {
 	if err == nil {
 		return false
