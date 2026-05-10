@@ -40,7 +40,26 @@ jobs:
         run: go vet ./...
 
       - name: Run tests
-        run: go test ./... -count=1 || true
+        run: go test ./... -count=1 -coverprofile=coverage.out -covermode=atomic
+
+      - name: Coverage summary
+        if: always()
+        run: |
+          {
+            echo '## Coverage'
+            echo
+            echo '```'
+            go tool cover -func=coverage.out
+            echo '```'
+          } > coverage.md
+
+      - name: Comment coverage on PR
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          GITHUB_TOKEN: ${{ secrets.SYNC_PAT }}
+          header: coverage
+          path: coverage.md
 
       - name: Build project
         run: go build ./...
