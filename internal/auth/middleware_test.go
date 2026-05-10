@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -41,7 +42,7 @@ func decodeErrBody(t *testing.T, body string) errBody {
 func TestMiddleware_NoHeader_Required(t *testing.T) {
 	v := NewVerifier(testJWTConfig(time.Minute))
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/x", nil)
 	Middleware(v, false)(dummyHandler(t, nil)).ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusUnauthorized, rr.Code)
@@ -55,7 +56,7 @@ func TestMiddleware_NoHeader_Optional(t *testing.T) {
 	v := NewVerifier(testJWTConfig(time.Minute))
 	var captured *Identity
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/x", nil)
 	Middleware(v, true)(dummyHandler(t, &captured)).ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusNoContent, rr.Code)
@@ -65,7 +66,7 @@ func TestMiddleware_NoHeader_Optional(t *testing.T) {
 func TestMiddleware_NotBearer(t *testing.T) {
 	v := NewVerifier(testJWTConfig(time.Minute))
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/x", nil)
 	req.Header.Set("Authorization", "Basic Zm9vOmJhcg==")
 	Middleware(v, false)(dummyHandler(t, nil)).ServeHTTP(rr, req)
 
@@ -76,7 +77,7 @@ func TestMiddleware_NotBearer(t *testing.T) {
 func TestMiddleware_InvalidToken(t *testing.T) {
 	v := NewVerifier(testJWTConfig(time.Minute))
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/x", nil)
 	req.Header.Set("Authorization", "Bearer not.a.real.jwt")
 	Middleware(v, false)(dummyHandler(t, nil)).ServeHTTP(rr, req)
 
@@ -91,7 +92,7 @@ func TestMiddleware_ExpiredToken(t *testing.T) {
 
 	verifier := NewVerifier(testJWTConfig(time.Minute))
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/x", nil)
 	req.Header.Set("Authorization", "Bearer "+tok)
 	Middleware(verifier, false)(dummyHandler(t, nil)).ServeHTTP(rr, req)
 
@@ -106,7 +107,7 @@ func TestMiddleware_Valid(t *testing.T) {
 
 	var captured *Identity
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/x", nil)
 	req.Header.Set("Authorization", "Bearer "+tok)
 	Middleware(NewVerifier(cfg), false)(dummyHandler(t, &captured)).ServeHTTP(rr, req)
 
@@ -118,7 +119,7 @@ func TestMiddleware_Valid(t *testing.T) {
 }
 
 func TestRequireIdentity_Missing(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 	_, err := RequireIdentity(req)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "authentication required")
@@ -127,7 +128,7 @@ func TestRequireIdentity_Missing(t *testing.T) {
 func TestRequireIdentity_Present(t *testing.T) {
 	uid := uuid.New()
 	want := &Identity{UserID: uid, Username: "u", Source: IdentitySourceJWT}
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil)
 	req = req.WithContext(WithIdentity(req.Context(), want))
 	got, err := RequireIdentity(req)
 	require.NoError(t, err)
@@ -136,11 +137,11 @@ func TestRequireIdentity_Present(t *testing.T) {
 
 func TestWithIdentity_RoundTrip(t *testing.T) {
 	want := &Identity{UserID: uuid.New(), Username: "x", Source: IdentitySourcePAT}
-	ctx := WithIdentity(httptest.NewRequest(http.MethodGet, "/", nil).Context(), want)
+	ctx := WithIdentity(httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil).Context(), want)
 	got, ok := IdentityFromContext(ctx)
 	require.True(t, ok)
 	assert.Equal(t, want, got)
 
-	_, ok = IdentityFromContext(httptest.NewRequest(http.MethodGet, "/", nil).Context())
+	_, ok = IdentityFromContext(httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/", nil).Context())
 	assert.False(t, ok, "fresh ctx has no identity")
 }
