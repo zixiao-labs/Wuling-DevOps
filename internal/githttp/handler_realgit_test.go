@@ -32,11 +32,14 @@ func realGitRequired(t *testing.T) {
 }
 
 // initBareRepoOnDisk creates an actual bare git repository at layoutPath so
-// `git-upload-pack`/`git-receive-pack` have something to talk to.
+// `git-upload-pack`/`git-receive-pack` have something to talk to. Pin the
+// initial branch to "main" — older Ubuntu runners default to "master", which
+// would leave HEAD pointing at a ref that the test source repo never pushes,
+// and `git clone` would silently produce an empty worktree.
 func initBareRepoOnDisk(t *testing.T, layoutPath string) {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(filepath.Dir(layoutPath), 0o755))
-	cmd := exec.Command("git", "init", "--bare", layoutPath)
+	cmd := exec.Command("git", "init", "--bare", "--initial-branch=main", layoutPath)
 	cmd.Stderr = os.Stderr
 	require.NoError(t, cmd.Run(), "git init --bare failed")
 }
