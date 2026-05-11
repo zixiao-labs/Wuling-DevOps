@@ -2,8 +2,9 @@
 //
 // It runs migrations on boot (idempotent), opens the Postgres pool, brings up
 // libgit2, and serves HTTP — both the JSON API at /api/v1 and Git smart HTTP
-// at the root. Pipelines run as a separate process and aren't part of this
-// binary.
+// at the root. The embedded SSH listener (Git transport over SSH) runs on a
+// separate port alongside the HTTP listener. Pipelines run as a separate
+// process and aren't part of this binary.
 package main
 
 import (
@@ -20,11 +21,14 @@ import (
 	"github.com/zixiao-labs/wuling-devops/internal/config"
 	"github.com/zixiao-labs/wuling-devops/internal/db"
 	"github.com/zixiao-labs/wuling-devops/internal/git"
+	"github.com/zixiao-labs/wuling-devops/internal/insightstore"
 	"github.com/zixiao-labs/wuling-devops/internal/issuestore"
 	"github.com/zixiao-labs/wuling-devops/internal/mrstore"
 	"github.com/zixiao-labs/wuling-devops/internal/repostore"
 	"github.com/zixiao-labs/wuling-devops/internal/server"
+	"github.com/zixiao-labs/wuling-devops/internal/sshd"
 	"github.com/zixiao-labs/wuling-devops/internal/userstore"
+	"github.com/zixiao-labs/wuling-devops/internal/wikistore"
 )
 
 func main() {
@@ -46,6 +50,8 @@ func run() error {
 		"env", cfg.Env,
 		"addr", cfg.HTTP.Addr,
 		"repo_root", cfg.Storage.RepoRoot,
+		"ssh_enabled", cfg.SSH.Enabled,
+		"ssh_addr", cfg.SSH.Addr,
 	)
 
 	// Ensure repo root exists before serving.
@@ -76,15 +82,19 @@ func run() error {
 	issues := issuestore.New(pool)
 	mrs := mrstore.New(pool)
 	layout := repostore.New(cfg.Storage.RepoRoot)
+	wikis := wikistore.New(layout)
+	insights := insightstore.New(pool, log.With("component", "insights"))
 
 	handler := server.New(server.Deps{
-		Cfg:    cfg,
-		Log:    log,
-		Pool:   pool,
-		Store:  store,
-		Issues: issues,
-		MRs:    mrs,
-		Layout: layout,
+		Cfg:      cfg,
+		Log:      log,
+		Pool:     pool,
+		Store:    store,
+		Issues:   issues,
+		MRs:      mrs,
+		Wikis:    wikis,
+		Insights: insights,
+		Layout:   layout,
 	})
 
 	srv := &http.Server{
@@ -95,8 +105,10 @@ func run() error {
 		IdleTimeout:  cfg.HTTP.IdleTimeout,
 	}
 
-	// Run the server until we're signalled to stop.
-	srvErr := make(chan error, 1)
+	// Run HTTP and SSH until we're signalled to stop. Errors from either
+	// goroutine collapse onto a single channel so the main loop can react
+	// to whichever fails first.
+	srvErr := make(chan error, 2)
 	go func() {
 		log.Info("listening", "addr", cfg.HTTP.Addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -104,18 +116,42 @@ func run() error {
 		}
 	}()
 
+	var sshServer *sshd.Server
+	if cfg.SSH.Enabled {
+		sshServer, err = sshd.New(sshd.Deps{
+			Cfg:     cfg.SSH,
+			Log:     log.With("component", "sshd"),
+			Store:   store,
+			Layout:  layout,
+			Indexer: insights,
+		})
+		if err != nil {
+			return err
+		}
+		sshServer.Start(srvErr)
+	}
+
 	select {
 	case <-rootCtx.Done():
 		log.Info("shutdown signal received")
 	case err := <-srvErr:
+		// Best-effort shutdown of whatever is still running.
+		_ = srv.Close()
+		if sshServer != nil {
+			_ = sshServer.Shutdown(context.Background())
+		}
 		return err
 	}
 
 	shutCtx, cancel := context.WithTimeout(context.Background(), cfg.HTTP.ShutdownTimeout)
 	defer cancel()
 	if err := srv.Shutdown(shutCtx); err != nil {
-		log.Warn("graceful shutdown failed", "err", err)
-		return err
+		log.Warn("graceful http shutdown failed", "err", err)
+	}
+	if sshServer != nil {
+		if err := sshServer.Shutdown(shutCtx); err != nil {
+			log.Warn("graceful ssh shutdown failed", "err", err)
+		}
 	}
 	log.Info("bye")
 	_ = time.Now() // keep import; harmless

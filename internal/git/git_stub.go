@@ -130,3 +130,13 @@ func FFUpdateRef(string, string, string, string) error { return ErrCGOUnsupporte
 func CreateMergeCommit(string, string, string, string, string, Author, string, string, bool) (string, error) {
 	return "", ErrCGOUnsupported
 }
+
+// CommitFile reports the build is missing libgit2.
+func CommitFile(string, string, string, []byte, Author, string) (string, error) {
+	return "", ErrCGOUnsupported
+}
+
+// DeleteFile reports the build is missing libgit2.
+func DeleteFile(string, string, string, Author, string) (string, error) {
+	return "", ErrCGOUnsupported
+}

@@ -6,15 +6,17 @@ info:
     Stage 1 of the Wuling DevOps platform.
 
     What's implemented:
-      - Auth (register, login, /me, personal access tokens)
+      - Auth (register, login, /me, personal access tokens, SSH public keys)
       - Orgs and Projects (CRUD)
       - Repositories (CRUD + libgit2-backed read APIs)
-      - Git smart HTTP (clone/fetch/push)
+      - Git smart HTTP (clone/fetch/push) and Git over SSH (default :2222)
       - Issues (CRUD, labels, comments, assignees)
       - Merge Requests (open/diff/merge with FF/merge-commit/squash, comments, reviews)
+      - Wiki (per-project Markdown pages backed by a separate Git repo)
+      - Insights (per-project activity, contributors, language stats)
 
     Planned for later stages (URLs reserved, not yet served):
-      - Pipelines, Wiki, Insight
+      - Pipelines
 
     All errors use the JSON envelope:
       { "error": { "code": "<stable_code>", "message": "<human msg>", "details": {} } }
@@ -135,6 +137,46 @@ paths:
       parameters:
         - in: path
           name: token_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: deleted }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/auth/ssh-keys:
+    get:
+      summary: List the caller's registered SSH public keys
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ssh_keys:
+                    type: array
+                    items: { $ref: "#/components/schemas/SSHKey" }
+    post:
+      summary: Register an SSH public key (used by the embedded Git-over-SSH server)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateSSHKeyRequest" }
+      responses:
+        "201":
+          description: created
+          content: { application/json: { schema: { $ref: "#/components/schemas/SSHKey" } } }
+        "409": { $ref: "#/components/responses/ConflictError" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+
+  /api/v1/auth/ssh-keys/{key_id}:
+    delete:
+      summary: Revoke a registered SSH key
+      parameters:
+        - in: path
+          name: key_id
           required: true
           schema: { type: string, format: uuid }
       responses:
@@ -983,6 +1025,163 @@ paths:
         "200":
           description: report-status stream
 
+  # ---------------- wiki ----------------
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/wiki/pages:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+    get:
+      summary: List every Markdown page in the project wiki
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pages:
+                    type: array
+                    items: { $ref: "#/components/schemas/WikiPage" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/wiki/pages/{path}:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - in: path
+        name: path
+        required: true
+        schema: { type: string }
+        description: |
+          Forward-slash separated path ending in ".md" (e.g. "Home.md",
+          "docs/usage.md"). Nested paths are supported up to 8 levels deep.
+    get:
+      summary: Fetch a single page (raw Markdown + sanitized HTML)
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WikiPageContent" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+    put:
+      summary: Create or update a page (commits via libgit2)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PutWikiPageRequest" }
+      responses:
+        "201":
+          description: page written
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WikiPageContent" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+    delete:
+      summary: Delete a page (creates a deletion commit)
+      responses:
+        "204": { description: deleted }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/wiki/history:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - in: query
+        name: limit
+        schema: { type: integer, minimum: 1, maximum: 200 }
+    get:
+      summary: Recent commits on the wiki repo's default branch
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  commits:
+                    type: array
+                    items: { $ref: "#/components/schemas/GitCommit" }
+
+  # ---------------- insights ----------------
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/insights/activity:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - in: query
+        name: since
+        schema: { type: string }
+        description: |
+          Time window for the rollup. Accepts "<n>d", "<n>w", "<n>y" or a
+          bare integer in seconds. Default 30d.
+    get:
+      summary: Per-day rollup of issues / MRs / commits across the project
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  days:
+                    type: array
+                    items: { $ref: "#/components/schemas/ActivityDay" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/insights/contributors:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - in: query
+        name: repo
+        required: true
+        schema: { type: string }
+      - in: query
+        name: since
+        schema: { type: string }
+      - in: query
+        name: limit
+        schema: { type: integer, minimum: 1, maximum: 100 }
+    get:
+      summary: Top contributors by commit count for a repo over a window
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  contributors:
+                    type: array
+                    items: { $ref: "#/components/schemas/ContributorStat" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/insights/languages:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - in: query
+        name: repo
+        required: true
+        schema: { type: string }
+      - in: query
+        name: ref
+        schema: { type: string }
+        description: Branch or revspec; defaults to the repo's default branch.
+    get:
+      summary: Bytes and file counts per detected language across the latest tree
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LanguageStats" }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1402,3 +1601,131 @@ components:
           description: |
             Unified diff text for this file. Populated only when the request
             included `?include=patch`.
+
+    # ---------------- Wiki ----------------
+
+    WikiPage:
+      type: object
+      properties:
+        path: { type: string }
+        size: { type: integer, format: int64 }
+        updated_at: { type: string, format: date-time, nullable: true }
+
+    WikiPageContent:
+      type: object
+      properties:
+        path: { type: string }
+        raw: { type: string }
+        html:
+          type: string
+          description: |
+            Markdown rendered to HTML via goldmark (GFM) and sanitized through
+            bluemonday's UGCPolicy. Safe to render directly into the DOM.
+        commit_oid: { type: string }
+
+    PutWikiPageRequest:
+      type: object
+      properties:
+        content: { type: string, maxLength: 1048576 }
+        message:
+          type: string
+          maxLength: 512
+          description: Optional commit message. Defaults to "Update <path>".
+
+    GitCommit:
+      type: object
+      description: A single commit as returned by the libgit2 wrapper.
+      properties:
+        oid: { type: string }
+        tree_oid: { type: string }
+        message: { type: string }
+        parents:
+          type: array
+          items: { type: string }
+        author:
+          type: object
+          properties:
+            name: { type: string }
+            email: { type: string }
+            when: { type: string, format: date-time }
+        committer:
+          type: object
+          properties:
+            name: { type: string }
+            email: { type: string }
+            when: { type: string, format: date-time }
+
+    # ---------------- Insights ----------------
+
+    ActivityDay:
+      type: object
+      properties:
+        date: { type: string, description: "YYYY-MM-DD (UTC)" }
+        issues_opened: { type: integer, format: int64 }
+        issues_closed: { type: integer, format: int64 }
+        mrs_opened: { type: integer, format: int64 }
+        mrs_merged: { type: integer, format: int64 }
+        commits: { type: integer, format: int64 }
+
+    ContributorStat:
+      type: object
+      properties:
+        email: { type: string }
+        name: { type: string }
+        commits: { type: integer, format: int64 }
+
+    LanguageStats:
+      type: object
+      properties:
+        bytes:
+          type: object
+          additionalProperties: { type: integer, format: int64 }
+          description: |
+            Total UTF-8 bytes per detected language across the walked tree.
+            Binary blobs are skipped; languages are inferred from file
+            extension and a small basename map (Dockerfile, Makefile, ...).
+        files:
+          type: object
+          additionalProperties: { type: integer, format: int64 }
+          description: File counts per language.
+
+    # ---------------- SSH ----------------
+
+    SSHKey:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        fingerprint:
+          type: string
+          description: SHA256:... fingerprint as ssh-keygen prints.
+        public_key:
+          type: string
+          description: |
+            Canonical authorized_keys line (key type + base64 blob, no
+            comment). Always normalised on insert.
+        created_at: { type: string, format: date-time }
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    CreateSSHKeyRequest:
+      type: object
+      required: [title, public_key]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Human label for the key (e.g. "laptop", "ci-runner").
+        public_key:
+          type: string
+          minLength: 1
+          maxLength: 8192
+          description: |
+            One-line OpenSSH public key (the contents of `~/.ssh/id_*.pub`).
+            Accepts ssh-rsa, ssh-ed25519, ecdsa-sha2-*; rejects everything
+            else with 400.
+
+

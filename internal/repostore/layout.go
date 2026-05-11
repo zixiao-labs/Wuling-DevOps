@@ -24,6 +24,14 @@ func (l *Layout) Path(orgID, projectID, repoID uuid.UUID) string {
 	return filepath.Join(l.Root, orgID.String(), projectID.String(), repoID.String()+".git")
 }
 
+// WikiPath returns the absolute filesystem path for a project's wiki repo.
+// One wiki per project, sibling to the per-repo .git dirs. Stored under the
+// project's directory (not under any repo) so it's clearly project-scoped
+// and so deleting an individual repo never deletes the wiki by accident.
+func (l *Layout) WikiPath(orgID, projectID uuid.UUID) string {
+	return filepath.Join(l.Root, orgID.String(), projectID.String(), "wiki.git")
+}
+
 // DirSize returns the total byte size of all regular files under path,
 // recursively. Used after a merge to keep repos.size_bytes roughly in sync —
 // "roughly" because Git's pack files compress, so the on-disk size lags real

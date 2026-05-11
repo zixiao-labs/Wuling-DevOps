@@ -18,6 +18,7 @@ import (
 type Config struct {
 	Env     string `env:"WULING_ENV" envDefault:"dev"`
 	HTTP    HTTPConfig
+	SSH     SSHConfig
 	DB      DBConfig
 	JWT     JWTConfig
 	Storage StorageConfig
@@ -68,6 +69,18 @@ type JWTConfig struct {
 // renames don't move files.
 type StorageConfig struct {
 	RepoRoot string `env:"WULING_REPO_ROOT" envDefault:"./var/repos"`
+}
+
+// SSHConfig controls the embedded SSH server used for Git transport.
+//
+// HostKeyPath: if the file exists, it's loaded; otherwise an ed25519 key is
+// generated on first boot and persisted with mode 0o600. This matches how
+// the RepoRoot is treated — zero-config for dev, persistent across restarts,
+// overridable by operators that pre-bake a key into a secret.
+type SSHConfig struct {
+	Enabled     bool   `env:"WULING_SSH_ENABLED" envDefault:"true"`
+	Addr        string `env:"WULING_SSH_ADDR" envDefault:":2222"`
+	HostKeyPath string `env:"WULING_SSH_HOST_KEY" envDefault:"./var/ssh/host_ed25519"`
 }
 
 // OAuthConfig is the GitHub OAuth client configuration. Endpoint is wired

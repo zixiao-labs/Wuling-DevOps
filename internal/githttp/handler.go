@@ -36,6 +36,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/zixiao-labs/wuling-devops/internal/apperr"
 	"github.com/zixiao-labs/wuling-devops/internal/auth"
@@ -59,6 +60,18 @@ type Handler struct {
 	// GitBinary lets ops override the path (e.g. for a vendored git). Empty =
 	// look up "git" on PATH.
 	GitBinary string
+
+	// Indexer, when non-nil, is invoked after a successful receive-pack so the
+	// Insights commit index stays current. The implementation runs in its own
+	// goroutine — callers should never block the push response on indexing.
+	Indexer CommitIndexer
+}
+
+// CommitIndexer is the narrow surface githttp needs from insightstore.
+// Defining it locally keeps this package free of the insightstore import,
+// and lets tests substitute a no-op.
+type CommitIndexer interface {
+	IndexAsync(repoID uuid.UUID, repoPath string)
 }
 
 func (h *Handler) logger() *slog.Logger {
@@ -293,6 +306,12 @@ func (h *Handler) servicePack(w http.ResponseWriter, r *http.Request, sub string
 		if err := h.Store.MarkRepoNotEmpty(r.Context(), ar.Repo.ID); err != nil {
 			h.logger().Warn("mark repo non-empty failed",
 				"repo_id", ar.Repo.ID, "err", err)
+		}
+		// Fire the Insights commit index in the background. The push response
+		// has already been streamed; the indexer uses a fresh context so
+		// cancellation of the request context doesn't cut it short.
+		if h.Indexer != nil {
+			h.Indexer.IndexAsync(ar.Repo.ID, ar.RepoPath)
 		}
 	}
 }

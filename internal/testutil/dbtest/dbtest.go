@@ -64,6 +64,8 @@ func Reset(t *testing.T, pool *db.Pool) {
 	defer cancel()
 	if _, err := pool.Exec(ctx, `
 		TRUNCATE TABLE
+			repo_commit_index,
+			user_ssh_keys,
 			access_tokens,
 			org_members,
 			repos,
