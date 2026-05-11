@@ -99,17 +99,21 @@ func TestIndexer_Idempotent(t *testing.T) {
 	insights := insightstore.New(pool, slog.Default())
 
 	ctx := context.Background()
-	hash, _ := auth.HashPassword("x")
-	_, org, _ := store.CreateUser(ctx, userstore.CreateUserParams{
+	hash, err := auth.HashPassword("x")
+	require.NoError(t, err)
+	_, org, err := store.CreateUser(ctx, userstore.CreateUserParams{
 		Username: "idem", Email: "idem@x", PasswordHash: hash,
 	})
-	proj, _ := store.CreateProject(ctx, userstore.CreateProjectParams{OrgID: org.ID, Slug: "p"})
-	repo, _ := store.CreateRepo(ctx, userstore.CreateRepoParams{ProjectID: proj.ID, Slug: "r"})
+	require.NoError(t, err)
+	proj, err := store.CreateProject(ctx, userstore.CreateProjectParams{OrgID: org.ID, Slug: "p"})
+	require.NoError(t, err)
+	repo, err := store.CreateRepo(ctx, userstore.CreateRepoParams{ProjectID: proj.ID, Slug: "r"})
+	require.NoError(t, err)
 
 	repoPath := filepath.Join(t.TempDir(), "repo.git")
 	require.NoError(t, git.InitBare(repoPath, "main"))
 	sig := git.Author{Name: "T", Email: "t@x", When: time.Now().UTC()}
-	_, err := git.CommitFile(repoPath, "refs/heads/main", "a.md", []byte("a"), sig, "1")
+	_, err = git.CommitFile(repoPath, "refs/heads/main", "a.md", []byte("a"), sig, "1")
 	require.NoError(t, err)
 
 	require.NoError(t, insights.IndexNow(ctx, repo.ID, repoPath))

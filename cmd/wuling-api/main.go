@@ -143,13 +143,17 @@ func run() error {
 		return err
 	}
 
-	shutCtx, cancel := context.WithTimeout(context.Background(), cfg.HTTP.ShutdownTimeout)
-	defer cancel()
-	if err := srv.Shutdown(shutCtx); err != nil {
+	// Give each shutdown its own budget. Sharing one context would let the
+	// HTTP graceful shutdown burn the whole window and starve the SSH one.
+	httpShutCtx, httpCancel := context.WithTimeout(context.Background(), cfg.HTTP.ShutdownTimeout)
+	defer httpCancel()
+	if err := srv.Shutdown(httpShutCtx); err != nil {
 		log.Warn("graceful http shutdown failed", "err", err)
 	}
 	if sshServer != nil {
-		if err := sshServer.Shutdown(shutCtx); err != nil {
+		sshShutCtx, sshCancel := context.WithTimeout(context.Background(), cfg.HTTP.ShutdownTimeout)
+		defer sshCancel()
+		if err := sshServer.Shutdown(sshShutCtx); err != nil {
 			log.Warn("graceful ssh shutdown failed", "err", err)
 		}
 	}

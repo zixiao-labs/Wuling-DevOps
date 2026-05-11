@@ -124,7 +124,7 @@ func (h *Handler) contributors(w http.ResponseWriter, r *http.Request) {
 	}
 	limit := 20
 	if l := r.URL.Query().Get("limit"); l != "" {
-		if n, perr := strconv.Atoi(l); perr == nil && n > 0 {
+		if n, perr := strconv.Atoi(l); perr == nil && n > 0 && n <= 100 {
 			limit = n
 		}
 	}

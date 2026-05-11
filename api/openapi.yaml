@@ -1057,6 +1057,11 @@ paths:
         description: |
           Forward-slash separated path ending in ".md" (e.g. "Home.md",
           "docs/usage.md"). Nested paths are supported up to 8 levels deep.
+
+          The interior "/" separators must be percent-encoded by the client
+          so the whole path is delivered as a single path segment. For
+          example, `docs/usage.md` is sent as `docs%2Fusage.md`. Servers
+          decode the segment once before validating the wiki path.
     get:
       summary: Fetch a single page (raw Markdown + sanitized HTML)
       responses:
@@ -1688,6 +1693,13 @@ components:
           type: object
           additionalProperties: { type: integer, format: int64 }
           description: File counts per language.
+        truncated:
+          type: boolean
+          description: |
+            True when the walker hit its blob cap before reaching every
+            file. In that case the byte and file counts are a lower bound,
+            not an exact total. Omitted (treated as false) when the walk
+            completed in full.
 
     # ---------------- SSH ----------------
 

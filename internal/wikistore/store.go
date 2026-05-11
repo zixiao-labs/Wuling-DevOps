@@ -127,17 +127,10 @@ func (s *Store) ListPages(orgID, projectID uuid.UUID) ([]model.WikiPage, error) 
 	// Stable order regardless of tree iteration internals.
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 
-	// Best-effort: stamp updated_at from the most recent commit on the wiki.
-	// Walking every blob through `git log -- <path>` would be wasteful for a
-	// list view, so we attribute the head commit's time to every page. The
-	// per-page time is exposed via GetPage instead.
-	commits, _ := git.Log(wikiPath, headOID, 1)
-	if len(commits) > 0 {
-		t := commits[0].Author.When
-		for i := range out {
-			out[i].UpdatedAt = &t
-		}
-	}
+	// Per-page UpdatedAt is left nil here. Stamping every page with the wiki
+	// HEAD time was misleading (a one-off commit to page A would advance
+	// page B's UpdatedAt). The per-page time is only populated by GetPage,
+	// which can afford the per-blob history lookup.
 	return out, nil
 }
 

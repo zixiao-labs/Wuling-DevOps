@@ -30,8 +30,8 @@ import (
 const MaxCommitsPerWalk = 5000
 
 // MaxLanguageBlobs caps the language-tree walk so an enormous monorepo
-// can't blow the request budget. Anything past this is silently ignored —
-// we surface "approx" in the response shape via the schema name in OpenAPI.
+// can't blow the request budget. Anything past this is reported back via
+// LanguageStats.Truncated so the client knows the totals are a lower bound.
 const MaxLanguageBlobs = 10000
 
 // Store is the data-access object for Insights.
@@ -157,12 +157,16 @@ func (s *Store) Activity(ctx context.Context, projectID uuid.UUID, since time.Du
 		since = 30 * 24 * time.Hour
 	}
 	now := time.Now().UTC()
-	start := now.Add(-since).Truncate(24 * time.Hour)
+	windowStart := now.Add(-since)
+	// Truncated start is only used for prefilling the day buckets and the
+	// index map — the SQL filter uses the precise windowStart so commits
+	// from before windowStart on the same calendar day aren't included.
+	truncatedStart := windowStart.Truncate(24 * time.Hour)
 
 	// We pre-fill every day in the range so a quiet project still gets a
 	// continuous timeline back, which is what the UI wants.
 	days := make([]model.ActivityDay, 0, int(since/(24*time.Hour))+1)
-	for d := start; !d.After(now); d = d.Add(24 * time.Hour) {
+	for d := truncatedStart; !d.After(now); d = d.Add(24 * time.Hour) {
 		days = append(days, model.ActivityDay{Date: d.Format("2006-01-02")})
 	}
 	if len(days) == 0 {
@@ -178,7 +182,7 @@ func (s *Store) Activity(ctx context.Context, projectID uuid.UUID, since time.Du
 		SELECT to_char(date_trunc('day', created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS d, COUNT(*)
 		FROM issues
 		WHERE project_id = $1 AND created_at >= $2
-		GROUP BY d`, projectID, start, idx, func(d *model.ActivityDay, n int64) { d.IssuesOpened = n }); err != nil {
+		GROUP BY d`, projectID, windowStart, idx, func(d *model.ActivityDay, n int64) { d.IssuesOpened = n }); err != nil {
 		return nil, err
 	}
 	// Issues closed.
@@ -186,7 +190,7 @@ func (s *Store) Activity(ctx context.Context, projectID uuid.UUID, since time.Du
 		SELECT to_char(date_trunc('day', closed_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS d, COUNT(*)
 		FROM issues
 		WHERE project_id = $1 AND closed_at IS NOT NULL AND closed_at >= $2
-		GROUP BY d`, projectID, start, idx, func(d *model.ActivityDay, n int64) { d.IssuesClosed = n }); err != nil {
+		GROUP BY d`, projectID, windowStart, idx, func(d *model.ActivityDay, n int64) { d.IssuesClosed = n }); err != nil {
 		return nil, err
 	}
 	// MRs opened.
@@ -194,7 +198,7 @@ func (s *Store) Activity(ctx context.Context, projectID uuid.UUID, since time.Du
 		SELECT to_char(date_trunc('day', created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS d, COUNT(*)
 		FROM merge_requests
 		WHERE project_id = $1 AND created_at >= $2
-		GROUP BY d`, projectID, start, idx, func(d *model.ActivityDay, n int64) { d.MRsOpened = n }); err != nil {
+		GROUP BY d`, projectID, windowStart, idx, func(d *model.ActivityDay, n int64) { d.MRsOpened = n }); err != nil {
 		return nil, err
 	}
 	// MRs merged.
@@ -202,7 +206,7 @@ func (s *Store) Activity(ctx context.Context, projectID uuid.UUID, since time.Du
 		SELECT to_char(date_trunc('day', merged_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS d, COUNT(*)
 		FROM merge_requests
 		WHERE project_id = $1 AND merged_at IS NOT NULL AND merged_at >= $2
-		GROUP BY d`, projectID, start, idx, func(d *model.ActivityDay, n int64) { d.MRsMerged = n }); err != nil {
+		GROUP BY d`, projectID, windowStart, idx, func(d *model.ActivityDay, n int64) { d.MRsMerged = n }); err != nil {
 		return nil, err
 	}
 	// Commits — joined to repos so we get every repo in the project.
@@ -211,7 +215,7 @@ func (s *Store) Activity(ctx context.Context, projectID uuid.UUID, since time.Du
 		FROM repo_commit_index ci
 		JOIN repos r ON r.id = ci.repo_id
 		WHERE r.project_id = $1 AND ci.author_time >= $2
-		GROUP BY d`, projectID, start, idx, func(d *model.ActivityDay, n int64) { d.Commits = n }); err != nil {
+		GROUP BY d`, projectID, windowStart, idx, func(d *model.ActivityDay, n int64) { d.Commits = n }); err != nil {
 		return nil, err
 	}
 
@@ -308,14 +312,15 @@ func (s *Store) Languages(repoPath, refSpec, repoDefault string) (model.Language
 		return out, apperr.Wrap(apperr.CodeInternal, "resolve", err)
 	}
 	visited := 0
-	if err := walkTreeBlobs(repoPath, oid, "", &visited, out); err != nil {
+	if err := walkTreeBlobs(repoPath, oid, "", &visited, &out); err != nil {
 		return out, err
 	}
 	return out, nil
 }
 
-func walkTreeBlobs(repoPath, treeOID, prefix string, visited *int, out model.LanguageStats) error {
+func walkTreeBlobs(repoPath, treeOID, prefix string, visited *int, out *model.LanguageStats) error {
 	if *visited >= MaxLanguageBlobs {
+		out.Truncated = true
 		return nil
 	}
 	entries, err := git.ReadTree(repoPath, treeOID)
@@ -324,6 +329,7 @@ func walkTreeBlobs(repoPath, treeOID, prefix string, visited *int, out model.Lan
 	}
 	for _, e := range entries {
 		if *visited >= MaxLanguageBlobs {
+			out.Truncated = true
 			return nil
 		}
 		full := e.Name

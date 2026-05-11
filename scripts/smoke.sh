@@ -384,15 +384,16 @@ if [ "$md_bytes" -lt 1 ]; then echo "insights: expected Markdown bytes >=1, got 
 # Skip if openssh client tools aren't installed or the sshd port is closed.
 
 if command -v ssh-keygen >/dev/null 2>&1 && command -v ssh >/dev/null 2>&1; then
+  SSH_HOST=${WULING_SSH_HOST:-127.0.0.1}
   SSH_PORT=${WULING_SSH_PORT:-2222}
-  if (echo >"/dev/tcp/127.0.0.1/$SSH_PORT") >/dev/null 2>&1; then
+  if (echo >"/dev/tcp/${SSH_HOST}/${SSH_PORT}") >/dev/null 2>&1; then
     echo "registering SSH key + pushing over SSH"
     SSH_KEY="$WORK/id_ed25519"
     ssh-keygen -q -t ed25519 -N "" -f "$SSH_KEY" -C "smoke@example.test"
     pub=$(cat "${SSH_KEY}.pub")
     api POST /api/v1/auth/ssh-keys "$(python3 -c "import json,sys; print(json.dumps({'title':'smoke','public_key':sys.argv[1]}))" "$pub")" >/dev/null
 
-    SSH_REPO="ssh://wuling@127.0.0.1:${SSH_PORT}/${ORG_SLUG}/${PROJECT_SLUG}/${REPO_SLUG}.git"
+    SSH_REPO="ssh://wuling@${SSH_HOST}:${SSH_PORT}/${ORG_SLUG}/${PROJECT_SLUG}/${REPO_SLUG}.git"
     GIT_SSH_COMMAND="ssh -i $SSH_KEY -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes"
     SSH_CLONE="$WORK/ssh-clone"
     (
@@ -406,7 +407,7 @@ if command -v ssh-keygen >/dev/null 2>&1 && command -v ssh >/dev/null 2>&1; then
       GIT_SSH_COMMAND="$GIT_SSH_COMMAND" git push -q origin main
     ) || { echo "ssh git flow failed" >&2; exit 1; }
   else
-    echo "ssh port $SSH_PORT not listening — skipping SSH transport smoke"
+    echo "ssh port ${SSH_HOST}:${SSH_PORT} not listening — skipping SSH transport smoke"
   fi
 else
   echo "ssh / ssh-keygen not on PATH — skipping SSH transport smoke"

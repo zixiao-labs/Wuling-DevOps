@@ -580,27 +580,7 @@ func CreateMergeCommit(
 		sq = 1
 	}
 
-	var csig C.wg_signature
-	// Copy name/email into the fixed-size buffers via Go-side slices over the
-	// underlying memory; reserves a byte for the NUL terminator. Anything past
-	// the buffer length is truncated, matching the safe_copy semantics on the
-	// C side.
-	copyToCBuf := func(dst *C.char, dstLen int, src string) {
-		buf := unsafe.Slice((*byte)(unsafe.Pointer(dst)), dstLen)
-		n := copy(buf, src)
-		if n < dstLen {
-			buf[n] = 0
-		} else {
-			buf[dstLen-1] = 0
-		}
-	}
-	copyToCBuf(&csig.name[0], len(csig.name), sig.Name)
-	copyToCBuf(&csig.email[0], len(csig.email), sig.Email)
-	when := sig.When
-	if when.IsZero() {
-		when = time.Now()
-	}
-	csig.when = C.int64_t(when.Unix())
+	csig := buildCSignature(sig)
 
 	var oid [41]C.char
 	var cerr C.wg_error

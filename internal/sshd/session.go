@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/gliderlabs/ssh"
 	"github.com/google/uuid"
@@ -208,7 +209,12 @@ func (s *Server) handleSession(sess ssh.Session) {
 
 	// Same post-push hooks as the HTTP path: mark non-empty + kick the index.
 	if svc == receivePack {
-		bgCtx := context.Background()
+		// Bounded timeout so a hung DB write or indexer can't pin a goroutine
+		// forever. The HTTP layer doesn't need this because its hooks run on
+		// the request context, but the SSH session has already returned the
+		// pack to the client by this point.
+		bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
 		if err := s.deps.Store.MarkRepoNotEmpty(bgCtx, repo.ID); err != nil {
 			s.deps.Log.Warn("ssh mark repo non-empty failed",
 				"repo_id", repo.ID, "err", err)

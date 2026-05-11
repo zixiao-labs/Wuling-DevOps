@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -57,7 +56,7 @@ func setup(t *testing.T) *fixture {
 	issuer := auth.NewIssuer(cfg)
 
 	// Seed a user + personal org + project.
-	username := "wiki" + strings.ReplaceAll(strings.ToLower("user"), "-", "")
+	username := "wikiuser"
 	hash, err := auth.HashPassword("dontcare")
 	require.NoError(t, err)
 	user, org, err := store.CreateUser(context.Background(), userstore.CreateUserParams{

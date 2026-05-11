@@ -11,8 +11,9 @@ CREATE TABLE user_ssh_keys (
     id           UUID PRIMARY KEY,
     user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     title        TEXT NOT NULL CHECK (LENGTH(title) >= 1),
-    fingerprint  TEXT NOT NULL UNIQUE,
-    public_key   TEXT NOT NULL,
+    fingerprint  TEXT NOT NULL UNIQUE
+                 CHECK (fingerprint ~ '^SHA256:[A-Za-z0-9+/=]+$'),
+    public_key   TEXT NOT NULL CHECK (LENGTH(public_key) >= 1),
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_used_at TIMESTAMPTZ
 );

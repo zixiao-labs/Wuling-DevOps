@@ -220,8 +220,11 @@ type ContributorStat struct {
 }
 
 // LanguageStats summarises the byte and file counts per detected language
-// across the latest tree of a repo.
+// across the latest tree of a repo. Truncated is true when the walker hit
+// MaxLanguageBlobs before reaching every blob — the counts in that case are
+// a lower bound, not an exact total.
 type LanguageStats struct {
-	Bytes map[string]int64 `json:"bytes"`
-	Files map[string]int64 `json:"files"`
+	Bytes     map[string]int64 `json:"bytes"`
+	Files     map[string]int64 `json:"files"`
+	Truncated bool             `json:"truncated,omitempty"`
 }

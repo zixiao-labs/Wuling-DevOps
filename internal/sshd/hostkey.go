@@ -32,11 +32,10 @@ func LoadOrCreateHostKey(path string) (gossh.Signer, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("create host key dir: %w", err)
 	}
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("generate ed25519: %w", err)
 	}
-	_ = pub
 	// MarshalPrivateKey returns an OpenSSH-format PEM block, which is what
 	// every OpenSSH tool emits these days — and what gossh.ParsePrivateKey
 	// expects on the load side.
