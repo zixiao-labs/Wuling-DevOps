@@ -1,0 +1,31 @@
+{
+  "name": "wuling-frontend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "devops",
+    "frontend",
+    "react",
+    "wuling",
+    "arknights-endfield"
+  ],
+  "author": "Zixiao Laboratory",
+  "type": "module",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@heroui/react": "^3.0.4",
+    "@heroui/styles": "^3.0.4",
+    "chen-the-dawnstreak": "^4.2.2",
+    "react": "19.2.6",
+    "react-dom": "19.2.6"
+  },
+  "devDependencies": {
+    "@nasti-toolchain/nasti": "^1.6.2",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0"
+  }
+}

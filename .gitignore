@@ -34,3 +34,4 @@ go.work.sum
 # Runtime state: bare repos served by wuling-api land under WULING_REPO_ROOT,
 # which defaults to ./var/repos. Smoke tests and local dev populate it.
 /var/
+.DS_Store
