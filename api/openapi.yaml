@@ -156,6 +156,7 @@ paths:
                 properties:
                   ssh_keys:
                     type: array
+                    maxItems: 100
                     items: { $ref: "#/components/schemas/SSHKey" }
     post:
       summary: Register an SSH public key (used by the embedded Git-over-SSH server)
