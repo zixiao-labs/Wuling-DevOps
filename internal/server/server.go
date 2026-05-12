@@ -16,6 +16,8 @@ import (
 	"github.com/zixiao-labs/wuling-devops/internal/db"
 	"github.com/zixiao-labs/wuling-devops/internal/githttp"
 	"github.com/zixiao-labs/wuling-devops/internal/httpapi"
+	"github.com/zixiao-labs/wuling-devops/internal/insighthttp"
+	"github.com/zixiao-labs/wuling-devops/internal/insightstore"
 	"github.com/zixiao-labs/wuling-devops/internal/issuehttp"
 	"github.com/zixiao-labs/wuling-devops/internal/issuestore"
 	"github.com/zixiao-labs/wuling-devops/internal/mrhttp"
@@ -24,17 +26,21 @@ import (
 	"github.com/zixiao-labs/wuling-devops/internal/repohttp"
 	"github.com/zixiao-labs/wuling-devops/internal/repostore"
 	"github.com/zixiao-labs/wuling-devops/internal/userstore"
+	"github.com/zixiao-labs/wuling-devops/internal/wikihttp"
+	"github.com/zixiao-labs/wuling-devops/internal/wikistore"
 )
 
 // Deps bundles everything the HTTP server needs.
 type Deps struct {
-	Cfg    *config.Config
-	Log    *slog.Logger
-	Pool   *db.Pool
-	Store  *userstore.Store
-	Issues *issuestore.Store
-	MRs    *mrstore.Store
-	Layout *repostore.Layout
+	Cfg      *config.Config
+	Log      *slog.Logger
+	Pool     *db.Pool
+	Store    *userstore.Store
+	Issues   *issuestore.Store
+	MRs      *mrstore.Store
+	Wikis    *wikistore.Store
+	Insights *insightstore.Store
+	Layout   *repostore.Layout
 }
 
 // New returns a router fully wired with all current Stage-1 domains.
@@ -79,9 +85,13 @@ func New(d Deps) http.Handler {
 
 	// JSON API at /api/v1.
 	r.Route("/api/v1", func(api chi.Router) {
+		authSub := chiSubrouter(api, "/auth")
 		(&authhttp.Handler{
 			Store: d.Store, Issuer: issuer, Verifier: verifier,
-		}).Mount(chiSubrouter(api, "/auth"))
+		}).Mount(authSub)
+		(&authhttp.SSHKeyHandler{
+			Store: d.Store, Verifier: verifier,
+		}).Mount(authSub)
 
 		(&orghttp.Handler{
 			Store: d.Store, Verifier: verifier,
@@ -98,17 +108,37 @@ func New(d Deps) http.Handler {
 		(&mrhttp.Handler{
 			Users: d.Store, MRs: d.MRs, Layout: d.Layout, Verifier: verifier,
 		}).Mount(api)
+
+		if d.Wikis != nil {
+			(&wikihttp.Handler{
+				Users: d.Store, Wikis: d.Wikis, Verifier: verifier,
+			}).Mount(api)
+		}
+
+		if d.Insights != nil {
+			(&insighthttp.Handler{
+				Users: d.Store, Insights: d.Insights,
+				Layout: d.Layout, Verifier: verifier,
+			}).Mount(api)
+		}
 	})
 
 	// Git smart HTTP at the root, GitHub-style:
 	//   /<org>/<proj>/<repo>.git/...
-	(&githttp.Handler{
+	gh := &githttp.Handler{
 		Store:    d.Store,
 		Layout:   d.Layout,
 		Logger:   d.Log,
 		PWReslv:  &authhttp.PasswordResolver{Store: d.Store},
 		PATReslv: &authhttp.PATResolver{Store: d.Store},
-	}).Mount(r)
+	}
+	// Assigning `d.Insights` (a *insightstore.Store) directly to an interface
+	// field would produce a typed-nil even when d.Insights is nil, and the
+	// nil-check inside Indexer's caller would falsely succeed. Branch here.
+	if d.Insights != nil {
+		gh.Indexer = d.Insights
+	}
+	gh.Mount(r)
 
 	return r
 }

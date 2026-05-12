@@ -174,3 +174,57 @@ type MRDiffEntry struct {
 	Deletions int    `json:"deletions"`
 	Patch     string `json:"patch,omitempty"`
 }
+
+// WikiPage is the listing shape for a single Markdown page in the wiki tree.
+// Path is forward-slash separated and ends in ".md". UpdatedAt is the time
+// of the most recent commit that touched the file (when available).
+type WikiPage struct {
+	Path      string     `json:"path"`
+	Size      int64      `json:"size"`
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+}
+
+// WikiPageContent is the response for fetching a single page.
+type WikiPageContent struct {
+	Path      string `json:"path"`
+	Raw       string `json:"raw"`
+	HTML      string `json:"html"`
+	CommitOID string `json:"commit_oid"`
+}
+
+// SSHKey is the public shape of a stored SSH public key.
+type SSHKey struct {
+	ID          uuid.UUID  `json:"id"`
+	Title       string     `json:"title"`
+	Fingerprint string     `json:"fingerprint"`
+	PublicKey   string     `json:"public_key"`
+	CreatedAt   time.Time  `json:"created_at"`
+	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
+}
+
+// ActivityDay is one row in the per-day activity rollup. Date is YYYY-MM-DD.
+type ActivityDay struct {
+	Date          string `json:"date"`
+	IssuesOpened  int64  `json:"issues_opened"`
+	IssuesClosed  int64  `json:"issues_closed"`
+	MRsOpened     int64  `json:"mrs_opened"`
+	MRsMerged     int64  `json:"mrs_merged"`
+	Commits       int64  `json:"commits"`
+}
+
+// ContributorStat is a per-author commit count for the contributors endpoint.
+type ContributorStat struct {
+	Email   string `json:"email"`
+	Name    string `json:"name"`
+	Commits int64  `json:"commits"`
+}
+
+// LanguageStats summarises the byte and file counts per detected language
+// across the latest tree of a repo. Truncated is true when the walker hit
+// MaxLanguageBlobs before reaching every blob — the counts in that case are
+// a lower bound, not an exact total.
+type LanguageStats struct {
+	Bytes     map[string]int64 `json:"bytes"`
+	Files     map[string]int64 `json:"files"`
+	Truncated bool             `json:"truncated,omitempty"`
+}

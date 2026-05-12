@@ -315,4 +315,102 @@ if [ "$review_count" -ne 1 ]; then echo "expected 1 review, got $review_count" >
 merged_count=$(api GET "$mrs_path?state=merged" | py_len '["merge_requests"]')
 if [ "$merged_count" -lt 3 ]; then echo "expected >=3 merged MRs, got $merged_count" >&2; exit 1; fi
 
+# ---- wiki ----------------------------------------------------------------
+
+wiki_path="/api/v1/orgs/$ORG_SLUG/projects/$PROJECT_SLUG/wiki"
+
+echo "creating wiki Home.md"
+home_resp=$(api PUT "$wiki_path/pages/Home.md" \
+  '{"content":"# Home\n\nhello from smoke.sh"}')
+home_oid=$(printf '%s' "$home_resp" | py '["commit_oid"]')
+if [ -z "$home_oid" ]; then echo "wiki: expected commit_oid, got empty" >&2; exit 1; fi
+home_html=$(printf '%s' "$home_resp" | py '["html"]')
+case "$home_html" in
+  *"<h1>"*) : ;;
+  *) echo "wiki: rendered HTML missing <h1>: $home_html" >&2; exit 1 ;;
+esac
+
+echo "creating nested wiki page docs/usage.md"
+api PUT "$wiki_path/pages/docs/usage.md" '{"content":"## Usage"}' >/dev/null
+
+echo "listing wiki pages"
+page_count=$(api GET "$wiki_path/pages" | py_len '["pages"]')
+if [ "$page_count" -lt 2 ]; then echo "wiki: expected >=2 pages, got $page_count" >&2; exit 1; fi
+
+echo "fetching wiki Home.md"
+got_html=$(api GET "$wiki_path/pages/Home.md" | py '["html"]')
+case "$got_html" in
+  *"<h1"*) : ;;
+  *) echo "wiki: GET Home.md HTML missing <h1>: $got_html" >&2; exit 1 ;;
+esac
+
+echo "wiki history"
+hist=$(api GET "$wiki_path/history" | py_len '["commits"]')
+if [ "$hist" -lt 2 ]; then echo "wiki: expected >=2 commits, got $hist" >&2; exit 1; fi
+
+echo "deleting wiki Home.md"
+del_status=$(curl -fsS -o /dev/null -w "%{http_code}" \
+  -X DELETE -H "Authorization: Bearer $TOKEN" "$BASE$wiki_path/pages/Home.md") || true
+if [ "$del_status" != "204" ]; then echo "wiki: delete expected 204, got $del_status" >&2; exit 1; fi
+
+# ---- insights ------------------------------------------------------------
+#
+# The receive-pack hook indexes commits asynchronously. Poll briefly so the
+# rollup is populated before we assert against it.
+
+insights_path="/api/v1/orgs/$ORG_SLUG/projects/$PROJECT_SLUG/insights"
+
+echo "polling insights activity"
+ok=0
+for _ in {1..30}; do
+  total=$(api GET "$insights_path/activity?since=7d" \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sum(x["commits"] for x in d["days"]))')
+  if [ "$total" -gt 0 ]; then ok=1; break; fi
+  sleep 0.5
+done
+if [ "$ok" -ne 1 ]; then echo "insights: never saw a commit in activity rollup" >&2; exit 1; fi
+
+echo "insights contributors"
+contrib_count=$(api GET "$insights_path/contributors?repo=$REPO_SLUG&since=30d" | py_len '["contributors"]')
+if [ "$contrib_count" -lt 1 ]; then echo "insights: expected >=1 contributor, got $contrib_count" >&2; exit 1; fi
+
+echo "insights languages"
+md_bytes=$(api GET "$insights_path/languages?repo=$REPO_SLUG" \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["bytes"].get("Markdown",0))')
+if [ "$md_bytes" -lt 1 ]; then echo "insights: expected Markdown bytes >=1, got $md_bytes" >&2; exit 1; fi
+
+# ---- SSH transport -------------------------------------------------------
+#
+# Skip if openssh client tools aren't installed or the sshd port is closed.
+
+if command -v ssh-keygen >/dev/null 2>&1 && command -v ssh >/dev/null 2>&1; then
+  SSH_HOST=${WULING_SSH_HOST:-127.0.0.1}
+  SSH_PORT=${WULING_SSH_PORT:-2222}
+  if (echo >"/dev/tcp/${SSH_HOST}/${SSH_PORT}") >/dev/null 2>&1; then
+    echo "registering SSH key + pushing over SSH"
+    SSH_KEY="$WORK/id_ed25519"
+    ssh-keygen -q -t ed25519 -N "" -f "$SSH_KEY" -C "smoke@example.test"
+    pub=$(cat "${SSH_KEY}.pub")
+    api POST /api/v1/auth/ssh-keys "$(python3 -c "import json,sys; print(json.dumps({'title':'smoke','public_key':sys.argv[1]}))" "$pub")" >/dev/null
+
+    SSH_REPO="ssh://wuling@${SSH_HOST}:${SSH_PORT}/${ORG_SLUG}/${PROJECT_SLUG}/${REPO_SLUG}.git"
+    GIT_SSH_COMMAND="ssh -i $SSH_KEY -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes"
+    SSH_CLONE="$WORK/ssh-clone"
+    (
+      cd "$WORK"
+      GIT_SSH_COMMAND="$GIT_SSH_COMMAND" git clone -q "$SSH_REPO" "$SSH_CLONE"
+      cd "$SSH_CLONE"
+      git config user.email "smoke@example.test"
+      git config user.name "smoke"
+      echo "from-ssh" >> README.md
+      git commit -q -am "ssh: append line"
+      GIT_SSH_COMMAND="$GIT_SSH_COMMAND" git push -q origin main
+    ) || { echo "ssh git flow failed" >&2; exit 1; }
+  else
+    echo "ssh port ${SSH_HOST}:${SSH_PORT} not listening — skipping SSH transport smoke"
+  fi
+else
+  echo "ssh / ssh-keygen not on PATH — skipping SSH transport smoke"
+fi
+
 echo "smoke test passed."

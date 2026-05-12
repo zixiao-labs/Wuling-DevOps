@@ -580,11 +580,95 @@ func CreateMergeCommit(
 		sq = 1
 	}
 
+	csig := buildCSignature(sig)
+
+	var oid [41]C.char
+	var cerr C.wg_error
+	if rc := C.wg_repo_create_merge_commit(
+		cPath, cRef, cBase, cOurs, cTheirs, sq,
+		&csig, cMsg, cLog,
+		&oid[0], &cerr,
+	); rc != 0 {
+		return "", errFromC(rc, cerr, "create_merge_commit")
+	}
+	return C.GoString(&oid[0]), nil
+}
+
+// ----------------------------------------------------------------------------
+// Single-file commits (used by the Wiki domain)
+// ----------------------------------------------------------------------------
+
+// CommitFile writes data as a blob at filePath on refName (a fully qualified
+// ref like "refs/heads/main") and creates a commit. The commit's parent is
+// the previous tip of refName, or empty for the very first commit. The ref
+// is created if it does not yet exist. Returns the new commit OID as 40-char
+// lowercase hex.
+func CommitFile(path, refName, filePath string, data []byte, sig Author, message string) (string, error) {
+	if err := Init(); err != nil {
+		return "", err
+	}
+	cPath := C.CString(path)
+	defer C.free(unsafe.Pointer(cPath))
+	cRef := C.CString(refName)
+	defer C.free(unsafe.Pointer(cRef))
+	cFile := C.CString(filePath)
+	defer C.free(unsafe.Pointer(cFile))
+	cMsg := C.CString(message)
+	defer C.free(unsafe.Pointer(cMsg))
+
+	// Allocate a stable buffer for blob bytes; data may be nil for an empty
+	// blob, in which case we hand C a NUL pointer + zero size which the
+	// wrapper accepts.
+	var dataPtr *C.char
+	var dataLen C.size_t
+	if len(data) > 0 {
+		buf := C.CBytes(data)
+		defer C.free(buf)
+		dataPtr = (*C.char)(buf)
+		dataLen = C.size_t(len(data))
+	}
+
+	csig := buildCSignature(sig)
+
+	var oid [41]C.char
+	var cerr C.wg_error
+	if rc := C.wg_repo_commit_file(cPath, cRef, cFile, dataPtr, dataLen,
+		&csig, cMsg, &oid[0], &cerr); rc != 0 {
+		return "", errFromC(rc, cerr, "commit_file")
+	}
+	return C.GoString(&oid[0]), nil
+}
+
+// DeleteFile removes filePath from the tree at refName and creates a commit
+// for the deletion. Returns an error matching IsNotFound when filePath did
+// not exist in the parent tree.
+func DeleteFile(path, refName, filePath string, sig Author, message string) (string, error) {
+	if err := Init(); err != nil {
+		return "", err
+	}
+	cPath := C.CString(path)
+	defer C.free(unsafe.Pointer(cPath))
+	cRef := C.CString(refName)
+	defer C.free(unsafe.Pointer(cRef))
+	cFile := C.CString(filePath)
+	defer C.free(unsafe.Pointer(cFile))
+	cMsg := C.CString(message)
+	defer C.free(unsafe.Pointer(cMsg))
+
+	csig := buildCSignature(sig)
+
+	var oid [41]C.char
+	var cerr C.wg_error
+	if rc := C.wg_repo_delete_file(cPath, cRef, cFile, &csig, cMsg, &oid[0], &cerr); rc != 0 {
+		return "", errFromC(rc, cerr, "delete_file")
+	}
+	return C.GoString(&oid[0]), nil
+}
+
+// buildCSignature copies a Go Author into a C wg_signature, truncating
+// over-long names/emails the same way safe_copy does on the C side.
+func buildCSignature(sig Author) C.wg_signature {
 	var csig C.wg_signature
-	// Copy name/email into the fixed-size buffers via Go-side slices over the
-	// underlying memory; reserves a byte for the NUL terminator. Anything past
-	// the buffer length is truncated, matching the safe_copy semantics on the
-	// C side.
 	copyToCBuf := func(dst *C.char, dstLen int, src string) {
 		buf := unsafe.Slice((*byte)(unsafe.Pointer(dst)), dstLen)
 		n := copy(buf, src)
@@ -601,17 +685,7 @@ func CreateMergeCommit(
 		when = time.Now()
 	}
 	csig.when = C.int64_t(when.Unix())
-
-	var oid [41]C.char
-	var cerr C.wg_error
-	if rc := C.wg_repo_create_merge_commit(
-		cPath, cRef, cBase, cOurs, cTheirs, sq,
-		&csig, cMsg, cLog,
-		&oid[0], &cerr,
-	); rc != 0 {
-		return "", errFromC(rc, cerr, "create_merge_commit")
-	}
-	return C.GoString(&oid[0]), nil
+	return csig
 }
 
 func contains(s, sub string) bool {

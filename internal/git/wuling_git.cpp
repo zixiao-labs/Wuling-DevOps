@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <string>
 #include <vector>
 
@@ -895,6 +896,196 @@ int wg_repo_create_merge_commit(const char* path,
     }
     oid_to_hex(&new_oid, oid_out);
     return 0;
+}
+
+// ------------------------------------------------------------------
+// Single-file commits (Wiki)
+// ------------------------------------------------------------------
+
+namespace {
+
+// load_parent_commit looks up the tip of `ref_name` and (if found) populates
+// out_commit and out_tree. If the ref does not exist, returns 0 and leaves
+// the scoped wrappers empty — the caller must treat that as "no parent".
+//
+// rc < 0 indicates an unexpected error (not just "ref missing"). The libgit2
+// "not found" error code is GIT_ENOTFOUND; we mask that down to "no parent".
+int load_parent_commit(git_repository* repo,
+                       const char* ref_name,
+                       scoped_reference& out_ref,
+                       scoped_commit& out_commit,
+                       scoped_tree& out_tree,
+                       wg_error* err) {
+    int rc = git_reference_lookup(out_ref.addr(), repo, ref_name);
+    if (rc == GIT_ENOTFOUND) return 0;
+    if (rc < 0) { fill_err(err, rc, "ref lookup"); return rc; }
+
+    git_object* peeled = nullptr;
+    rc = git_reference_peel(&peeled, out_ref.get(), GIT_OBJECT_COMMIT);
+    if (rc < 0) { fill_err(err, rc, "ref peel"); return rc; }
+
+    const git_oid* tip_oid = git_object_id(peeled);
+    rc = git_commit_lookup(out_commit.addr(), repo, tip_oid);
+    git_object_free(peeled);
+    if (rc < 0) { fill_err(err, rc, "lookup parent commit"); return rc; }
+
+    rc = git_commit_tree(out_tree.addr(), out_commit.get());
+    if (rc < 0) { fill_err(err, rc, "parent tree"); return rc; }
+    return 0;
+}
+
+// commit_index_to_ref writes idx as a tree, creates a commit on ref_name with
+// the given parent (NULL for first commit), and stuffs the resulting commit
+// OID into oid_out.
+int commit_index_to_ref(git_repository* repo,
+                        git_index* idx,
+                        const char* ref_name,
+                        const wg_signature* sig,
+                        const char* message,
+                        git_commit* parent,         // may be NULL
+                        char oid_out[41],
+                        wg_error* err) {
+    git_oid new_tree_oid;
+    if (int rc = git_index_write_tree_to(&new_tree_oid, idx, repo); rc < 0) {
+        fill_err(err, rc, "write tree"); return rc;
+    }
+
+    scoped_tree new_tree;
+    if (int rc = git_tree_lookup(new_tree.addr(), repo, &new_tree_oid); rc < 0) {
+        fill_err(err, rc, "lookup new tree"); return rc;
+    }
+
+    scoped_signature gsig;
+    git_time_t when = sig->when ? (git_time_t)sig->when : (git_time_t)std::time(nullptr);
+    if (int rc = git_signature_new(gsig.addr(), sig->name, sig->email, when, 0); rc < 0) {
+        fill_err(err, rc, "signature_new"); return rc;
+    }
+
+    const git_commit* parents[1] = { parent };
+    int parent_count = parent ? 1 : 0;
+
+    git_oid new_commit_oid;
+    int rc = git_commit_create(
+        &new_commit_oid, repo, ref_name,
+        gsig.get(), gsig.get(),
+        "UTF-8",
+        message ? message : "",
+        new_tree.get(),
+        parent_count, parent_count > 0 ? parents : nullptr);
+    if (rc < 0) {
+        fill_err(err, rc, "commit_create");
+        return rc;
+    }
+    oid_to_hex(&new_commit_oid, oid_out);
+    return 0;
+}
+
+} // namespace
+
+int wg_repo_commit_file(const char* path,
+                        const char* ref_name,
+                        const char* file_path,
+                        const char* data,
+                        size_t      data_size,
+                        const wg_signature* sig,
+                        const char* message,
+                        char        oid_out[41],
+                        wg_error*   err) {
+    if (!sig) { fill_err(err, -1, "missing signature"); return -1; }
+    if (!ref_name || !file_path) { fill_err(err, -1, "missing ref or path"); return -1; }
+
+    scoped_repo r;
+    if (int rc = r.open(path); rc < 0) { fill_err(err, rc, "open repo"); return rc; }
+
+    // Load the parent commit + tree (may be absent on first commit).
+    scoped_reference parent_ref;
+    scoped_commit parent_commit;
+    scoped_tree parent_tree;
+    if (int rc = load_parent_commit(r.get(), ref_name, parent_ref, parent_commit, parent_tree, err); rc < 0) {
+        return rc;
+    }
+
+    // Fresh in-memory index seeded from parent tree (or empty). Bare repos
+    // don't have an on-disk index — git_index_new gives us a free-standing
+    // one that git_index_write_tree_to can serialise into the repo's odb.
+    scoped_index idx;
+    if (int rc = git_index_new(idx.addr()); rc < 0) {
+        fill_err(err, rc, "index_new"); return rc;
+    }
+    if (parent_tree.get() != nullptr) {
+        if (int rc = git_index_read_tree(idx.get(), parent_tree.get()); rc < 0) {
+            fill_err(err, rc, "index_read_tree"); return rc;
+        }
+    }
+
+    // Write blob and add to index. NULL data with zero size is permitted.
+    git_oid blob_oid;
+    int rc = git_blob_create_from_buffer(&blob_oid, r.get(),
+                                         data ? data : "",
+                                         data ? data_size : 0);
+    if (rc < 0) {
+        fill_err(err, rc, "blob_create_from_buffer"); return rc;
+    }
+
+    git_index_entry entry{};
+    entry.path = file_path;
+    entry.mode = GIT_FILEMODE_BLOB;
+    entry.id = blob_oid;
+    if (int rc = git_index_add(idx.get(), &entry); rc < 0) {
+        fill_err(err, rc, "index_add"); return rc;
+    }
+
+    return commit_index_to_ref(r.get(), idx.get(), ref_name, sig, message,
+                               parent_commit.get(), oid_out, err);
+}
+
+int wg_repo_delete_file(const char* path,
+                        const char* ref_name,
+                        const char* file_path,
+                        const wg_signature* sig,
+                        const char* message,
+                        char        oid_out[41],
+                        wg_error*   err) {
+    if (!sig) { fill_err(err, -1, "missing signature"); return -1; }
+    if (!ref_name || !file_path) { fill_err(err, -1, "missing ref or path"); return -1; }
+
+    scoped_repo r;
+    if (int rc = r.open(path); rc < 0) { fill_err(err, rc, "open repo"); return rc; }
+
+    scoped_reference parent_ref;
+    scoped_commit parent_commit;
+    scoped_tree parent_tree;
+    if (int rc = load_parent_commit(r.get(), ref_name, parent_ref, parent_commit, parent_tree, err); rc < 0) {
+        return rc;
+    }
+    if (parent_tree.get() == nullptr) {
+        // No commits yet — there's nothing to delete.
+        fill_err(err, -1, "not found: ref has no commits");
+        return -1;
+    }
+
+    scoped_index idx;
+    if (int rc = git_index_new(idx.addr()); rc < 0) {
+        fill_err(err, rc, "index_new"); return rc;
+    }
+    if (int rc = git_index_read_tree(idx.get(), parent_tree.get()); rc < 0) {
+        fill_err(err, rc, "index_read_tree"); return rc;
+    }
+
+    // git_index_remove returns GIT_ENOTFOUND when the path isn't present;
+    // surface that as a "not found" error so the Go layer maps to 404.
+    int rc = git_index_remove(idx.get(), file_path, 0);
+    if (rc == GIT_ENOTFOUND) {
+        std::snprintf(err->message, sizeof(err->message), "not found: %s", file_path);
+        err->code = rc;
+        return rc;
+    }
+    if (rc < 0) {
+        fill_err(err, rc, "index_remove"); return rc;
+    }
+
+    return commit_index_to_ref(r.get(), idx.get(), ref_name, sig, message,
+                               parent_commit.get(), oid_out, err);
 }
 
 } // extern "C"

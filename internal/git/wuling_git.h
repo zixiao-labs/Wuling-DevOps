@@ -222,6 +222,42 @@ int wg_repo_create_merge_commit(const char* path,
                                 char oid_out[41],
                                 wg_error* err);
 
+// ------------------------------------------------------------------
+// Single-file commits (used by Wiki)
+// ------------------------------------------------------------------
+
+// Commit a single blob at `file_path` on `ref_name`. The new tree is built
+// by reading the parent tree of `ref_name` (if any) into a fresh in-memory
+// index, replacing/inserting one entry, and writing the index back as a
+// tree. The commit's parent is the previous tip of `ref_name`, or empty for
+// the very first commit. `ref_name` is the fully-qualified ref
+// (e.g. "refs/heads/main") and is created if it does not yet exist.
+//
+// `data` may be NULL when `data_size` is 0 (zero-byte file is allowed).
+//
+// On success, the new commit OID is written into `oid_out`.
+int wg_repo_commit_file(const char* path,
+                        const char* ref_name,
+                        const char* file_path,
+                        const char* data,
+                        size_t      data_size,
+                        const wg_signature* sig,
+                        const char* message,
+                        char        oid_out[41],
+                        wg_error*   err);
+
+// Delete a single file at `file_path` on `ref_name` and create a commit
+// for the removal. Returns a "not found" error (the message contains
+// "not found") when `file_path` was not present in the parent tree, so the
+// Go layer can map to apperr.NotFound.
+int wg_repo_delete_file(const char* path,
+                        const char* ref_name,
+                        const char* file_path,
+                        const wg_signature* sig,
+                        const char* message,
+                        char        oid_out[41],
+                        wg_error*   err);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif
