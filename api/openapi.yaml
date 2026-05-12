@@ -1630,6 +1630,7 @@ components:
 
     PutWikiPageRequest:
       type: object
+      required: [content]
       properties:
         content: { type: string, maxLength: 1048576 }
         message:
