@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wuling-api
+  namespace: wuling
+spec:
+  replicas: 1                # bump after Pipelines / repo locking story exists
+  strategy:
+    type: Recreate           # ReadWriteOnce PVC for repos can't be shared
+  selector:
+    matchLabels:
+      app: wuling-api
+  template:
+    metadata:
+      labels:
+        app: wuling-api
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      initContainers:
+        - name: migrate
+          image: ghcr.io/zixiao-labs/wuling-api:latest  # CI bumps to a SHA tag
+          command: ["wuling-migrate"]
+          envFrom:
+            - configMapRef:
+                name: wuling-config
+            - secretRef:
+                name: wuling-secrets
+      containers:
+        - name: api
+          image: ghcr.io/zixiao-labs/wuling-api:latest
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 2222
+              name: git-ssh
+          envFrom:
+            - configMapRef:
+                name: wuling-config
+            - secretRef:
+                name: wuling-secrets
+          volumeMounts:
+            - name: repos
+              mountPath: /var/lib/wuling/repos
+            - name: ssh
+              mountPath: /var/lib/wuling/ssh
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 2000m
+              memory: 1Gi
+      volumes:
+        - name: repos
+          persistentVolumeClaim:
+            claimName: wuling-repos
+        - name: ssh
+          persistentVolumeClaim:
+            claimName: wuling-ssh
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wuling-repos
+  namespace: wuling
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 50Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wuling-ssh
+  namespace: wuling
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 100Mi

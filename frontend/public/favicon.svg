@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <rect width="64" height="64" rx="14" fill="#5a8fb0" />
+  <text
+    x="50%"
+    y="50%"
+    text-anchor="middle"
+    dy=".35em"
+    font-family="-apple-system, BlinkMacSystemFont, system-ui, sans-serif"
+    font-size="34"
+    font-weight="700"
+    fill="#ffffff"
+  >武</text>
+</svg>

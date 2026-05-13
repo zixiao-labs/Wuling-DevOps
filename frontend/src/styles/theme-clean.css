@@ -1,15 +1,11 @@
 /*
- * HeroUI Theme Customization
- * Add this to your global.css after importing @heroui/styles
- * Only includes base variables from variables.css
- * @see https://heroui.com/docs/react/getting-started/theming
+ * Theme: clean (default)
+ * Light-mode variables also bind to :root so the app renders correctly when
+ * no data-theme attribute is set yet (e.g. first paint, SSR).
  */
 
 :root,
-.light,
-.default,
-[data-theme="light"],
-[data-theme="default"] {
+[data-theme="clean"] {
   /* Theme Colors (Light Mode) */
   --accent: oklch(59.26% 0.0483 201.33);
   --accent-foreground: oklch(99.11% 0 0);
@@ -42,19 +38,13 @@
   --warning: oklch(78.19% 0.1634 66.03);
   --warning-foreground: oklch(21.03% 0.0059 66.03);
 
-  /* Border Radius */
   --radius: 0.5rem;
   --field-radius: 0.75rem;
-
-  /* Font Family */
-  /* Make sure to load Inter font in your app */
-  --font-sans: var(--font-inter);
+  --font-sans: var(--font-inter, system-ui, -apple-system, "Segoe UI", sans-serif);
 }
 
-.dark,
-[data-theme="dark"] {
+[data-theme="clean"].dark {
   color-scheme: dark;
-  /* Theme Colors (Dark Mode) */
   --accent: oklch(59.26% 0.0483 201.33);
   --accent-foreground: oklch(99.11% 0 0);
   --background: oklch(12.00% 0.0154 201.33);

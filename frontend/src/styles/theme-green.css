@@ -1,16 +1,6 @@
-/*
- * HeroUI Theme Customization
- * Add this to your global.css after importing @heroui/styles
- * Only includes base variables from variables.css
- * @see https://heroui.com/docs/react/getting-started/theming
- */
+/* Theme: green */
 
-:root,
-.light,
-.default,
-[data-theme="light"],
-[data-theme="default"] {
-  /* Theme Colors (Light Mode) */
+[data-theme="green"] {
   --accent: oklch(90.48% 0.1476 125.62);
   --accent-foreground: oklch(15% 0.0295 125.62);
   --background: oklch(97.02% 0.0154 125.62);
@@ -42,19 +32,13 @@
   --warning: oklch(78.19% 0.1634 56.94);
   --warning-foreground: oklch(21.03% 0.0059 56.94);
 
-  /* Border Radius */
   --radius: 0.5rem;
   --field-radius: 0.75rem;
-
-  /* Font Family */
-  /* Make sure to load Inter font in your app */
-  --font-sans: var(--font-inter);
+  --font-sans: var(--font-inter, system-ui, -apple-system, "Segoe UI", sans-serif);
 }
 
-.dark,
-[data-theme="dark"] {
+[data-theme="green"].dark {
   color-scheme: dark;
-  /* Theme Colors (Dark Mode) */
   --accent: oklch(90.48% 0.1476 125.62);
   --accent-foreground: oklch(15% 0.0295 125.62);
   --background: oklch(12.00% 0.0154 125.62);

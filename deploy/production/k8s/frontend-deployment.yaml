@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wuling-frontend
+  namespace: wuling
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: wuling-frontend
+  template:
+    metadata:
+      labels:
+        app: wuling-frontend
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101  # nginx user in nginx:alpine
+      containers:
+        - name: nginx
+          image: ghcr.io/zixiao-labs/wuling-frontend:latest
+          ports:
+            - containerPort: 8080
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /index.html
+              port: 8080
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wuling-frontend
+  namespace: wuling
+spec:
+  type: ClusterIP
+  selector:
+    app: wuling-frontend
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

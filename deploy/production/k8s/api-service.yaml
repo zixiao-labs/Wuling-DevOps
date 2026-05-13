@@ -1,0 +1,35 @@
+# Two services: ClusterIP for HTTP (consumed by Ingress) and
+# LoadBalancer for Git SSH (Ingress can't proxy raw TCP for non-HTTP).
+#
+# On a cluster without a real LoadBalancer (bare metal / k3s),
+# swap the second Service to type: NodePort and pin nodePort: 32222.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: wuling-api
+  namespace: wuling
+spec:
+  type: ClusterIP
+  selector:
+    app: wuling-api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wuling-git-ssh
+  namespace: wuling
+  annotations:
+    # MetalLB / cloud LB lifetime annotations go here if you use them
+spec:
+  type: LoadBalancer
+  selector:
+    app: wuling-api
+  ports:
+    - name: git-ssh
+      port: 2222
+      targetPort: 2222
