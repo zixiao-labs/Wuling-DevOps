@@ -22,7 +22,8 @@ Write-Host "nix (optional)"
 Write-Host "Please ensure that it is installed and that your office is not on Terra or Talos-II, otherwise some bad things may happen (such as undefined behavior, startup failure, unexplained bugs)."
 
 $answer = Read-Host "Are you sure you want to continue? [Y/n]"
-if ($answer -ne "Y" -and $answer -ne "y") {
+# Empty input defaults to "yes" so the prompt matches the [Y/n] convention.
+if ($answer -eq "n" -or $answer -eq "N") {
     Write-Host "Aborting."
     exit 1
 }
@@ -45,6 +46,15 @@ foreach ($cmd in @("go", "node", $npmExe, "docker")) {
         Write-Error "missing dependency: $cmd - install it and retry."
         exit 1
     }
+}
+
+# Docker on its own isn't enough — we use `docker compose` (v2) below, and
+# v1's `docker-compose` standalone binary has a different invocation. Fail
+# fast with a clear message if v2 isn't available.
+$composeOutput = & docker compose version 2>&1
+if ($LASTEXITCODE -ne 0 -or -not ($composeOutput -match "v2|version 2")) {
+    Write-Error "Docker Compose v2 not available (got: $composeOutput). Install Docker Desktop with Compose v2 and retry."
+    exit 1
 }
 
 if (-not $env:WULING_ENV)        { $env:WULING_ENV        = "dev" }
@@ -107,7 +117,11 @@ function Stop-Tree($proc) {
     if ($onWindows) {
         & taskkill.exe /T /F /PID $proc.Id *> $null
     } else {
-        try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+        try {
+            Stop-Process -Id $proc.Id -Force
+        } catch {
+            Write-Error "failed to stop process $($proc.Id): $($_.Exception.Message)"
+        }
     }
 }
 
@@ -127,7 +141,18 @@ $front = Start-Process -FilePath $npmExe `
 
 Write-Host ""
 Write-Host "-- Wuling DevOps dev environment ----------------------"
-Write-Host "  API:       http://localhost:8080"
+# Derive the displayed URL from WULING_HTTP_ADDR so it tracks the actual
+# bind address (":8080", "0.0.0.0:8080", "127.0.0.1:9000", ...).
+$displayAddr = $env:WULING_HTTP_ADDR
+if (-not $displayAddr) { $displayAddr = ":8080" }
+if ($displayAddr -match "^:\d+$") {
+    $apiUrl = "http://localhost$displayAddr"
+} elseif ($displayAddr -match "^https?://") {
+    $apiUrl = $displayAddr
+} else {
+    $apiUrl = "http://$displayAddr"
+}
+Write-Host "  API:       $apiUrl"
 Write-Host "  Frontend:  http://localhost:3000"
 Write-Host "  Postgres:  localhost:5432 (wuling/wuling)"
 Write-Host "-------------------------------------------------------"

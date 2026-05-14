@@ -140,7 +140,9 @@ in
       isSystemUser = true;
       group = "wuling";
       home = "/var/lib/wuling";
-      createHome = true;
+      # Don't `createHome` — systemd's StateDirectory + tmpfiles.rules below
+      # own this path's lifecycle/permissions. Letting both manage it races
+      # on activation and can leave the dir with the wrong mode.
     };
     users.groups.wuling = { };
 
@@ -181,13 +183,20 @@ in
         ExecStart = "${apiPkg}/bin/wuling-api";
         Restart = "on-failure";
         RestartSec = "3s";
+        # Cap restart storms: if migrations or the API repeatedly crash,
+        # systemd will give up after 5 attempts in 5 minutes so transient
+        # DB/network failures don't burn CPU forever.
+        StartLimitBurst = 5;
+        StartLimitIntervalSec = 300;
 
         User = "wuling";
         Group = "wuling";
         StateDirectory = "wuling";
         WorkingDirectory = "/var/lib/wuling";
 
-        EnvironmentFile = "-${cfg.jwtSecretFile}";  # contents must be `WULING_JWT_SECRET=<value>`
+        # No leading '-': fail fast if the JWT secret file is missing rather
+        # than silently starting without WULING_JWT_SECRET.
+        EnvironmentFile = "${cfg.jwtSecretFile}";  # contents must be `WULING_JWT_SECRET=<value>`
 
         # Hardening
         NoNewPrivileges = true;
@@ -228,16 +237,22 @@ in
       ++ optional cfg.sshEnabled sshPort;
 
     # ── Caddy reverse proxy + static frontend ────────────────────────────
-    services.caddy = mkIf (cfg.reverseProxy == "caddy") {
+    services.caddy = mkIf (cfg.reverseProxy == "caddy") (let
+      # cfg.httpAddr may be ":8080", "0.0.0.0:8080", or "127.0.0.1:8080" —
+      # always proxy to 127.0.0.1:<port> so we don't double-concatenate the
+      # bind address (which produces "127.0.0.10.0.0.0:8080").
+      httpPort = lib.last (lib.splitString ":" cfg.httpAddr);
+      httpUpstream = "127.0.0.1:${httpPort}";
+    in {
       enable = true;
       virtualHosts.${cfg.domain}.extraConfig = ''
         encode gzip zstd
 
         @api path /api/* /healthz /version
-        reverse_proxy @api 127.0.0.1${cfg.httpAddr}
+        reverse_proxy @api ${httpUpstream}
 
         @git path_regexp git ^/[^/]+/[^/]+/[^/]+\.git(/|$)
-        reverse_proxy @git 127.0.0.1${cfg.httpAddr} {
+        reverse_proxy @git ${httpUpstream} {
             flush_interval -1
         }
 
@@ -250,13 +265,17 @@ in
         header {
             Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
             X-Content-Type-Options "nosniff"
+            X-Frame-Options "DENY"
             Referrer-Policy "strict-origin-when-cross-origin"
         }
       '';
-    };
+    });
 
     # ── Nginx alternative ────────────────────────────────────────────────
-    services.nginx = mkIf (cfg.reverseProxy == "nginx") {
+    services.nginx = mkIf (cfg.reverseProxy == "nginx") (let
+      httpPort = lib.last (lib.splitString ":" cfg.httpAddr);
+      httpUpstream = "127.0.0.1:${httpPort}";
+    in {
       enable = true;
       recommendedTlsSettings = true;
       recommendedGzipSettings = true;
@@ -274,14 +293,14 @@ in
 
         # REST + healthz
         locations."/api/" = {
-          proxyPass = "http://127.0.0.1${cfg.httpAddr}";
+          proxyPass = "http://${httpUpstream}";
         };
-        locations."/healthz".proxyPass = "http://127.0.0.1${cfg.httpAddr}";
-        locations."/version".proxyPass = "http://127.0.0.1${cfg.httpAddr}";
+        locations."/healthz".proxyPass = "http://${httpUpstream}";
+        locations."/version".proxyPass = "http://${httpUpstream}";
 
         # Git smart HTTP — must NOT be buffered; otherwise large packs hang
         locations."~ ^/[^/]+/[^/]+/[^/]+\\.git(/|$)" = {
-          proxyPass = "http://127.0.0.1${cfg.httpAddr}";
+          proxyPass = "http://${httpUpstream}";
           extraConfig = ''
             proxy_buffering off;
             proxy_request_buffering off;
@@ -289,7 +308,7 @@ in
           '';
         };
       };
-    };
+    });
 
     security.acme = mkIf (cfg.reverseProxy == "nginx") {
       acceptTerms = true;

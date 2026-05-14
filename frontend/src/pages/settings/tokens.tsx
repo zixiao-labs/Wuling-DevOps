@@ -10,7 +10,7 @@ import {
 } from "@heroui/react";
 import CopyIcon from "@gravity-ui/icons/Copy";
 import TrashIcon from "@gravity-ui/icons/TrashBin";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { tokens as patApi } from "@/api/endpoints";
 import { ApiError } from "@/api/errors";
@@ -31,27 +31,42 @@ export default function TokensPage() {
   const [created, setCreated] = useState<AccessTokenView | null>(null);
   const [copied, setCopied] = useState(false);
 
-  function load(signal?: AbortSignal) {
+  // Component-scoped controller so refreshes triggered by onCreate/onRevoke
+  // can also be aborted when the component unmounts.
+  const loadController = useRef<AbortController | null>(null);
+  const copyResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function load() {
+    loadController.current?.abort();
+    const ac = new AbortController();
+    loadController.current = ac;
     setError(null);
     patApi
       .list()
       .then((res) => {
-        if (!signal?.aborted) setItems(res);
+        if (!ac.signal.aborted) setItems(res);
       })
       .catch((e) => {
-        if (signal?.aborted) return;
+        if (ac.signal.aborted) return;
         setError(e as ApiError);
       });
   }
 
   useEffect(() => {
-    const ac = new AbortController();
-    load(ac.signal);
-    return () => ac.abort();
+    load();
+    return () => {
+      loadController.current?.abort();
+      if (copyResetTimer.current !== null) clearTimeout(copyResetTimer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function onCreate(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (!scopes || scopes.length === 0) {
+      setError(new ApiError(0, "unknown", "请至少选择一个范围（scope）。"));
+      return;
+    }
     setCreating(true);
     setError(null);
     try {
@@ -129,7 +144,7 @@ export default function TokensPage() {
             </div>
             <ErrorBanner error={error} />
             <div>
-              <Button type="submit" isDisabled={creating || !name}>
+              <Button type="submit" isDisabled={creating || !name || scopes.length === 0}>
                 {creating ? "创建中…" : "创建令牌"}
               </Button>
             </div>
@@ -226,7 +241,8 @@ export default function TokensPage() {
                     try {
                       await navigator.clipboard.writeText(created.token);
                       setCopied(true);
-                      setTimeout(() => setCopied(false), 1500);
+                      if (copyResetTimer.current !== null) clearTimeout(copyResetTimer.current);
+                      copyResetTimer.current = setTimeout(() => setCopied(false), 1500);
                     } catch {
                       alert("复制失败，请手动选中令牌文本。");
                     }

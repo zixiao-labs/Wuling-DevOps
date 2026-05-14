@@ -19,6 +19,7 @@ export default function WikiPagePage() {
 
   const [page, setPage] = useState<WikiPageContent | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
+  const [inlineError, setInlineError] = useState<ApiError | null>(null);
 
   const [editing, setEditing] = useState(false);
   const [content, setContent] = useState("");
@@ -28,20 +29,29 @@ export default function WikiPagePage() {
   useEffect(() => {
     setPage(null);
     setError(null);
+    setInlineError(null);
     setEditing(false);
     if (!path) return;
+    let cancelled = false;
     wikiApi
       .get(org.slug, project.slug, path)
       .then((p) => {
+        if (cancelled) return;
         setPage(p);
         setContent(p.raw);
       })
-      .catch((e) => setError(e as ApiError));
+      .catch((e) => {
+        if (!cancelled) setError(e as ApiError);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [org.slug, project.slug, path]);
 
   async function save(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
     setSaving(true);
+    setInlineError(null);
     try {
       const updated = await wikiApi.put(org.slug, project.slug, path, {
         content,
@@ -51,7 +61,8 @@ export default function WikiPagePage() {
       setEditing(false);
       setMessage("");
     } catch (err) {
-      setError(err as ApiError);
+      // Keep the editor open: show the failure inline rather than replacing the page.
+      setInlineError(err as ApiError);
     } finally {
       setSaving(false);
     }
@@ -59,17 +70,18 @@ export default function WikiPagePage() {
 
   async function del() {
     if (!confirm(`删除页面 ${path}？将创建一次删除提交。`)) return;
+    setInlineError(null);
     try {
       await wikiApi.delete(org.slug, project.slug, path);
       navigate(
         `/orgs/${encodeURIComponent(org.slug)}/projects/${encodeURIComponent(project.slug)}/wiki`,
       );
     } catch (err) {
-      setError(err as ApiError);
+      setInlineError(err as ApiError);
     }
   }
 
-  if (error) return <ErrorBanner error={error} />;
+  if (error && !page) return <ErrorBanner error={error} />;
   if (!page) return <Loading />;
 
   return (
@@ -92,6 +104,8 @@ export default function WikiPagePage() {
           </>
         )}
       </header>
+
+      {inlineError ? <ErrorBanner error={inlineError} /> : null}
 
       {editing ? (
         <Card>

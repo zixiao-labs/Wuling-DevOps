@@ -1,6 +1,6 @@
 import { Card } from "@heroui/react";
 import { Link, useParams } from "chen-the-dawnstreak";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { cloneUrls, repos as reposApi } from "@/api/endpoints";
 import { ApiError } from "@/api/errors";
@@ -24,6 +24,7 @@ export default function RepoHomePage() {
 
   useEffect(() => {
     if (!repoSlug) return;
+    let cancelled = false;
     setRepo(null);
     setCommits(null);
     setReadme(null);
@@ -31,6 +32,7 @@ export default function RepoHomePage() {
     reposApi
       .get(org.slug, project.slug, repoSlug)
       .then(async (r) => {
+        if (cancelled) return;
         setRepo(r);
         if (r.is_empty) return;
         // Fire commits + README in parallel; non-fatal if either fails
@@ -41,12 +43,19 @@ export default function RepoHomePage() {
             path: "README.md",
           }),
         ]);
-        if (commitsRes.status === "fulfilled") setCommits(commitsRes.value);
+        if (cancelled) return;
+        // Set commits regardless of outcome so the page leaves its loading state.
+        setCommits(commitsRes.status === "fulfilled" ? commitsRes.value : []);
         if (readmeRes.status === "fulfilled" && readmeRes.value.encoding === "utf-8") {
           setReadme(readmeRes.value.content);
         }
       })
-      .catch((e) => setError(e as ApiError));
+      .catch((e) => {
+        if (!cancelled) setError(e as ApiError);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [org.slug, project.slug, repoSlug]);
 
   const urls = useMemo(() => cloneUrls(org.slug, project.slug, repoSlug), [
@@ -175,6 +184,12 @@ const navStyle = {
 
 function CloneRow({ label, url }: { label: string; url: string }) {
   const [copied, setCopied] = useState(false);
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (resetTimer.current !== null) clearTimeout(resetTimer.current);
+    };
+  }, []);
   return (
     <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", minWidth: 280 }}>
       <span
@@ -209,7 +224,8 @@ function CloneRow({ label, url }: { label: string; url: string }) {
           try {
             await navigator.clipboard.writeText(url);
             setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
+            if (resetTimer.current !== null) clearTimeout(resetTimer.current);
+            resetTimer.current = setTimeout(() => setCopied(false), 1500);
           } catch {
             alert("复制失败，请手动选中地址。");
           }

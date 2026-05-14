@@ -22,17 +22,25 @@ export default function NewWikiPage() {
   // Reject filesystem-reserved chars (so Windows checkouts and our backend
   // both stay happy) and cap nesting at 8 segments to match the UI hint.
   // Unicode page names are allowed.
-  const pathDepth = normalizedPath ? normalizedPath.split("/").filter(Boolean).length : 0;
+  const pathSegments = normalizedPath ? normalizedPath.split("/") : [];
+  const pathDepth = pathSegments.filter(Boolean).length;
+  const hasBadSegment = pathSegments.some(
+    (seg) => seg === "." || seg === ".." || seg.includes("#"),
+  );
   const isInvalidPath = Boolean(
     normalizedPath &&
       (!/^[^<>:"|?*\x00-\x1f]+\.md$/.test(normalizedPath) ||
         normalizedPath.includes("//") ||
         normalizedPath.startsWith("/") ||
+        hasBadSegment ||
         pathDepth > 8),
   );
 
   async function onSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
+    // Mirror the submit button's disable guard so keyboard / programmatic
+    // submits can't bypass it.
+    if (saving || !content || !normalizedPath || isInvalidPath) return;
     setSaving(true);
     setError(null);
     try {
@@ -40,8 +48,12 @@ export default function NewWikiPage() {
         content,
         message: message || undefined,
       });
+      // encodeURI leaves "#" unescaped, which truncates the path at the
+      // fragment boundary. Encode each segment with encodeURIComponent and
+      // rejoin so "#"/"?" etc. survive the redirect.
+      const encodedPath = normalizedPath.split("/").map(encodeURIComponent).join("/");
       navigate(
-        `/orgs/${encodeURIComponent(org.slug)}/projects/${encodeURIComponent(project.slug)}/wiki/${encodeURI(normalizedPath)}`,
+        `/orgs/${encodeURIComponent(org.slug)}/projects/${encodeURIComponent(project.slug)}/wiki/${encodedPath}`,
       );
     } catch (err) {
       setError(err as ApiError);

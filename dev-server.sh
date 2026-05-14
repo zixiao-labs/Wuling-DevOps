@@ -22,7 +22,8 @@ echo "Please ensure that it is installed and that your office is not on Terra or
 
 echo "Are you sure you want to continue? [Y/n]"
 read -r answer
-if [[ $answer != "Y" && $answer != "y" ]]; then
+# Empty input defaults to "yes" so the prompt matches the [Y/n] convention.
+if [[ $answer == "n" || $answer == "N" ]]; then
     echo "Aborting."
     exit 1
 fi
@@ -40,6 +41,16 @@ require go
 require node
 require npm
 require docker
+
+# Docker on its own isn't enough — we use `docker compose` (v2) below, and
+# v1's `docker-compose` standalone binary has a different invocation. Fail
+# fast with a clear message if v2 isn't available.
+compose_version=$(docker compose version 2>&1 || true)
+if ! echo "$compose_version" | grep -qE "v2|version 2"; then
+    echo "error: Docker Compose v2 not available (got: $compose_version)." >&2
+    echo "       Install Docker Desktop with Compose v2 and retry." >&2
+    exit 1
+fi
 
 export WULING_ENV=${WULING_ENV:-dev}
 export WULING_HTTP_ADDR=${WULING_HTTP_ADDR:-:8080}
@@ -104,10 +115,19 @@ echo "→ starting frontend on http://localhost:3000…"
 (cd frontend && npm run dev) &
 pids+=($!)
 
+# Derive the displayed URL from WULING_HTTP_ADDR so it tracks the actual
+# bind address (":8080", "0.0.0.0:8080", "127.0.0.1:9000", ...).
+display_addr=${WULING_HTTP_ADDR:-:8080}
+case "$display_addr" in
+    :*) api_url="http://localhost${display_addr}" ;;
+    http://*|https://*) api_url="$display_addr" ;;
+    *) api_url="http://${display_addr}" ;;
+esac
+
 cat <<EOF
 
 ── Wuling DevOps dev environment ───────────────────────
-  API:       http://localhost:8080
+  API:       ${api_url}
   Frontend:  http://localhost:3000
   Postgres:  localhost:5432 (wuling/wuling)
 ────────────────────────────────────────────────────────

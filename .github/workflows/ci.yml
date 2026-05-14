@@ -7,6 +7,10 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -56,7 +60,7 @@ jobs:
           } > coverage.md
 
       - name: Comment coverage on PR
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           GITHUB_TOKEN: ${{ secrets.SYNC_PAT }}
@@ -68,8 +72,8 @@ jobs:
 
       - name: Build Docker image
         run: |
-          if [ -f Dockerfile ]; then
-            docker build -t test-image .
+          if [ -f deploy/Dockerfile ]; then
+            docker build -f deploy/Dockerfile -t test-image .
           else
             echo "No Dockerfile found, skipping Docker build"
           fi
