@@ -17,8 +17,8 @@ jobs:
         with:
           node-version: "24"
       - name: Install dependencies
-        working-directory: ./frontend
+        working-directory: frontend
         run: npm ci
       - name: Build
-        working-directory: ./frontend
+        working-directory: frontend
         run: npm run build
