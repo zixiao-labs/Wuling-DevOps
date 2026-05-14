@@ -16,9 +16,18 @@ spec:
     spec:
       securityContext:
         fsGroup: 999  # postgres in the official image
+        runAsNonRoot: true
+        runAsUser: 999
       containers:
         - name: postgres
           image: postgres:18-alpine
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 999
+            capabilities:
+              drop: ["ALL"]
           ports:
             - containerPort: 5432
               name: postgres
@@ -36,6 +45,10 @@ spec:
             - name: data
               # postgres:18+ wants /var/lib/postgresql, not /var/lib/postgresql/data
               mountPath: /var/lib/postgresql
+            - name: tmp
+              mountPath: /tmp
+            - name: run
+              mountPath: /var/run/postgresql
           readinessProbe:
             exec:
               command: ["pg_isready", "-U", "wuling", "-d", "wuling"]
@@ -53,6 +66,11 @@ spec:
             limits:
               cpu: 1000m
               memory: 1Gi
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: run
+          emptyDir: {}
   volumeClaimTemplates:
     - metadata:
         name: data

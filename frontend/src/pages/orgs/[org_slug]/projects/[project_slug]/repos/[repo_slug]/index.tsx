@@ -174,6 +174,7 @@ const navStyle = {
 } as const;
 
 function CloneRow({ label, url }: { label: string; url: string }) {
+  const [copied, setCopied] = useState(false);
   return (
     <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", minWidth: 280 }}>
       <span
@@ -200,7 +201,19 @@ function CloneRow({ label, url }: { label: string; url: string }) {
       </code>
       <button
         type="button"
-        onClick={() => navigator.clipboard.writeText(url).catch(() => {})}
+        onClick={async () => {
+          if (!navigator.clipboard) {
+            alert("当前浏览器不支持自动复制；请手动选中地址。");
+            return;
+          }
+          try {
+            await navigator.clipboard.writeText(url);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+          } catch {
+            alert("复制失败，请手动选中地址。");
+          }
+        }}
         style={{
           border: "1px solid var(--border)",
           background: "var(--surface)",
@@ -211,7 +224,7 @@ function CloneRow({ label, url }: { label: string; url: string }) {
           cursor: "pointer",
         }}
       >
-        复制
+        {copied ? "已复制" : "复制"}
       </button>
     </div>
   );

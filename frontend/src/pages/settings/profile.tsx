@@ -26,7 +26,12 @@ export default function ProfilePage() {
         setUser(u);
       })
       .catch((e) => {
-        if ((e as ApiError).code !== "network") setError(e as ApiError);
+        // Surface every real error — including network — so the user can see
+        // why their profile failed to load instead of getting a stuck spinner.
+        // Aborts (unmount / navigation) come through as "network" too, so
+        // gate them with the controller's signal.
+        if (ac.signal.aborted) return;
+        setError(e as ApiError);
       })
       .finally(() => setLoading(false));
     return () => ac.abort();

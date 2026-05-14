@@ -12,4 +12,6 @@ Group=postgres
 
 # Keep retention bounded — anything older than 30 days goes away. Pair this
 # with off-host replication (restic / borg / pgbackrest) for proper DR.
-ExecStartPost=/usr/bin/find /var/backups/wuling -name 'wuling-*.sql.gz' -mtime +30 -delete
+# Only prune when the backup itself succeeded — otherwise a series of
+# failures would silently delete every old archive.
+ExecStartPost=/bin/sh -c 'test "$SERVICE_RESULT" = success && /usr/bin/find /var/backups/wuling -name "wuling-*.sql.gz" -mtime +30 -delete || true'

@@ -132,7 +132,7 @@ function ActivityChart({ days }: { days: ActivityDay[] }) {
   // Tiny stacked bars: commits + issues_opened + mrs_merged per day.
   const max = Math.max(
     1,
-    ...days.map((d) => d.commits + d.issues_opened + d.mrs_merged + d.issues_closed + d.mrs_opened),
+    ...days.map((d) => d.commits + d.issues_opened + d.mrs_merged),
   );
   return (
     <Card>

@@ -31,11 +31,15 @@ in
 
     package = mkOption {
       type = types.package;
+      default = pkgs.wuling-api or (throw "services.wuling.package is unset and pkgs.wuling-api is not in scope — set it explicitly or apply this flake's overlay.");
+      defaultText = lib.literalExpression "pkgs.wuling-api";
       description = "wuling-api package. Defaults to the one from this flake.";
     };
 
     migratePackage = mkOption {
       type = types.package;
+      default = pkgs.wuling-migrate or (throw "services.wuling.migratePackage is unset and pkgs.wuling-migrate is not in scope — set it explicitly or apply this flake's overlay.");
+      defaultText = lib.literalExpression "pkgs.wuling-migrate";
       description = "wuling-migrate package. Run via ExecStartPre on each restart.";
     };
 
@@ -81,8 +85,10 @@ in
     jwtSecretFile = mkOption {
       type = types.path;
       description = ''
-        Path to a file containing a strong random JWT secret. Use sops-nix /
-        agenix to inject; don't world-read this file.
+        Path to an EnvironmentFile (systemd format) whose only line is
+        `WULING_JWT_SECRET=<value>`. The value should be a strong random
+        string (e.g. `openssl rand -hex 48`). Use sops-nix / agenix to
+        inject it; don't world-read this file.
       '';
     };
 
@@ -106,6 +112,8 @@ in
       };
       package = mkOption {
         type = types.package;
+        default = pkgs.wuling-frontend or (throw "services.wuling.frontend.package is unset and pkgs.wuling-frontend is not in scope — set it explicitly or apply this flake's overlay.");
+        defaultText = lib.literalExpression "pkgs.wuling-frontend";
         description = "wuling-frontend package (the dist/ directory).";
       };
     };
@@ -198,15 +206,26 @@ in
         SystemCallFilter = [ "@system-service" ];
         LimitNOFILE = 65536;
 
-        # The state dirs above need to be writable by wuling
-        ReadWritePaths = [ "/var/lib/wuling" ];
+        # The state dirs above need to be writable by wuling. Include the
+        # configurable repo and ssh-host-key locations so users who point
+        # them outside /var/lib/wuling don't hit EROFS.
+        ReadWritePaths = lib.unique [
+          "/var/lib/wuling"
+          (toString cfg.repoRoot)
+          (builtins.dirOf (toString cfg.sshHostKeyFile))
+        ];
       };
     };
 
     # ── Firewall ─────────────────────────────────────────────────────────
     networking.firewall.allowedTCPPorts =
+      let
+        # Take the substring after the last `:` so "0.0.0.0:2222" works the
+        # same as ":2222".
+        sshPort = lib.toInt (lib.last (lib.splitString ":" cfg.sshAddr));
+      in
       optionals (cfg.reverseProxy != "none") [ 80 443 ]
-      ++ optional cfg.sshEnabled (lib.toInt (lib.removePrefix ":" cfg.sshAddr));
+      ++ optional cfg.sshEnabled sshPort;
 
     # ── Caddy reverse proxy + static frontend ────────────────────────────
     services.caddy = mkIf (cfg.reverseProxy == "caddy") {

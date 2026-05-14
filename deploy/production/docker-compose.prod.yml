@@ -22,7 +22,7 @@ services:
       POSTGRES_DB: wuling
     # No port published — only the API talks to it
     volumes:
-      - wuling-pg:/var/lib/postgresql
+      - wuling-pg:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U wuling -d wuling"]
       interval: 5s

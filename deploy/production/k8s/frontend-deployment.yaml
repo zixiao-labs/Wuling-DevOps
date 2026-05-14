@@ -18,10 +18,26 @@ spec:
         runAsUser: 101  # nginx user in nginx:alpine
       containers:
         - name: nginx
-          image: ghcr.io/zixiao-labs/wuling-frontend:latest
+          # Tag is overridden by kustomization.yaml `images:` block; CI rewrites
+          # it per release. Do not change to :latest.
+          image: ghcr.io/zixiao-labs/wuling-frontend:v0.0.0-set-by-ci
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            capabilities:
+              drop: ["ALL"]
           ports:
             - containerPort: 8080
               name: http
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /var/cache/nginx
+            - name: run
+              mountPath: /var/run
           readinessProbe:
             httpGet:
               path: /index.html
@@ -34,6 +50,13 @@ spec:
             limits:
               cpu: 200m
               memory: 128Mi
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: cache
+          emptyDir: {}
+        - name: run
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

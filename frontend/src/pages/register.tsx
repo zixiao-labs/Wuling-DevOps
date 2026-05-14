@@ -1,5 +1,5 @@
 import { Button, Card, Description, FieldError, Input, Label, TextField } from "@heroui/react";
-import { useNavigate } from "chen-the-dawnstreak";
+import { Link, useNavigate } from "chen-the-dawnstreak";
 import { useState } from "react";
 
 import { auth } from "@/api/endpoints";
@@ -26,7 +26,8 @@ function RegisterForm() {
   const [busy, setBusy] = useState(false);
 
   const isPasswordWeak = password.length > 0 && password.length < 8;
-  const isUsernameInvalid = username.length > 0 && username.length < 2;
+  const isUsernameInvalid =
+    username.length > 0 && (username.length < 2 || username.length > 64);
 
   async function onSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -71,7 +72,7 @@ function RegisterForm() {
               <Label>用户名</Label>
               <Input placeholder="amiya" />
               {isUsernameInvalid ? (
-                <FieldError>用户名至少 2 个字符。</FieldError>
+                <FieldError>用户名需为 2–64 个字符。</FieldError>
               ) : (
                 <Description>登录与项目路径中用到的名字（2–64 字符）。</Description>
               )}
@@ -109,7 +110,7 @@ function RegisterForm() {
         </Card.Content>
         <Card.Footer>
           <span style={{ color: "var(--muted)", fontSize: "0.85rem" }}>
-            已有账号？<a href="/login" style={{ color: "var(--accent)" }}>去登录</a>
+            已有账号？<Link to="/login" style={{ color: "var(--accent)" }}>去登录</Link>
           </span>
         </Card.Footer>
       </Card>

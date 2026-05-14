@@ -26,12 +26,24 @@ export default function SshKeysPage() {
   const [publicKey, setPublicKey] = useState("");
   const [creating, setCreating] = useState(false);
 
-  function load() {
+  function load(signal?: AbortSignal) {
     setError(null);
-    keysApi.list().then(setItems).catch((e) => setError(e as ApiError));
+    keysApi
+      .list()
+      .then((res) => {
+        if (!signal?.aborted) setItems(res);
+      })
+      .catch((e) => {
+        if (signal?.aborted) return;
+        setError(e as ApiError);
+      });
   }
 
-  useEffect(load, []);
+  useEffect(() => {
+    const ac = new AbortController();
+    load(ac.signal);
+    return () => ac.abort();
+  }, []);
 
   async function onCreate(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();

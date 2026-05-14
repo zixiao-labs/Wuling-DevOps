@@ -8,6 +8,9 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-body-size: "1g"        # large git pushes
     nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
     nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    # Cap concurrent abuse without choking real users. Tune for your traffic.
+    nginx.ingress.kubernetes.io/limit-connections: "20"
+    nginx.ingress.kubernetes.io/limit-rps: "50"
 spec:
   ingressClassName: nginx
   tls:
@@ -65,6 +68,10 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-body-size: "1g"
     nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
     nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    # Same throttle posture as the main ingress — git push gets enough headroom
+    # to land a large pack, but a flood of parallel pushes will be rate-limited.
+    nginx.ingress.kubernetes.io/limit-connections: "20"
+    nginx.ingress.kubernetes.io/limit-rps: "50"
 spec:
   ingressClassName: nginx
   tls:

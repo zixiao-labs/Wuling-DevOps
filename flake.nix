@@ -40,6 +40,8 @@
           # `vendorHash` needs an update whenever go.sum changes. To compute:
           #   nix run nixpkgs#nix-prefetch -- "{ vendorHash }: (builtins.getFlake (toString ./.)).packages.x86_64-linux.wuling-api.goModules.overrideAttrs (_: { inherit vendorHash; })"
           # Or simpler: set to lib.fakeHash and let nix tell you the right one.
+          # !! Must be a real sha256 before tagging a release — `nix build` fails
+          #    on fakeHash, and the CI release pipeline depends on a buildable flake.
           vendorHash = pkgs.lib.fakeHash;
 
           subPackages = [ "cmd/wuling-api" ];
@@ -76,6 +78,7 @@
 
           # See `nix build .#wuling-frontend` — npm will tell you the right hash
           # the first time. Or set to lib.fakeHash and read the error.
+          # !! Must be a real sha256 before tagging a release.
           npmDepsHash = pkgs.lib.fakeHash;
 
           # Generate API types as part of the build so type errors are caught here.

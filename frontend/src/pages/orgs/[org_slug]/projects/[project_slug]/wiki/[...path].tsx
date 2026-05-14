@@ -7,7 +7,6 @@ import { ApiError } from "@/api/errors";
 import { ErrorBanner } from "@/components/error-banner";
 import { Loading } from "@/components/loading";
 import { RawMarkdownHtml } from "@/components/markdown";
-import { RelativeTime } from "@/components/relative-time";
 import { useOrgCtx, useProjectCtx } from "@/auth/org-context";
 import type { WikiPageContent } from "@/api/types";
 
@@ -145,9 +144,6 @@ function PageMetaFooter() {
   return (
     <div style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
       Wiki HTML 由服务端通过 goldmark + bluemonday 净化，可直接渲染。
-      <span style={{ marginLeft: "0.5rem" }}>
-        <RelativeTime iso={null} />
-      </span>
     </div>
   );
 }

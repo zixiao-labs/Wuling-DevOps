@@ -78,7 +78,20 @@ export async function apiFetch<T>(path: string, opts: ApiFetchOptions = {}): Pro
   }
 
   const isJson = (res.headers.get("content-type") ?? "").includes("application/json");
-  const payload: unknown = isJson ? await res.json().catch(() => null) : await res.text();
+  let payload: unknown;
+  if (isJson) {
+    try {
+      payload = await res.json();
+    } catch (cause) {
+      // Don't swallow parse errors on 2xx — callers expect a real body. We
+      // tolerate broken JSON on error responses so we can still surface the
+      // status code.
+      if (res.ok) throw ApiError.network(cause);
+      payload = null;
+    }
+  } else {
+    payload = await res.text();
+  }
 
   if (!res.ok) {
     const err = ApiError.fromBody(res.status, payload);

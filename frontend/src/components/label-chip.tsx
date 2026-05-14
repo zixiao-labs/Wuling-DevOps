@@ -29,6 +29,18 @@ export function LabelChip({
   return (
     <span
       onClick={onClick}
+      onKeyDown={
+        onClick
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClick();
+              }
+            }
+          : undefined
+      }
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
       title={label.description || label.name}
       style={{
         display: "inline-flex",
@@ -46,6 +58,7 @@ export function LabelChip({
       {label.name}
       {onRemove ? (
         <button
+          type="button"
           onClick={(e) => {
             e.stopPropagation();
             onRemove();

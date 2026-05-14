@@ -19,7 +19,17 @@ export default function NewWikiPage() {
   const [saving, setSaving] = useState(false);
 
   const normalizedPath = path.endsWith(".md") ? path : path ? `${path}.md` : "";
-  const isInvalidPath = normalizedPath && !/^[\w\-./]+\.md$/.test(normalizedPath);
+  // Reject filesystem-reserved chars (so Windows checkouts and our backend
+  // both stay happy) and cap nesting at 8 segments to match the UI hint.
+  // Unicode page names are allowed.
+  const pathDepth = normalizedPath ? normalizedPath.split("/").filter(Boolean).length : 0;
+  const isInvalidPath = Boolean(
+    normalizedPath &&
+      (!/^[^<>:"|?*\x00-\x1f]+\.md$/.test(normalizedPath) ||
+        normalizedPath.includes("//") ||
+        normalizedPath.startsWith("/") ||
+        pathDepth > 8),
+  );
 
   async function onSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();

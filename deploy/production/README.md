@@ -6,7 +6,7 @@
 | 路径 | 适合 | 在本目录看哪些文件 |
 |---|---|---|
 | **Docker Compose**（推荐起步） | 单机、自管 VPS、家里的小服务器 | `docker-compose.prod.yml` · `Caddyfile` · `env.example` |
-| **Nix Flake / NixOS 模块** | NixOS、不想用容器、追求声明式与原子升级 | `nix/flake.nix` · `nix/module.nix` |
+| **Nix Flake / NixOS 模块** | NixOS、不想用容器、追求声明式与原子升级 | `flake.nix` · `nix/module.nix` |
 | **Kubernetes** | 已有 k8s 集群，想做横向伸缩 / 滚动升级 | `k8s/*.yaml` |
 
 不论选哪一条，都共用同一套环境变量（`env.example`）和同一组 Postgres 备份脚本
@@ -16,7 +16,7 @@
 
 ## 1. 架构与端口
 
-```
+```text
                     ┌─────────────────────────────┐
                     │  浏览器 / git client / SSH   │
                     └──────────────┬──────────────┘

@@ -21,16 +21,36 @@ spec:
         fsGroup: 10001
       initContainers:
         - name: migrate
-          image: ghcr.io/zixiao-labs/wuling-api:latest  # CI bumps to a SHA tag
+          # Tag is overridden by kustomization.yaml `images:` block, which CI
+          # rewrites per release via `kustomize edit set image ...:vX.Y.Z`.
+          # Do not change this to :latest — see kustomization.yaml.
+          image: ghcr.io/zixiao-labs/wuling-api:v0.0.0-set-by-ci
           command: ["wuling-migrate"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10001
+            capabilities:
+              drop: ["ALL"]
           envFrom:
             - configMapRef:
                 name: wuling-config
             - secretRef:
                 name: wuling-secrets
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
       containers:
         - name: api
-          image: ghcr.io/zixiao-labs/wuling-api:latest
+          image: ghcr.io/zixiao-labs/wuling-api:v0.0.0-set-by-ci
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10001
+            capabilities:
+              drop: ["ALL"]
           ports:
             - containerPort: 8080
               name: http
@@ -46,6 +66,10 @@ spec:
               mountPath: /var/lib/wuling/repos
             - name: ssh
               mountPath: /var/lib/wuling/ssh
+            - name: tmp
+              mountPath: /tmp
+            - name: home
+              mountPath: /home/wuling
           readinessProbe:
             httpGet:
               path: /healthz
@@ -72,6 +96,10 @@ spec:
         - name: ssh
           persistentVolumeClaim:
             claimName: wuling-ssh
+        - name: tmp
+          emptyDir: {}
+        - name: home
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

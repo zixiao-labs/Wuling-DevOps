@@ -29,13 +29,26 @@ export default function TokensPage() {
   const [scopes, setScopes] = useState<PatScope[]>(["repo:read"]);
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<AccessTokenView | null>(null);
+  const [copied, setCopied] = useState(false);
 
-  function load() {
+  function load(signal?: AbortSignal) {
     setError(null);
-    patApi.list().then(setItems).catch((e) => setError(e as ApiError));
+    patApi
+      .list()
+      .then((res) => {
+        if (!signal?.aborted) setItems(res);
+      })
+      .catch((e) => {
+        if (signal?.aborted) return;
+        setError(e as ApiError);
+      });
   }
 
-  useEffect(load, []);
+  useEffect(() => {
+    const ac = new AbortController();
+    load(ac.signal);
+    return () => ac.abort();
+  }, []);
 
   async function onCreate(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -204,11 +217,22 @@ export default function TokensPage() {
               <Modal.Footer>
                 <Button
                   variant="secondary"
-                  onPress={() => {
-                    if (created?.token) navigator.clipboard.writeText(created.token).catch(() => {});
+                  onPress={async () => {
+                    if (!created?.token) return;
+                    if (!navigator.clipboard) {
+                      alert("当前浏览器不支持自动复制；请手动选中令牌文本。");
+                      return;
+                    }
+                    try {
+                      await navigator.clipboard.writeText(created.token);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 1500);
+                    } catch {
+                      alert("复制失败，请手动选中令牌文本。");
+                    }
                   }}
                 >
-                  <CopyIcon width={16} height={16} /> 复制
+                  <CopyIcon width={16} height={16} /> {copied ? "已复制" : "复制"}
                 </Button>
                 <Button onPress={() => setCreated(null)}>关闭</Button>
               </Modal.Footer>

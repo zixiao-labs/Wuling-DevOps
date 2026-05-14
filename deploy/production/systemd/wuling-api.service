@@ -1,9 +1,13 @@
 [Unit]
 Description=Wuling DevOps API
 Documentation=https://github.com/zixiao-labs/Wuling-DevOps
-After=network-online.target postgresql.service
-Wants=network-online.target
-Requires=postgresql.service
+After=network-online.target
+Wants=network-online.target postgresql.service
+# Note: PostgreSQL may run on a separate host. If you're running it locally on
+# this machine, drop in /etc/systemd/system/wuling-api.service.d/local-pg.conf:
+#   [Unit]
+#   After=postgresql.service
+#   Requires=postgresql.service
 
 [Service]
 Type=simple

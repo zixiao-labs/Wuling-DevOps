@@ -35,8 +35,13 @@ function readInitial(): AuthState {
   } catch {
     user = null;
   }
-  const theme = (localStorage.getItem(THEME_KEY) as ThemeName | null) ?? "clean";
-  const mode = (localStorage.getItem(MODE_KEY) as ThemeMode | null) ?? "light";
+  const rawTheme = localStorage.getItem(THEME_KEY);
+  const rawMode = localStorage.getItem(MODE_KEY);
+  const theme: ThemeName =
+    rawTheme === "clean" || rawTheme === "green" || rawTheme === "zixiaolabsvi"
+      ? rawTheme
+      : "clean";
+  const mode: ThemeMode = rawMode === "dark" || rawMode === "light" ? rawMode : "light";
   return {
     token: localStorage.getItem(TOKEN_KEY),
     user,

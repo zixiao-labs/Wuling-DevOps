@@ -15,9 +15,13 @@ resources:
   - frontend-deployment.yaml
   - ingress.yaml
 
-# Bump these tags on each release; CI publishes both images per tag.
+# CI rewrites these tags per release via:
+#   kustomize edit set image \
+#     ghcr.io/zixiao-labs/wuling-api=ghcr.io/zixiao-labs/wuling-api:vX.Y.Z \
+#     ghcr.io/zixiao-labs/wuling-frontend=ghcr.io/zixiao-labs/wuling-frontend:vX.Y.Z
+# Never commit `latest` here — production deploys must be reproducible.
 images:
   - name: ghcr.io/zixiao-labs/wuling-api
-    newTag: latest
+    newTag: v0.0.0-set-by-ci
   - name: ghcr.io/zixiao-labs/wuling-frontend
-    newTag: latest
+    newTag: v0.0.0-set-by-ci

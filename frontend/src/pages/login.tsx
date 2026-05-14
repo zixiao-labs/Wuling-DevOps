@@ -1,5 +1,5 @@
 import { Button, Card, Description, FieldError, Input, Label, TextField } from "@heroui/react";
-import { useNavigate, useLocation } from "chen-the-dawnstreak";
+import { Link, useNavigate, useLocation } from "chen-the-dawnstreak";
 import { useState } from "react";
 
 import { auth } from "@/api/endpoints";
@@ -82,7 +82,7 @@ function LoginForm() {
         </Card.Content>
         <Card.Footer>
           <span style={{ color: "var(--muted)", fontSize: "0.85rem" }}>
-            还没账号？<a href="/register" style={{ color: "var(--accent)" }}>立即注册</a>
+            还没账号？<Link to="/register" style={{ color: "var(--accent)" }}>立即注册</Link>
           </span>
         </Card.Footer>
       </Card>

@@ -26,8 +26,10 @@ export default function IssueDetailPage() {
   const [posting, setPosting] = useState(false);
   const [toggling, setToggling] = useState(false);
 
+  const numberIsValid = Number.isInteger(number) && number > 0;
+
   function refresh() {
-    if (!Number.isFinite(number)) return;
+    if (!numberIsValid) return;
     Promise.all([
       issuesApi.get(org.slug, project.slug, number),
       issuesApi.comments.list(org.slug, project.slug, number),
@@ -40,6 +42,15 @@ export default function IssueDetailPage() {
   }
   useEffect(refresh, [org.slug, project.slug, number]);
 
+  if (!numberIsValid) {
+    return (
+      <ErrorBanner
+        error={
+          new ApiError(400, "unknown", `无效的 issue 编号：${params.number ?? ""}`)
+        }
+      />
+    );
+  }
   if (error) return <ErrorBanner error={error} />;
   if (!issue || !comments) return <Loading />;
 
