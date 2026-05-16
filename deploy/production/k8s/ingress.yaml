@@ -1,0 +1,90 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: wuling
+  namespace: wuling
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-body-size: "1g"        # large git pushes
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    # Cap concurrent abuse without choking real users. Tune for your traffic.
+    nginx.ingress.kubernetes.io/limit-connections: "20"
+    nginx.ingress.kubernetes.io/limit-rps: "50"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: ["devops.example.com"]
+      secretName: wuling-tls
+  rules:
+    - host: devops.example.com
+      http:
+        paths:
+          # REST + health + git smart HTTP go to the api service
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: wuling-api
+                port:
+                  name: http
+          - path: /healthz
+            pathType: Exact
+            backend:
+              service:
+                name: wuling-api
+                port:
+                  name: http
+          - path: /version
+            pathType: Exact
+            backend:
+              service:
+                name: wuling-api
+                port:
+                  name: http
+          # Git smart HTTP — path looks like /<org>/<project>/<repo>.git/...
+          # We can't pattern-match with Ingress; route everything else to the
+          # frontend service (which serves index.html as SPA fallback for
+          # unknown routes), and rely on the api ingress entries above for
+          # API traffic. For git push to work, set up a second ingress with
+          # a more specific path-match using nginx ingress's regex feature,
+          # or use a separate hostname like `git.example.com` mapped to api.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: wuling-frontend
+                port:
+                  name: http
+---
+# Dedicated host for Git smart HTTP — keeps SPA paths cleanly separated.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: wuling-git
+  namespace: wuling
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-body-size: "1g"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    # Same throttle posture as the main ingress — git push gets enough headroom
+    # to land a large pack, but a flood of parallel pushes will be rate-limited.
+    nginx.ingress.kubernetes.io/limit-connections: "20"
+    nginx.ingress.kubernetes.io/limit-rps: "50"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: ["git.example.com"]
+      secretName: wuling-git-tls
+  rules:
+    - host: git.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: wuling-api
+                port:
+                  name: http

@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wuling-frontend
+  namespace: wuling
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: wuling-frontend
+  template:
+    metadata:
+      labels:
+        app: wuling-frontend
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101  # nginx user in nginx:alpine
+      containers:
+        - name: nginx
+          # Tag is overridden by kustomization.yaml `images:` block; CI rewrites
+          # it per release. Do not change to :latest.
+          image: ghcr.io/zixiao-labs/wuling-frontend:v0.0.0-set-by-ci
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 101
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - containerPort: 8080
+              name: http
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /var/cache/nginx
+            - name: run
+              mountPath: /var/run
+          readinessProbe:
+            httpGet:
+              path: /index.html
+              port: 8080
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /index.html
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: cache
+          emptyDir: {}
+        - name: run
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wuling-frontend
+  namespace: wuling
+spec:
+  type: ClusterIP
+  selector:
+    app: wuling-frontend
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

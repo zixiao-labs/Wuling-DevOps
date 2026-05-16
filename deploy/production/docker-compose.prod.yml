@@ -1,0 +1,92 @@
+# Production stack: caddy (TLS terminator + static frontend) + wuling-api + postgres.
+#
+# Differences vs. the dev compose at deploy/docker-compose.yml:
+#   - No source bind-mounts; images come from GHCR (or built once locally)
+#   - JWT secret, DB password, etc. come from .env — never check those in
+#   - Caddy in front, handling TLS via Let's Encrypt automatically
+#   - SSH port 2222 explicitly exposed
+#   - Persistent SSH host key directory mounted from a named volume
+#   - Postgres data, repo storage, and Caddy ACME data all on named volumes
+#
+# Tag pinning: the GHCR image tag below is read from $WULING_TAG so deploys
+# are reproducible. Bump it explicitly when rolling forward; `docker compose
+# pull` without changing the tag is a no-op.
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: wuling
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?must be set}
+      POSTGRES_DB: wuling
+    # No port published — only the API talks to it
+    volumes:
+      - wuling-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wuling -d wuling"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  api:
+    image: ghcr.io/zixiao-labs/wuling-api:${WULING_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      # Force-fix a couple of things even if .env disagrees
+      WULING_ENV: prod
+      WULING_HTTP_ADDR: ":8080"
+    # SSH must be reachable on the public Internet (or whatever
+    # network you want git users on). HTTP is only reached via Caddy.
+    ports:
+      - "2222:2222"
+    volumes:
+      - wuling-repos:/var/lib/wuling/repos
+      - wuling-ssh:/var/lib/wuling/ssh
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  frontend-build:
+    # One-shot: produce the static frontend bundle and copy it into the
+    # shared `wuling-frontend` volume so caddy can serve it. Re-runs on
+    # `docker compose up` only if the image tag has changed.
+    image: ghcr.io/zixiao-labs/wuling-frontend:${WULING_TAG:-latest}
+    volumes:
+      - wuling-frontend:/dist
+    command: ["sh", "-c", "cp -r /app/dist/. /dist/ && echo built"]
+    restart: "no"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+      - frontend-build
+    environment:
+      WULING_DOMAIN: ${WULING_DOMAIN:?must be set}
+      ACME_EMAIL: ${ACME_EMAIL:?must be set}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"  # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - wuling-frontend:/srv/wuling-frontend:ro
+      - wuling-caddy-data:/data
+      - wuling-caddy-config:/config
+
+volumes:
+  wuling-pg:
+  wuling-repos:
+  wuling-ssh:
+  wuling-frontend:
+  wuling-caddy-data:
+  wuling-caddy-config:

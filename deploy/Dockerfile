@@ -32,6 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         git \
         libgit2-1.5 \
+        wget \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --create-home --uid 10001 wuling
 

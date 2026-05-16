@@ -1,0 +1,52 @@
+[Unit]
+Description=Wuling DevOps API
+Documentation=https://github.com/zixiao-labs/Wuling-DevOps
+After=network-online.target
+Wants=network-online.target postgresql.service
+# Note: PostgreSQL may run on a separate host. If you're running it locally on
+# this machine, drop in /etc/systemd/system/wuling-api.service.d/local-pg.conf:
+#   [Unit]
+#   After=postgresql.service
+#   Requires=postgresql.service
+
+[Service]
+Type=simple
+# Binary deployed by `nix profile install` or scp'd from `nix build .#wuling-api`
+ExecStartPre=/usr/local/bin/wuling-migrate
+ExecStart=/usr/local/bin/wuling-api
+Restart=on-failure
+RestartSec=3
+
+# Run as a non-privileged dynamic user. The state directories below are
+# automatically created and given to this user.
+DynamicUser=yes
+StateDirectory=wuling wuling/repos wuling/ssh
+WorkingDirectory=/var/lib/wuling
+EnvironmentFile=/etc/wuling/wuling.env
+
+# Hardening — feel free to relax if it breaks something on your kernel
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=false   # libgit2 needs JIT-ish things — keep false
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+
+# 8080 (REST/Git smart HTTP) + 2222 (Git SSH); systemd doesn't need to bind
+# them — the binary does itself — but you may want a firewall opening here.
+AmbientCapabilities=
+CapabilityBoundingSet=
+
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

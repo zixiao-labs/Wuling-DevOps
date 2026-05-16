@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: wuling
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  # secret.yaml is intentionally NOT listed here — copy from
+  # secret.example.yaml, fill in real values, and add to your own overlay
+  # (e.g. via SealedSecret / external-secrets).
+  - postgres-statefulset.yaml
+  - api-deployment.yaml
+  - api-service.yaml
+  - frontend-deployment.yaml
+  - ingress.yaml
+
+# CI rewrites these tags per release via:
+#   kustomize edit set image \
+#     ghcr.io/zixiao-labs/wuling-api=ghcr.io/zixiao-labs/wuling-api:vX.Y.Z \
+#     ghcr.io/zixiao-labs/wuling-frontend=ghcr.io/zixiao-labs/wuling-frontend:vX.Y.Z
+# Never commit `latest` here — production deploys must be reproducible.
+images:
+  - name: ghcr.io/zixiao-labs/wuling-api
+    newTag: v0.0.0-set-by-ci
+  - name: ghcr.io/zixiao-labs/wuling-frontend
+    newTag: v0.0.0-set-by-ci

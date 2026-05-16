@@ -1,0 +1,77 @@
+# Wuling DevOps · production Caddyfile
+#
+# Caddy reads {$WULING_DOMAIN} / {$ACME_EMAIL} from the env passed in
+# docker-compose.prod.yml. It terminates TLS (auto-provisioning via the
+# HTTP-01 challenge), serves the static frontend from /srv/wuling-frontend,
+# and reverse-proxies everything else (REST + Git smart HTTP) to wuling-api.
+#
+# Git smart HTTP paths look like /{org}/{project}/{repo}.git/{info/refs,
+# git-upload-pack, git-receive-pack}; the path-suffix matcher catches all
+# three so the reverse proxy doesn't have to enumerate sub-paths.
+
+{
+    email {$ACME_EMAIL}
+    # Sane defaults: HTTP/3 on, hide Caddy version header.
+    servers {
+        protocols h1 h2 h3
+    }
+}
+
+# Force HTTPS — Caddy does this implicitly for named hosts, but be explicit
+# so the redirect is auditable in this file.
+http://{$WULING_DOMAIN} {
+    redir https://{$WULING_DOMAIN}{uri} permanent
+}
+
+{$WULING_DOMAIN} {
+    encode gzip zstd
+
+    # ---- API + Git smart HTTP ------------------------------------------
+    # Order matters: more specific matchers go first.
+    @api {
+        path /api/* /healthz /version
+    }
+    reverse_proxy @api api:8080 {
+        header_up X-Forwarded-Host {host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+
+    @git path_regexp git ^/[^/]+/[^/]+/[^/]+\.git(/|$)
+    reverse_proxy @git api:8080 {
+        # Git smart HTTP can stream large packs — disable flush timeouts
+        flush_interval -1
+        header_up X-Forwarded-Host {host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+
+    # ---- Static frontend (Nasti build output) --------------------------
+    root * /srv/wuling-frontend
+    encode gzip
+    try_files {path} /index.html  # SPA fallback for client-side routes
+    file_server {
+        precompressed gzip
+    }
+
+    # Cache hashed assets aggressively, never cache index.html
+    @assets path /assets/* /icon-*.png /favicon.svg /manifest.webmanifest /sw.js
+    header @assets Cache-Control "public, max-age=31536000, immutable"
+
+    @noCache path /index.html / /
+    header @noCache Cache-Control "no-cache"
+
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "interest-cohort=()"
+        # CSP is intentionally loose — Wiki HTML comes server-sanitized but
+        # contains user-authored markup. Tighten this when you can.
+        Content-Security-Policy "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; font-src 'self' data:"
+    }
+
+    log {
+        output stdout
+        format json
+    }
+}

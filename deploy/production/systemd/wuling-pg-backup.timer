@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily Wuling DevOps Postgres backup
+
+[Timer]
+# 02:30 every day with up to 10 minutes of jitter (so a fleet doesn't
+# stampede the DB at the same instant).
+OnCalendar=*-*-* 02:30:00
+RandomizedDelaySec=10m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
