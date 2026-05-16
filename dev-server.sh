@@ -42,13 +42,13 @@ require node
 require npm
 require docker
 
-# Docker on its own isn't enough — we use `docker compose` (v2) below, and
-# v1's `docker-compose` standalone binary has a different invocation. Fail
-# fast with a clear message if v2 isn't available.
+# Docker on its own isn't enough — we use `docker compose` (v5) below, and
+# v2's `docker-compose` standalone binary has a different invocation. Fail
+# fast with a clear message if v5 isn't available.
 compose_version=$(docker compose version 2>&1 || true)
-if ! echo "$compose_version" | grep -qE "v2|version 2"; then
-    echo "error: Docker Compose v2 not available (got: $compose_version)." >&2
-    echo "       Install Docker Desktop with Compose v2 and retry." >&2
+if ! echo "$compose_version" | grep -qE "v5|version 5"; then
+    echo "error: Docker Compose not available (got: $compose_version)." >&2
+    echo "       Install Docker Desktop with Compose v5 and retry." >&2
     exit 1
 fi
 
@@ -107,7 +107,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-echo "→ starting wuling-api on $WULING_HTTP_ADDR…"
+echo "→ starting wuling-api on $WULING_HTTP_ADDR"
 go run ./cmd/wuling-api &
 pids+=($!)
 

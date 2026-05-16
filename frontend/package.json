@@ -30,9 +30,12 @@
   "devDependencies": {
     "@gravity-ui/icons": "^2.18.0",
     "@nasti-toolchain/nasti": "^1.6.2",
+    "@tailwindcss/node": "^4.3.0",
+    "@tailwindcss/oxide": "^4.3.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "openapi-typescript": "^7.4.0",
+    "tailwindcss": "^4.3.0",
     "typescript": "^5.6.0"
   }
 }
