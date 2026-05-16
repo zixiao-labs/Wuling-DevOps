@@ -189,6 +189,9 @@ jobs:
         with:
           path: release/
           merge-multiple: true
+          # Skip the auto-generated *.dockerbuild build-record artifacts that
+          # docker/build-push-action uploads; we only want the release bundles.
+          pattern: "@(binaries-*|frontend-dist)"
 
       - name: Verify checksums
         run: |
