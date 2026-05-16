@@ -49,8 +49,9 @@
           nativeBuildInputs = with pkgs; [ pkg-config ];
           buildInputs = with pkgs; [ libgit2 ];
 
-          # cgo + libgit2 — the build script in deploy/Dockerfile sets these.
-          CGO_ENABLED = "1";
+          # cgo + libgit2. buildGoModule already sets CGO_ENABLED=1 by default
+          # when buildInputs are present, and current nixpkgs rejects passing it
+          # both as a derivation arg and via `env`. Don't add it back here.
           # Strip the binary; reduces size by ~30%.
           ldflags = [ "-s" "-w" ];
 

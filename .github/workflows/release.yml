@@ -20,10 +20,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: linux,  arch: amd64, runner: ubuntu-latest }
-          - { os: linux,  arch: arm64, runner: ubuntu-latest }
-          - { os: darwin, arch: amd64, runner: macos-15-intel }
-          - { os: darwin, arch: arm64, runner: macos-14       }
+          - { os: linux,  arch: amd64, runner: ubuntu-latest    }
+          - { os: linux,  arch: arm64, runner: ubuntu-24.04-arm }
+          - { os: darwin, arch: amd64, runner: macos-15-intel   }
+          - { os: darwin, arch: arm64, runner: macos-14         }
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -33,18 +33,13 @@ jobs:
           go-version: "1.26"
 
       # libgit2 is a cgo dep. On Linux runners we need apt; on macOS we use brew.
+      # Each linux arch builds on its own native runner (ubuntu-latest for amd64,
+      # ubuntu-24.04-arm for arm64), so no cross-compile toolchain is needed.
       - name: Install libgit2 (Linux)
         if: matrix.os == 'linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libgit2-dev pkg-config build-essential
-          # For arm64 cross we need the aarch64 toolchain + sysroot
-          if [ "${{ matrix.arch }}" = "arm64" ]; then
-            sudo apt-get install -y gcc-aarch64-linux-gnu libgit2-dev:arm64 || true
-            sudo dpkg --add-architecture arm64 || true
-            sudo apt-get update || true
-            sudo apt-get install -y libgit2-dev:arm64 pkg-config-aarch64-linux-gnu || true
-          fi
 
       - name: Install libgit2 (macOS)
         if: matrix.os == 'darwin'
@@ -55,7 +50,6 @@ jobs:
           GOOS:        ${{ matrix.os }}
           GOARCH:      ${{ matrix.arch }}
           CGO_ENABLED: "1"
-          CC: ${{ (matrix.os == 'linux' && matrix.arch == 'arm64') && 'aarch64-linux-gnu-gcc' || '' }}
         run: |
           mkdir -p out
           VERSION="${GITHUB_REF_NAME}"
