@@ -2,6 +2,20 @@
 
 武陵DevOps（玩终末地的都懂）
 
+## 🚀快速开始
+
+Linux🐧/macOS🍎
+
+```bash
+curl https://raw.githubusercontent.com/zixiao-labs/Wuling-DevOps/refs/heads/main/prod-deploy.sh | bash
+```
+Windows Server🪟
+
+```powershell
+irm https://raw.githubusercontent.com/zixiao-labs/Wuling-DevOps/refs/heads/main/prod-deploy.ps1 | iex
+```
+
+## 关于项目
 
 因为[前一个版本](https://github.com/zixiao-labs/yuxupalace-server)的话@HwlloChen回来就没办法维护了，再加上改名改到底，直接用Go和C++（Libgit2）重写🙃
 
