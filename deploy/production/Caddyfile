@@ -8,6 +8,12 @@
 # Git smart HTTP paths look like /{org}/{project}/{repo}.git/{info/refs,
 # git-upload-pack, git-receive-pack}; the path-suffix matcher catches all
 # three so the reverse proxy doesn't have to enumerate sub-paths.
+#
+# Routing uses `handle` blocks (mutually exclusive) instead of free-form
+# directives. Caddy auto-orders directives, and `try_files` runs before
+# `reverse_proxy` — without `handle`, the SPA fallback rewrites
+# /api/v1/auth/register → /index.html before the API matcher gets a chance,
+# and the request lands in `file_server` which returns 405 on POST.
 
 {
     email {$ACME_EMAIL}
@@ -26,40 +32,51 @@ http://{$WULING_DOMAIN} {
 {$WULING_DOMAIN} {
     encode gzip zstd
 
-    # ---- API + Git smart HTTP ------------------------------------------
-    # Order matters: more specific matchers go first.
-    @api {
-        path /api/* /healthz /version
+    # ---- API + health/version ------------------------------------------
+    handle /api/* {
+        reverse_proxy api:8080 {
+            header_up X-Forwarded-Host {host}
+            header_up X-Forwarded-Proto {scheme}
+        }
     }
-    reverse_proxy @api api:8080 {
-        header_up X-Forwarded-Host {host}
-        header_up X-Forwarded-Proto {scheme}
+    handle /healthz /version {
+        reverse_proxy api:8080 {
+            header_up X-Forwarded-Host {host}
+            header_up X-Forwarded-Proto {scheme}
+        }
     }
 
+    # ---- Git smart HTTP ------------------------------------------------
     @git path_regexp git ^/[^/]+/[^/]+/[^/]+\.git(/|$)
-    reverse_proxy @git api:8080 {
-        # Git smart HTTP can stream large packs — disable flush timeouts
-        flush_interval -1
-        header_up X-Forwarded-Host {host}
-        header_up X-Forwarded-Proto {scheme}
+    handle @git {
+        reverse_proxy api:8080 {
+            # Git smart HTTP can stream large packs — disable flush timeouts
+            flush_interval -1
+            header_up X-Forwarded-Host {host}
+            header_up X-Forwarded-Proto {scheme}
+        }
     }
 
     # ---- Static frontend (Nasti build output) --------------------------
-    root * /srv/wuling-frontend
-    encode gzip
-    try_files {path} /index.html  # SPA fallback for client-side routes
-    file_server {
-        precompressed gzip
+    # Catch-all: anything that didn't match the API/git handlers above.
+    handle {
+        root * /srv/wuling-frontend
+        try_files {path} /index.html  # SPA fallback for client-side routes
+        file_server {
+            precompressed gzip
+        }
+
+        # Cache hashed assets aggressively, never cache index.html
+        @assets path /assets/* /icon-*.png /favicon.svg /manifest.webmanifest /sw.js
+        header @assets Cache-Control "public, max-age=31536000, immutable"
+
+        @noCache path /index.html / /
+        header @noCache Cache-Control "no-cache"
     }
 
-    # Cache hashed assets aggressively, never cache index.html
-    @assets path /assets/* /icon-*.png /favicon.svg /manifest.webmanifest /sw.js
-    header @assets Cache-Control "public, max-age=31536000, immutable"
-
-    @noCache path /index.html / /
-    header @noCache Cache-Control "no-cache"
-
-    # Security headers
+    # Security headers — apply to every response from this site, including
+    # API responses. Kept outside the `handle` blocks so they're not
+    # duplicated per route.
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
         X-Content-Type-Options "nosniff"

@@ -6,17 +6,7 @@
     <meta name="color-scheme" content="light dark" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>武陵 DevOps</title>
-    <script>
-      // Restore theme + mode before paint to avoid flash.
-      (function () {
-        try {
-          var t = localStorage.getItem("wuling.theme") || "clean";
-          var m = localStorage.getItem("wuling.mode") || "light";
-          document.documentElement.setAttribute("data-theme", t);
-          if (m === "dark") document.documentElement.classList.add("dark");
-        } catch (e) {}
-      })();
-    </script>
+    <script src="/theme-init.js"></script>
   </head>
   <body>
     <div id="root"></div>
