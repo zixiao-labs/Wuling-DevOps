@@ -39,7 +39,8 @@ http://{$WULING_DOMAIN} {
             header_up X-Forwarded-Proto {scheme}
         }
     }
-    handle /healthz /version {
+    @apiMisc path /healthz /version
+    handle @apiMisc {
         reverse_proxy api:8080 {
             header_up X-Forwarded-Host {host}
             header_up X-Forwarded-Proto {scheme}
