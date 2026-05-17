@@ -29,12 +29,27 @@ services:
       timeout: 5s
       retries: 12
 
+  # One-shot: fix ownership on the persistent wuling-ssh volume so the
+  # non-root api container (uid 10001) can write the SSH host key on first
+  # boot. Earlier deploys created the volume as root:root because the api
+  # image didn't carry an /var/lib/wuling/ssh dir for Docker to seed perms
+  # from. Cheap to run every `up` — it just chowns an already-correct dir.
+  api-init:
+    image: busybox:1.36
+    user: "0:0"
+    command: ["sh", "-c", "mkdir -p /ssh && chown -R 10001:10001 /ssh && chmod 0700 /ssh"]
+    volumes:
+      - wuling-ssh:/ssh
+    restart: "no"
+
   api:
     image: ghcr.io/zixiao-labs/wuling-api:${WULING_TAG:-latest}
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
+      api-init:
+        condition: service_completed_successfully
     env_file:
       - .env
     environment:
@@ -58,9 +73,16 @@ services:
     # One-shot: produce the static frontend bundle and copy it into the
     # shared `wuling-frontend` volume so caddy can serve it. Re-runs on
     # `docker compose up` only if the image tag has changed.
+    #
+    # The image's ENTRYPOINT is nginx, so we must clear it before running
+    # the copy command (otherwise nginx tries to parse "sh" as a flag).
+    # We also run as root because the empty named volume mounts as
+    # root:root, and the image's default USER (nginx) can't write to it.
     image: ghcr.io/zixiao-labs/wuling-frontend:${WULING_TAG:-latest}
+    user: "0:0"
     volumes:
       - wuling-frontend:/dist
+    entrypoint: []
     command: ["sh", "-c", "cp -r /app/dist/. /dist/ && echo built"]
     restart: "no"
 
