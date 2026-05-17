@@ -38,11 +38,18 @@ type Handler struct {
 }
 
 // Mount registers routes under "/api/v1".
+//
+// The parent Route pattern must include a suffix beyond the project slug
+// (e.g. "/issues", "/labels") — mounting at the exact project path would
+// register a chi STUB handler that shadows orghttp's GET getProject route.
+// chi's Mount registers `mALL|mSTUB` at the pattern, which intercepts every
+// method including GET, so the leaf handler at the same path becomes
+// unreachable. See orghttp.Handler.Mount.
 func (h *Handler) Mount(r chi.Router) {
-	r.Route("/orgs/{org_slug}/projects/{project_slug}", func(r chi.Router) {
+	r.Group(func(r chi.Router) {
 		r.Use(auth.Middleware(h.Verifier, false))
 
-		r.Route("/issues", func(r chi.Router) {
+		r.Route("/orgs/{org_slug}/projects/{project_slug}/issues", func(r chi.Router) {
 			r.Get("/", h.listIssues)
 			r.Post("/", h.createIssue)
 			r.Route("/{number}", func(r chi.Router) {
@@ -54,7 +61,7 @@ func (h *Handler) Mount(r chi.Router) {
 			})
 		})
 
-		r.Route("/labels", func(r chi.Router) {
+		r.Route("/orgs/{org_slug}/projects/{project_slug}/labels", func(r chi.Router) {
 			r.Get("/", h.listLabels)
 			r.Post("/", h.createLabel)
 			r.Delete("/{label_id}", h.deleteLabel)
