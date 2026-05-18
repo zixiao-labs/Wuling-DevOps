@@ -42,7 +42,9 @@
 
 ```bash
 WULING_OAUTH_GITHUB_CLIENT_ID=Ov23liXXXXXXXXXXXXXX
-WULING_OAUTH_GITHUB_CLIENT_SECRET=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+# Paste the OAuth App client secret from GitHub here — NOT a Personal Access
+# Token (PATs start with `ghp_` / `github_pat_` and won't work for OAuth).
+WULING_OAUTH_GITHUB_CLIENT_SECRET=<your_github_oauth_client_secret>
 WULING_OAUTH_GITHUB_REDIRECT_URL=https://devops.example.com/api/v1/auth/oauth/github/callback
 # WULING_OAUTH_FRONTEND_BASE_URL=https://devops.example.com   # 同域部署可省略
 ```

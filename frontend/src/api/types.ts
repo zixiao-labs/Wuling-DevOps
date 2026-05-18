@@ -74,8 +74,27 @@ export interface PendingAccountResponse {
   user: User;
 }
 
-export interface OAuthConfirmResponse extends TokenResponse {
+/**
+ * /oauth/github/confirm response.
+ *
+ * Mirrors /register: a TokenResponse-shaped body (with the linked-or-created
+ * flag) when the account is approved and ready to use, or a
+ * PendingAccountResponse-shaped body (HTTP 202) when an admin still has to
+ * approve. Callers branch on the presence of `access_token` rather than HTTP
+ * status since the fetch client doesn't expose status codes.
+ */
+export interface OAuthConfirmSuccessResponse extends TokenResponse {
   new_account: boolean;
+}
+
+export type OAuthConfirmResponse =
+  | OAuthConfirmSuccessResponse
+  | PendingAccountResponse;
+
+export function isOAuthConfirmPending(
+  r: OAuthConfirmResponse,
+): r is PendingAccountResponse {
+  return !("access_token" in r);
 }
 
 export type OAuthConfirmAction = "link" | "new";

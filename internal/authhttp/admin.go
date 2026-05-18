@@ -100,32 +100,9 @@ func (h *AdminHandler) patchUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Refuse demote/deactivate operations that would leave zero active admins.
-	// Counted server-side under the same request so a concurrent demote race
-	// can't sneak past the check.
-	target, err := h.Store.GetUserByID(r.Context(), userID)
-	if err != nil {
-		httpapi.RenderError(w, r, err)
-		return
-	}
-	if target.IsAdmin && target.IsActive {
-		demoting := req.IsAdmin != nil && !*req.IsAdmin
-		deactivating := req.IsActive != nil && !*req.IsActive
-		blocking := req.ApprovalStatus != nil && *req.ApprovalStatus != model.UserApprovalApproved
-		if demoting || deactivating || blocking {
-			n, err := h.Store.CountAdmins(r.Context())
-			if err != nil {
-				httpapi.RenderError(w, r, err)
-				return
-			}
-			if n <= 1 {
-				httpapi.RenderError(w, r, apperr.New(apperr.CodeConflict,
-					"refusing to demote or disable the last active admin"))
-				return
-			}
-		}
-	}
-
+	// The "refuse to demote the last active admin" guard lives inside
+	// Store.UpdateUser so it can run with row-level locks under the same
+	// transaction as the write — checking it here would be a TOCTOU race.
 	approvedBy := caller.UserID
 	updated, err := h.Store.UpdateUser(r.Context(), userID, userstore.UpdateUserParams{
 		ApprovalStatus: req.ApprovalStatus,

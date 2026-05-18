@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { githubOAuth } from "@/api/endpoints";
 import { ApiError } from "@/api/errors";
+import { isOAuthConfirmPending } from "@/api/types";
 import { ErrorBanner } from "@/components/error-banner";
 import { setSession } from "@/auth/store";
 
@@ -24,8 +25,8 @@ export default function OAuthConfirmLinkPage() {
     setBusy(action);
     try {
       const res = await githubOAuth.confirm(action);
-      if (!res.access_token) {
-        // 202 pending — server returned a PendingAccountResponse-shaped body.
+      if (isOAuthConfirmPending(res)) {
+        // 202 — admin approval still required.
         setPending("账号已记录，但需要管理员审核才能登录。");
         return;
       }

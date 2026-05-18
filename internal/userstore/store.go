@@ -359,6 +359,15 @@ type UpdateUserParams struct {
 //
 // When the new status is "approved" we stamp approved_at; when it's "pending"
 // or "rejected" we clear it so the audit trail stays accurate.
+//
+// If the patch would remove the target from the active-admin set
+// (is_admin -> false, is_active -> false, or approval_status -> non-approved
+// while it currently is an effective admin), we refuse with Conflict when
+// the target is the last active admin. The check runs *inside* this
+// transaction with row-level locks (SELECT ... FOR UPDATE) on the target
+// and on every effective-admin row, so two concurrent demotes against
+// different admins can't both pass — the second waits, re-reads under the
+// new committed state, and refuses if it would zero out the admin set.
 func (s *Store) UpdateUser(ctx context.Context, id uuid.UUID, p UpdateUserParams) (*model.User, error) {
 	if p.ApprovalStatus != nil {
 		switch *p.ApprovalStatus {
@@ -375,6 +384,47 @@ func (s *Store) UpdateUser(ctx context.Context, id uuid.UUID, p UpdateUserParams
 		return nil, apperr.Internal(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	needsAdminGuard := (p.IsAdmin != nil && !*p.IsAdmin) ||
+		(p.IsActive != nil && !*p.IsActive) ||
+		(p.ApprovalStatus != nil && *p.ApprovalStatus != model.UserApprovalApproved)
+
+	if needsAdminGuard {
+		var curIsAdmin, curIsActive bool
+		var curStatus string
+		err := tx.QueryRow(ctx, `
+			SELECT is_admin, is_active, approval_status
+			  FROM users WHERE id = $1
+			  FOR UPDATE
+		`, id).Scan(&curIsAdmin, &curIsActive, &curStatus)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperr.NotFound("user")
+		}
+		if err != nil {
+			return nil, apperr.Internal(err)
+		}
+		if curIsAdmin && curIsActive && curStatus == model.UserApprovalApproved {
+			rows, err := tx.Query(ctx, `
+				SELECT 1 FROM users
+				 WHERE is_admin AND is_active AND approval_status = 'approved'
+				 FOR UPDATE
+			`)
+			if err != nil {
+				return nil, apperr.Internal(err)
+			}
+			n := 0
+			for rows.Next() {
+				n++
+			}
+			rows.Close()
+			if err := rows.Err(); err != nil {
+				return nil, apperr.Internal(err)
+			}
+			if n <= 1 {
+				return nil, apperr.Conflict("refusing to demote or disable the last active admin")
+			}
+		}
+	}
 
 	if p.ApprovalStatus != nil {
 		if *p.ApprovalStatus == model.UserApprovalApproved {
@@ -425,18 +475,6 @@ func (s *Store) UpdateUser(ctx context.Context, id uuid.UUID, p UpdateUserParams
 		return nil, apperr.Internal(err)
 	}
 	return s.GetUserByID(ctx, id)
-}
-
-// CountAdmins returns the number of active admin users — used to refuse
-// demoting/deactivating the last admin and locking the install out.
-func (s *Store) CountAdmins(ctx context.Context) (int, error) {
-	var n int
-	err := s.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM users WHERE is_admin AND is_active`).Scan(&n)
-	if err != nil {
-		return 0, apperr.Internal(err)
-	}
-	return n, nil
 }
 
 // PasswordHashFor returns the hash for the username, used by the smart-HTTP

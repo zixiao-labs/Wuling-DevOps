@@ -3,7 +3,7 @@ import { useNavigate } from "chen-the-dawnstreak";
 import { useEffect, useRef, useState } from "react";
 
 import { auth as authApi } from "@/api/endpoints";
-import { setSession } from "@/auth/store";
+import { setSession, setUser } from "@/auth/store";
 
 /**
  * /oauth/callback — terminal landing page for the GitHub OAuth flow.
@@ -67,29 +67,29 @@ export default function OAuthCallbackPage() {
     }
 
     (async () => {
+      // configureClient pulls the bearer through the auth store on every
+      // request, so the token has to land in the store BEFORE /me — otherwise
+      // /me goes out unauthenticated and the session never hydrates. Drop in
+      // a placeholder user first, then replace it once /me returns.
+      const placeholder = {
+        id: "",
+        username: "",
+        email: "",
+        display_name: "",
+        is_admin: false,
+        is_active: true,
+        approval_status: "approved" as const,
+        created_at: new Date().toISOString(),
+      };
+      setSession(token, placeholder);
       try {
-        const user = await authApi.me(); // bearer is read from the auth store via configureClient
-        // configureClient pulls the token through the store getter, so set
-        // before calling /me. We set a placeholder user first then re-fetch.
-        setSession(token, user);
+        const user = await authApi.me();
+        setUser(user);
         const returnTo = params.get("return_to") ?? "/orgs";
         navigate(returnTo, { replace: true });
       } catch {
-        // /me failed — fall back to dropping into orgs and let the auth guard
-        // surface a real error. We still set the token so the next request
-        // goes out with it.
-        setSession(token, {
-          // Minimal placeholder; will be replaced by the next /me roundtrip
-          // from a real page.
-          id: "",
-          username: "",
-          email: "",
-          display_name: "",
-          is_admin: false,
-          is_active: true,
-          approval_status: "approved",
-          created_at: new Date().toISOString(),
-        });
+        // /me failed — keep the token (it might just be a transient network
+        // blip) and let the next page surface a real error via the auth guard.
         navigate("/orgs", { replace: true });
       }
     })();

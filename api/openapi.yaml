@@ -304,6 +304,12 @@ paths:
                 properties:
                   users:
                     type: array
+                    maxItems: 100
+                    description: |
+                      Capped at 100 rows server-side (see
+                      `userstore.ListUsers`). When the admin queue grows beyond
+                      that, future versions will switch to a cursor-paginated
+                      response.
                     items: { $ref: "#/components/schemas/User" }
         "401": { $ref: "#/components/responses/UnauthorizedError" }
         "403": { $ref: "#/components/responses/ForbiddenError" }
