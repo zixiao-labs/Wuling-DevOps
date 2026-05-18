@@ -6,9 +6,9 @@ on:
       - "v*"
 
 permissions:
-  contents: write   # to create the GitHub Release & upload artifacts
-  packages: write   # to push images to ghcr.io
-  id-token: write   # for cosign / OIDC if/when we add signing
+  contents: write # to create the GitHub Release & upload artifacts
+  packages: write # to push images to ghcr.io
+  id-token: write # for cosign / OIDC if/when we add signing
 
 jobs:
   # ─────────────────────────────────────────────────────────────────────────
@@ -20,10 +20,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: linux,  arch: amd64, runner: ubuntu-latest    }
-          - { os: linux,  arch: arm64, runner: ubuntu-24.04-arm }
-          - { os: darwin, arch: amd64, runner: macos-15-intel   }
-          - { os: darwin, arch: arm64, runner: macos-14         }
+          - { os: linux, arch: amd64, runner: ubuntu-latest }
+          - { os: linux, arch: arm64, runner: ubuntu-24.04-arm }
+          - { os: darwin, arch: amd64, runner: macos-15-intel }
+          - { os: darwin, arch: arm64, runner: macos-14 }
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -47,8 +47,8 @@ jobs:
 
       - name: Build binaries
         env:
-          GOOS:        ${{ matrix.os }}
-          GOARCH:      ${{ matrix.arch }}
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
           CGO_ENABLED: "1"
         run: |
           mkdir -p out
@@ -246,3 +246,80 @@ jobs:
             release/*.sha256
           fail_on_unmatched_files: true
           generate_release_notes: true
+  # ─────────────────────────────────────────────────────────────────────────
+  # 6. Deploy to the official production server (ECS).
+  #
+  # Reproduces the manual upgrade flow from deploy/production/README.md §3.3:
+  # rsync the prod compose stack, write .env from the ENV_FILE secret with
+  # WULING_TAG pinned to this release, then pull → migrate → restart.
+  # ─────────────────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to official production
+    needs: [publish-release]
+    environment: production
+    runs-on: ubuntu-latest
+    env:
+      SSH_HOST: ${{ secrets.ECS_HOST }}
+      SSH_USER: ${{ secrets.ECS_USER }}
+      # Working directory on the server. Owned by SSH_USER. Change here (or
+      # override via a workflow variable) if your host uses a different path.
+      DEPLOY_DIR: /opt/wuling/production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH key + known_hosts
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.ECS_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Stage .env from ENV_FILE secret
+        env:
+          ENV_FILE: ${{ secrets.ENV_FILE }}
+        run: |
+          printf '%s\n' "$ENV_FILE" > .env.deploy
+          # Pin WULING_TAG to this release. Drop any pre-set value so the
+          # secret can never override the release tag by accident.
+          sed -i '/^WULING_TAG=/d' .env.deploy
+          echo "WULING_TAG=${GITHUB_REF_NAME}" >> .env.deploy
+
+      - name: Sync compose stack to server
+        run: |
+          ssh "$SSH_USER@$SSH_HOST" "mkdir -p '$DEPLOY_DIR'"
+          rsync -avz \
+            deploy/production/docker-compose.prod.yml \
+            deploy/production/Caddyfile \
+            deploy/production/postgres \
+            "$SSH_USER@$SSH_HOST:$DEPLOY_DIR/"
+          # Atomic .env replace: upload to .env.new, then rename in one step.
+          scp .env.deploy "$SSH_USER@$SSH_HOST:$DEPLOY_DIR/.env.new"
+          ssh "$SSH_USER@$SSH_HOST" \
+            "mv '$DEPLOY_DIR/.env.new' '$DEPLOY_DIR/.env' && chmod 600 '$DEPLOY_DIR/.env'"
+
+      - name: Pull, migrate, restart
+        run: |
+          ssh "$SSH_USER@$SSH_HOST" bash -se <<EOF
+          set -euo pipefail
+          cd "$DEPLOY_DIR"
+          echo '${{ secrets.GHCR_PAT }}' | docker login ghcr.io \
+            -u '${{ github.repository_owner }}' --password-stdin
+          docker compose -f docker-compose.prod.yml pull
+          docker compose -f docker-compose.prod.yml run --rm api wuling-migrate
+          docker compose -f docker-compose.prod.yml up -d
+          # Wait up to ~60s for /healthz inside the api container.
+          for i in 1 2 3 4 5 6; do
+            if docker compose -f docker-compose.prod.yml exec -T api \
+                 wget -qO- http://localhost:8080/healthz; then
+              echo
+              echo "deploy OK: ${{ github.ref_name }}"
+              exit 0
+            fi
+            echo "healthz not ready (\$i/6), retrying in 10s..."
+            sleep 10
+          done
+          echo "healthz never came up — dumping diagnostics" >&2
+          docker compose -f docker-compose.prod.yml ps
+          docker compose -f docker-compose.prod.yml logs --tail=80 api
+          exit 1
+          EOF
