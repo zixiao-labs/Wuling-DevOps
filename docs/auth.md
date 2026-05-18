@@ -108,7 +108,7 @@ WULING_AUTH_OAUTH_AUTO_APPROVE=false
     WHERE username = 'YOUR_USERNAME';
    ```
    （Docker Compose 用 `docker compose exec postgres psql -U wuling -d wuling`。）
-4. 现在你以管理员身份登录，去 `/admin/users` 把审批开关重新打开，剩余的注册都走正常审批流程。
+4. 现在你以管理员身份登录。注意：`WULING_AUTH_REQUIRE_APPROVAL` 是**环境变量**，必须在部署/环境配置里设置（容器 env、systemd unit、`.env` 等），重启进程后生效，UI 里没有开关。`/admin/users` 只展示按现有 `WULING_AUTH_REQUIRE_APPROVAL` 配置产生的注册状态，并允许你批准/拒绝/调整这些账号，本身并不切换该环境变量。把环境变量改回 `true`（或保持默认）并重启后，剩余的注册都会走正常审批流程，可在 `/admin/users` 处理。
 
 > 推荐：保持 `WULING_AUTH_REQUIRE_APPROVAL=true` 上线，第一个账号用 SQL 提升为 admin。永远不要让一个公开的实例在 `Require=false` 下哪怕跑 5 分钟 —— 任何陌生人都能注册并立即拥有完整账号。
 
