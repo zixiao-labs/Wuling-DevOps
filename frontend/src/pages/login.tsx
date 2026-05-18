@@ -2,7 +2,7 @@ import { Button, Card, Description, FieldError, Input, Label, TextField } from "
 import { Link, useNavigate, useLocation } from "chen-the-dawnstreak";
 import { useState } from "react";
 
-import { auth } from "@/api/endpoints";
+import { auth, githubOAuth } from "@/api/endpoints";
 import { ApiError } from "@/api/errors";
 import { ErrorBanner } from "@/components/error-banner";
 import { RequireAnon } from "@/auth/guards";
@@ -45,12 +45,18 @@ function LoginForm() {
     }
   }
 
+  function startGithubLogin() {
+    // Top-level navigation — the redirect dance must run in the document,
+    // not inside fetch (the browser has to follow GitHub's 302 back to us).
+    window.location.assign(githubOAuth.startURL(from));
+  }
+
   return (
     <div style={{ maxWidth: 420, margin: "3rem auto" }}>
       <Card>
         <Card.Header>
           <Card.Title>登录到武陵 DevOps</Card.Title>
-          <Card.Description>使用用户名或邮箱与密码登录。</Card.Description>
+          <Card.Description>使用用户名或邮箱与密码登录，或者通过 GitHub 登录。</Card.Description>
         </Card.Header>
         <Card.Content>
           <form
@@ -79,6 +85,23 @@ function LoginForm() {
               {busy ? "登录中…" : "登录"}
             </Button>
           </form>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "0.6rem",
+              margin: "1rem 0 0.6rem",
+              color: "var(--muted)",
+              fontSize: "0.75rem",
+            }}
+          >
+            <span style={{ flex: 1, height: 1, background: "var(--border)" }} />
+            或
+            <span style={{ flex: 1, height: 1, background: "var(--border)" }} />
+          </div>
+          <Button variant="outline" onPress={startGithubLogin} isDisabled={busy} style={{ width: "100%" }}>
+            使用 GitHub 登录
+          </Button>
         </Card.Content>
         <Card.Footer>
           <span style={{ color: "var(--muted)", fontSize: "0.85rem" }}>

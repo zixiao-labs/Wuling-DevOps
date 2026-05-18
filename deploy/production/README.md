@@ -78,6 +78,10 @@ cp env.example .env
 # 用编辑器打开 .env，至少改 WULING_JWT_SECRET / WULING_DOMAIN
 ```
 
+> **强烈建议**：上线前先读一遍 [`docs/auth.md`](../../docs/auth.md)。它详细解释了
+> 注册审批工作流（`WULING_AUTH_REQUIRE_APPROVAL`，默认开启）和 GitHub OAuth
+> 登录的配置步骤，以及如何为新装的实例引导第一个管理员。
+
 ### 3.2 首次启动
 
 ```bash

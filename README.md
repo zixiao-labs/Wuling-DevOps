@@ -31,6 +31,11 @@ Windows Server🪟
 irm https://raw.githubusercontent.com/zixiao-labs/Wuling-DevOps/refs/heads/main/prod-deploy.ps1 | iex
 ```
 
+## 📚 文档
+
+- [`deploy/production/README.md`](deploy/production/README.md) — 生产部署 Runbook（Docker Compose / Nix / k8s）
+- [`docs/auth.md`](docs/auth.md) — 身份认证：GitHub OAuth 登录 + 注册审批工作流的配置和运维
+
 ## 关于项目
 
 因为[前一个版本](https://github.com/zixiao-labs/yuxupalace-server)的话@HwlloChen回来就没办法维护了，再加上改名改到底，直接用Go和C++（Libgit2）重写🙃

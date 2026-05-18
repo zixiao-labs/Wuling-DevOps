@@ -5,7 +5,7 @@
  * src/api/types.ts which mirrors api/openapi.yaml.
  */
 
-import { apiDelete, apiGet, apiPatch, apiPost, apiPut, type QueryMap } from "./client";
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut, apiFetch, type QueryMap } from "./client";
 import type {
   AccessTokenView,
   ActivityDay,
@@ -34,9 +34,13 @@ import type {
   MRReview,
   MergeMRRequest,
   MergeRequest,
+  OAuthConfirmAction,
+  OAuthConfirmResponse,
   Org,
   PatchIssueRequest,
   PatchMergeRequestRequest,
+  PatchUserRequest,
+  PendingAccountResponse,
   Project,
   PutWikiPageRequest,
   RegisterRequest,
@@ -45,6 +49,7 @@ import type {
   TokenResponse,
   TreeResponse,
   User,
+  UserApprovalStatus,
   WikiHistoryCommit,
   WikiPage,
   WikiPageContent,
@@ -70,13 +75,57 @@ export const health = {
 
 // ---------------- Auth ----------------
 
+/**
+ * Account registration returns one of two shapes depending on the server's
+ * approval policy: a `TokenResponse` (immediate session) when approval isn't
+ * required, or a `PendingAccountResponse` (202) when an admin still has to
+ * approve. Callers branch on the `access_token` field rather than HTTP status
+ * since the fetch client doesn't expose status codes directly.
+ */
+export type RegisterResponse = TokenResponse | PendingAccountResponse;
+
+export function isPendingResponse(r: RegisterResponse): r is PendingAccountResponse {
+  return (r as PendingAccountResponse).status !== undefined && !("access_token" in r);
+}
+
 export const auth = {
   register: (body: RegisterRequest) =>
-    apiPost<TokenResponse>("/api/v1/auth/register", body),
+    apiPost<RegisterResponse>("/api/v1/auth/register", body),
   login: (body: LoginRequest) =>
     apiPost<TokenResponse>("/api/v1/auth/login", body),
   me: (signal?: AbortSignal) =>
     apiGet<User>("/api/v1/auth/me", undefined, signal),
+};
+
+/**
+ * Computes the absolute URL used by the "Sign in with GitHub" button. We
+ * navigate the *top-level* document there (window.location.assign) rather
+ * than calling fetch, since OAuth is a multi-step browser redirect dance.
+ */
+export const githubOAuth = {
+  startURL: (returnTo?: string): string => {
+    const q = returnTo ? `?return_to=${enc(returnTo)}` : "";
+    return `/api/v1/auth/oauth/github/start${q}`;
+  },
+  confirm: (action: OAuthConfirmAction) =>
+    apiFetch<OAuthConfirmResponse>("/api/v1/auth/oauth/github/confirm", {
+      method: "POST",
+      body: { action },
+      anonymous: true,
+    }),
+};
+
+// ---------------- Admin ----------------
+
+export const admin = {
+  users: {
+    list: (status?: UserApprovalStatus) =>
+      apiGet<{ users: User[] }>("/api/v1/admin/users", status ? { status } : undefined).then(
+        (r) => r.users,
+      ),
+    patch: (userID: string, body: PatchUserRequest) =>
+      apiPatch<User>(`/api/v1/admin/users/${enc(userID)}`, body),
+  },
 };
 
 // ---------------- PATs ----------------

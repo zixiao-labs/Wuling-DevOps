@@ -26,6 +26,12 @@ type Handler struct {
 	Store    *userstore.Store
 	Issuer   *auth.Issuer
 	Verifier *auth.Verifier
+	// Signup controls the approval-required workflow. The zero value mirrors
+	// the production default (RequireApproval=false), so older test wiring
+	// keeps working without explicit setup.
+	Signup struct {
+		RequireApproval bool
+	}
 }
 
 // Mount registers the routes on r. The base path is conventionally "/api/v1/auth".
@@ -60,6 +66,15 @@ type tokenResp struct {
 	TokenType   string      `json:"token_type"`
 	ExpiresAt   time.Time   `json:"expires_at"`
 	User        *model.User `json:"user"`
+}
+
+// pendingResp is returned by /register when admin approval is required. The
+// frontend uses Status to render a "your account is pending review" screen
+// instead of dropping the user into an authenticated session.
+type pendingResp struct {
+	Status  string      `json:"status"`            // "pending"
+	Message string      `json:"message"`
+	User    *model.User `json:"user"`
 }
 
 type createTokenReq struct {
@@ -107,14 +122,31 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 		httpapi.RenderError(w, r, apperr.Internal(err))
 		return
 	}
+	approval := model.UserApprovalApproved
+	if h.Signup.RequireApproval {
+		approval = model.UserApprovalPending
+	}
 	user, _, err := h.Store.CreateUser(r.Context(), userstore.CreateUserParams{
-		Username:     strings.TrimSpace(req.Username),
-		Email:        strings.ToLower(strings.TrimSpace(req.Email)),
-		DisplayName:  req.DisplayName,
-		PasswordHash: hash,
+		Username:       strings.TrimSpace(req.Username),
+		Email:          strings.ToLower(strings.TrimSpace(req.Email)),
+		DisplayName:    req.DisplayName,
+		PasswordHash:   hash,
+		ApprovalStatus: approval,
 	})
 	if err != nil {
 		httpapi.RenderError(w, r, err)
+		return
+	}
+	// Pending accounts don't get a token: an admin still has to approve them
+	// before the login form will accept their password. Returning 202 here
+	// keeps the response distinguishable from the historical 201+token shape
+	// so frontends can branch on the status code alone.
+	if user.ApprovalStatus != model.UserApprovalApproved {
+		httpapi.WriteJSON(w, http.StatusAccepted, pendingResp{
+			Status:  user.ApprovalStatus,
+			Message: "account created — waiting for an administrator to approve it",
+			User:    user,
+		})
 		return
 	}
 	tok, exp, err := h.Issuer.Issue(user.ID, user.Username)
@@ -146,6 +178,14 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		httpapi.RenderError(w, r, err)
 		return
 	}
+	// OAuth-only accounts have no password_hash row. Surface a clear, actionable
+	// error rather than the generic "invalid credentials" — those users can't
+	// guess what's wrong otherwise.
+	if hash == "" {
+		httpapi.RenderError(w, r,
+			apperr.New(apperr.CodeUnauthorized, "this account is linked to GitHub — please use \"Sign in with GitHub\""))
+		return
+	}
 	// Check IsActive before doing the expensive argon2 verification: this
 	// avoids both wasted work for disabled accounts and a timing oracle
 	// distinguishing "active wrong-password" from "disabled wrong-password".
@@ -162,6 +202,17 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	}
 	if !ok {
 		httpapi.RenderError(w, r, apperr.Unauthorized("invalid credentials"))
+		return
+	}
+	// Password is correct — only now do we leak account-state info. By the
+	// time we get here we already know the caller owns the account, so
+	// telling them "pending approval" is fine (and helpful).
+	switch user.ApprovalStatus {
+	case model.UserApprovalPending:
+		httpapi.RenderError(w, r, apperr.New(apperr.CodeForbidden, "account is pending admin approval"))
+		return
+	case model.UserApprovalRejected:
+		httpapi.RenderError(w, r, apperr.New(apperr.CodeForbidden, "account registration was rejected"))
 		return
 	}
 	tok, exp, err := h.Issuer.Issue(user.ID, user.Username)

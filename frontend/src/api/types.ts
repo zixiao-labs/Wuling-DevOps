@@ -32,6 +32,8 @@ export interface ApiErrorBody {
 
 // ---------------- Auth ----------------
 
+export type UserApprovalStatus = "pending" | "approved" | "rejected";
+
 export interface User {
   id: string;
   username: string;
@@ -39,6 +41,10 @@ export interface User {
   display_name: string;
   is_admin: boolean;
   is_active: boolean;
+  approval_status: UserApprovalStatus;
+  approval_note?: string;
+  approved_at?: string | null;
+  github_login?: string;
   created_at: string;
 }
 
@@ -59,6 +65,45 @@ export interface TokenResponse {
   token_type: string;
   expires_at: string;
   user: User;
+}
+
+/** 202 response from /register when admin approval is required. */
+export interface PendingAccountResponse {
+  status: "pending" | "rejected";
+  message: string;
+  user: User;
+}
+
+/**
+ * /oauth/github/confirm response.
+ *
+ * Mirrors /register: a TokenResponse-shaped body (with the linked-or-created
+ * flag) when the account is approved and ready to use, or a
+ * PendingAccountResponse-shaped body (HTTP 202) when an admin still has to
+ * approve. Callers branch on the presence of `access_token` rather than HTTP
+ * status since the fetch client doesn't expose status codes.
+ */
+export interface OAuthConfirmSuccessResponse extends TokenResponse {
+  new_account: boolean;
+}
+
+export type OAuthConfirmResponse =
+  | OAuthConfirmSuccessResponse
+  | PendingAccountResponse;
+
+export function isOAuthConfirmPending(
+  r: OAuthConfirmResponse,
+): r is PendingAccountResponse {
+  return !("access_token" in r);
+}
+
+export type OAuthConfirmAction = "link" | "new";
+
+export interface PatchUserRequest {
+  approval_status?: UserApprovalStatus;
+  approval_note?: string;
+  is_admin?: boolean;
+  is_active?: boolean;
 }
 
 export type PatScope = "repo:read" | "repo:write";

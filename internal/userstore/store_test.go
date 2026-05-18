@@ -208,18 +208,17 @@ func TestGetUserByLogin_OAuthOnly_NoPassword(t *testing.T) {
 	// will create such rows from the OAuth callback.
 	id := uuid.New()
 	_, err := pool.Exec(ctx, `
-		INSERT INTO users (id, username, email, display_name, password_hash)
-		VALUES ($1, 'oauthonly', 'oauth@example.com', 'OAuth Only', NULL)
+		INSERT INTO users (id, username, email, display_name, password_hash, approval_status)
+		VALUES ($1, 'oauthonly', 'oauth@example.com', 'OAuth Only', NULL, 'approved')
 	`, id)
 	require.NoError(t, err)
 
 	s := userstore.New(pool)
-	_, _, err = s.GetUserByLogin(ctx, "oauthonly")
-	require.Error(t, err)
-	e := apperr.As(err)
-	require.NotNil(t, e)
-	assert.Equal(t, apperr.CodeUnauthorized, e.Code)
-	assert.Contains(t, e.Message, "no password")
+	got, hash, err := s.GetUserByLogin(ctx, "oauthonly")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "oauthonly", got.Username)
+	assert.Empty(t, hash, "OAuth-only row must surface an empty hash so the handler can prompt for GitHub login")
 }
 
 func TestPasswordHashFor_Inactive(t *testing.T) {

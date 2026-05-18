@@ -9,15 +9,26 @@ import (
 	"github.com/google/uuid"
 )
 
+// Approval status values for User.ApprovalStatus.
+const (
+	UserApprovalPending  = "pending"
+	UserApprovalApproved = "approved"
+	UserApprovalRejected = "rejected"
+)
+
 // User is a public-facing user representation.
 type User struct {
-	ID          uuid.UUID `json:"id"`
-	Username    string    `json:"username"`
-	Email       string    `json:"email,omitempty"`
-	DisplayName string    `json:"display_name"`
-	IsAdmin     bool      `json:"is_admin"`
-	IsActive    bool      `json:"is_active"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID             uuid.UUID  `json:"id"`
+	Username       string     `json:"username"`
+	Email          string     `json:"email,omitempty"`
+	DisplayName    string     `json:"display_name"`
+	IsAdmin        bool       `json:"is_admin"`
+	IsActive       bool       `json:"is_active"`
+	ApprovalStatus string     `json:"approval_status"`
+	ApprovalNote   string     `json:"approval_note,omitempty"`
+	ApprovedAt     *time.Time `json:"approved_at,omitempty"`
+	GithubLogin    string     `json:"github_login,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 // Org is the public org shape.
