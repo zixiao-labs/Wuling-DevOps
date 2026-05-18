@@ -50,6 +50,11 @@ export default function RootLayout() {
               组织
             </Link>
           ) : null}
+          {token && user?.is_admin ? (
+            <Link to="/admin/users" style={navLinkStyle}>
+              管理
+            </Link>
+          ) : null}
         </nav>
 
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "0.75rem" }}>

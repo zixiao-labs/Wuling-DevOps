@@ -58,10 +58,17 @@ paths:
             schema: { $ref: "#/components/schemas/RegisterRequest" }
       responses:
         "201":
-          description: account created (response includes a fresh JWT)
+          description: account created and immediately usable (response includes a fresh JWT)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TokenResponse" }
+        "202":
+          description: |
+            account created but awaiting admin approval — no JWT is issued.
+            Returned when `WULING_AUTH_REQUIRE_APPROVAL=true` (the default).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PendingAccountResponse" }
         "409": { $ref: "#/components/responses/ConflictError" }
         "400": { $ref: "#/components/responses/ValidationError" }
 
@@ -81,6 +88,95 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/TokenResponse" }
         "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403":
+          description: account pending approval or rejected
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v1/auth/oauth/github/start:
+    get:
+      summary: Begin the GitHub OAuth login flow
+      description: |
+        302-redirects the browser to GitHub's `/authorize` endpoint with
+        state + PKCE, after dropping a short-lived signed HttpOnly cookie that
+        the callback handler validates. Must be hit via a top-level browser
+        navigation (the redirect can't follow XHR).
+      security: []
+      parameters:
+        - in: query
+          name: return_to
+          required: false
+          schema: { type: string }
+          description: Path on the frontend to navigate to after a successful login. Echoed back in the callback fragment.
+      responses:
+        "302": { description: redirect to GitHub }
+        "503":
+          description: GitHub OAuth not configured on this server
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v1/auth/oauth/github/callback:
+    get:
+      summary: Complete the GitHub OAuth login flow
+      description: |
+        Exchanges the authorization code for a GitHub access token using the
+        PKCE verifier stashed in the state cookie, then either logs an existing
+        user in, creates a brand-new local account, or redirects to the
+        `/oauth/confirm-link` page when the GitHub email matches a local
+        account that isn't yet linked. Result is communicated to the SPA via
+        the URL fragment on a 302 to `<frontend>/oauth/callback`.
+      security: []
+      parameters:
+        - in: query
+          name: code
+          required: true
+          schema: { type: string }
+        - in: query
+          name: state
+          required: true
+          schema: { type: string }
+      responses:
+        "302":
+          description: |
+            Browser bounce to the frontend. The URL fragment carries one of:
+              - `access_token=...&expires_at=...` on success
+              - `pending_approval=1&status=pending` if approval is required
+              - `error=...&error_description=...` on failure
+            When the email matches an existing account a 302 to
+            `<frontend>/oauth/confirm-link` is issued instead (no fragment;
+            the pending state lives in a signed cookie).
+
+  /api/v1/auth/oauth/github/confirm:
+    post:
+      summary: Confirm a GitHub OAuth account-link decision
+      description: |
+        Called from `/oauth/confirm-link` after the user picks "link" (merge
+        the GitHub identity onto the existing local account) or "new" (create
+        a fresh account, ignoring the email collision).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: { type: string, enum: [link, new] }
+      responses:
+        "200":
+          description: linked or created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OAuthConfirmResponse" }
+        "202":
+          description: linked/created but awaiting approval
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PendingAccountResponse" }
+        "400": { $ref: "#/components/responses/ValidationError" }
 
   /api/v1/auth/me:
     get:
@@ -183,6 +279,67 @@ paths:
       responses:
         "204": { description: deleted }
         "404": { $ref: "#/components/responses/NotFoundError" }
+
+  # ---------------- admin ----------------
+
+  /api/v1/admin/users:
+    get:
+      summary: List users (admin)
+      description: |
+        Returns users, pending-first. Requires the caller to be an active
+        admin (`is_admin=true`, `approval_status=approved`). Filter by
+        `status=pending|approved|rejected` to scope to the approval queue.
+      parameters:
+        - in: query
+          name: status
+          required: false
+          schema: { type: string, enum: [pending, approved, rejected] }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  users:
+                    type: array
+                    items: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+
+  /api/v1/admin/users/{user_id}:
+    patch:
+      summary: Patch a user (admin)
+      description: |
+        Approve/reject pending accounts, promote/demote admins, and
+        enable/disable accounts. Any combination of fields may be omitted —
+        only the ones in the body are applied.
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatchUserRequest" }
+      responses:
+        "200":
+          description: updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+        "409":
+          description: refusing to demote/disable the last active admin
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   # ---------------- orgs ----------------
 
@@ -1292,7 +1449,16 @@ components:
         display_name: { type: string }
         is_admin: { type: boolean }
         is_active: { type: boolean }
-        created_at: { type: string, format: date-time }
+        approval_status:
+          type: string
+          enum: [pending, approved, rejected]
+          description: |
+            Account approval state. Pending and rejected users cannot log in
+            (the login handler returns 403 with the matching message).
+        approval_note: { type: string }
+        approved_at:   { type: string, format: date-time, nullable: true }
+        github_login:  { type: string, description: "GitHub login, set once the account is linked via OAuth." }
+        created_at:    { type: string, format: date-time }
 
     RegisterRequest:
       type: object
@@ -1317,6 +1483,30 @@ components:
         token_type:   { type: string, example: Bearer }
         expires_at:   { type: string, format: date-time }
         user:         { $ref: "#/components/schemas/User" }
+
+    PendingAccountResponse:
+      type: object
+      properties:
+        status:  { type: string, enum: [pending, rejected] }
+        message: { type: string }
+        user:    { $ref: "#/components/schemas/User" }
+
+    OAuthConfirmResponse:
+      type: object
+      properties:
+        access_token: { type: string }
+        token_type:   { type: string, example: Bearer }
+        expires_at:   { type: string, format: date-time }
+        user:         { $ref: "#/components/schemas/User" }
+        new_account:  { type: boolean }
+
+    PatchUserRequest:
+      type: object
+      properties:
+        approval_status: { type: string, enum: [pending, approved, rejected] }
+        approval_note:   { type: string, maxLength: 512 }
+        is_admin:        { type: boolean }
+        is_active:       { type: boolean }
 
     AccessTokenView:
       type: object

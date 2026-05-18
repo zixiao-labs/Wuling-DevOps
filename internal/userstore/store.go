@@ -34,10 +34,13 @@ func New(pool *db.Pool) *Store { return &Store{pool: pool} }
 
 // CreateUserParams holds the inputs to CreateUser.
 type CreateUserParams struct {
-	Username     string
-	Email        string
-	DisplayName  string
-	PasswordHash string // already argon2id-hashed
+	Username       string
+	Email          string
+	DisplayName    string
+	PasswordHash   string // already argon2id-hashed; empty for OAuth-only accounts
+	GithubUserID   *int64
+	GithubLogin    string
+	ApprovalStatus string // "pending" | "approved" | "rejected"; default pending
 }
 
 // CreateUser inserts a row, also creating the user's personal org and an
@@ -52,18 +55,44 @@ func (s *Store) CreateUser(ctx context.Context, p CreateUserParams) (*model.User
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	approval := p.ApprovalStatus
+	if approval == "" {
+		// Default to "approved" at the store level so tests and direct callers
+		// (CLI seeds, importers) end up with usable accounts. The HTTP register
+		// handler explicitly passes "pending" when approval is enabled.
+		approval = model.UserApprovalApproved
+	}
+
+	// password_hash and github_* are nullable; pass typed nils when empty so we
+	// don't accidentally store the empty string for "no GitHub link".
+	var pwHash any
+	if p.PasswordHash != "" {
+		pwHash = p.PasswordHash
+	}
+	var ghLogin any
+	if p.GithubLogin != "" {
+		ghLogin = p.GithubLogin
+	}
+	var ghID any
+	if p.GithubUserID != nil {
+		ghID = *p.GithubUserID
+	}
+
 	user := &model.User{
 		ID:          id,
 		Username:    p.Username,
 		Email:       p.Email,
 		DisplayName: defaultIfEmpty(p.DisplayName, p.Username),
+		GithubLogin: p.GithubLogin,
 	}
 	err = tx.QueryRow(ctx, `
-		INSERT INTO users (id, username, email, display_name, password_hash)
-		VALUES ($1, $2, $3, $4, $5)
-		RETURNING is_admin, is_active, created_at
-	`, id, p.Username, p.Email, user.DisplayName, p.PasswordHash).
-		Scan(&user.IsAdmin, &user.IsActive, &user.CreatedAt)
+		INSERT INTO users (id, username, email, display_name, password_hash,
+		                   github_user_id, github_login, approval_status, approved_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+		        CASE WHEN $8 = 'approved' THEN now() ELSE NULL END)
+		RETURNING is_admin, is_active, approval_status, approved_at, created_at
+	`, id, p.Username, p.Email, user.DisplayName, pwHash, ghID, ghLogin, approval).
+		Scan(&user.IsAdmin, &user.IsActive, &user.ApprovalStatus, &user.ApprovedAt, &user.CreatedAt)
 	if err != nil {
 		return nil, nil, mapInsertErr(err, "user")
 	}
@@ -97,6 +126,9 @@ func (s *Store) CreateUser(ctx context.Context, p CreateUserParams) (*model.User
 
 // GetUserByLogin looks up a user by username OR email (case-insensitive).
 // Returns the user plus their password hash so the auth handler can verify.
+// hash is empty (and the caller should treat the account as OAuth-only) when
+// users.password_hash is NULL — we return the row anyway so the handler can
+// surface "use GitHub login" instead of a generic "invalid credentials".
 //
 // When two users could plausibly match (e.g. user A whose username equals
 // user B's email), we deterministically prefer the username match. Without
@@ -106,21 +138,30 @@ func (s *Store) CreateUser(ctx context.Context, p CreateUserParams) (*model.User
 func (s *Store) GetUserByLogin(ctx context.Context, login string) (*model.User, string, error) {
 	var u model.User
 	var hash *string
+	var ghLogin *string
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, username, email, display_name, is_admin, is_active, created_at, password_hash
+		SELECT id, username, email, display_name, is_admin, is_active,
+		       approval_status, approval_note, approved_at,
+		       github_login, created_at, password_hash
 		FROM users
 		WHERE LOWER(username) = LOWER($1) OR LOWER(email) = LOWER($1)
 		ORDER BY (LOWER(username) = LOWER($1)) DESC
 		LIMIT 1
-	`, login).Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &u.IsAdmin, &u.IsActive, &u.CreatedAt, &hash)
+	`, login).Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &u.IsAdmin, &u.IsActive,
+		&u.ApprovalStatus, &u.ApprovalNote, &u.ApprovedAt,
+		&ghLogin, &u.CreatedAt, &hash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, "", apperr.NotFound("user")
 	}
 	if err != nil {
 		return nil, "", apperr.Internal(err)
 	}
+	if ghLogin != nil {
+		u.GithubLogin = *ghLogin
+	}
 	if hash == nil {
-		return nil, "", apperr.New(apperr.CodeUnauthorized, "user has no password set")
+		// OAuth-only account — caller must redirect to the GitHub login flow.
+		return &u, "", nil
 	}
 	return &u, *hash, nil
 }
@@ -128,15 +169,21 @@ func (s *Store) GetUserByLogin(ctx context.Context, login string) (*model.User, 
 // GetUserByID fetches a user by id.
 func (s *Store) GetUserByID(ctx context.Context, id uuid.UUID) (*model.User, error) {
 	var u model.User
+	var ghLogin *string
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, username, email, display_name, is_admin, is_active, created_at
+		SELECT id, username, email, display_name, is_admin, is_active,
+		       approval_status, approval_note, approved_at, github_login, created_at
 		FROM users WHERE id = $1
-	`, id).Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &u.IsAdmin, &u.IsActive, &u.CreatedAt)
+	`, id).Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &u.IsAdmin, &u.IsActive,
+		&u.ApprovalStatus, &u.ApprovalNote, &u.ApprovedAt, &ghLogin, &u.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apperr.NotFound("user")
 	}
 	if err != nil {
 		return nil, apperr.Internal(err)
+	}
+	if ghLogin != nil {
+		u.GithubLogin = *ghLogin
 	}
 	return &u, nil
 }
@@ -144,26 +191,266 @@ func (s *Store) GetUserByID(ctx context.Context, id uuid.UUID) (*model.User, err
 // GetUserByUsername fetches a user by username.
 func (s *Store) GetUserByUsername(ctx context.Context, username string) (*model.User, error) {
 	var u model.User
+	var ghLogin *string
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, username, email, display_name, is_admin, is_active, created_at
+		SELECT id, username, email, display_name, is_admin, is_active,
+		       approval_status, approval_note, approved_at, github_login, created_at
 		FROM users WHERE LOWER(username) = LOWER($1)
-	`, username).Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &u.IsAdmin, &u.IsActive, &u.CreatedAt)
+	`, username).Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &u.IsAdmin, &u.IsActive,
+		&u.ApprovalStatus, &u.ApprovalNote, &u.ApprovedAt, &ghLogin, &u.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apperr.NotFound("user")
 	}
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
+	if ghLogin != nil {
+		u.GithubLogin = *ghLogin
+	}
 	return &u, nil
 }
 
+// GetUserByEmail returns the user with the given email, or NotFound. Email is
+// matched case-insensitively to mirror the unique index.
+func (s *Store) GetUserByEmail(ctx context.Context, email string) (*model.User, error) {
+	var u model.User
+	var ghLogin *string
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, username, email, display_name, is_admin, is_active,
+		       approval_status, approval_note, approved_at, github_login, created_at
+		FROM users WHERE LOWER(email) = LOWER($1)
+	`, email).Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &u.IsAdmin, &u.IsActive,
+		&u.ApprovalStatus, &u.ApprovalNote, &u.ApprovedAt, &ghLogin, &u.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apperr.NotFound("user")
+	}
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if ghLogin != nil {
+		u.GithubLogin = *ghLogin
+	}
+	return &u, nil
+}
+
+// GetUserByGithubID returns the user linked to the given GitHub numeric user
+// id, or NotFound when no row matches. The GitHub numeric id is stable across
+// username changes, so we key the link on it rather than the login string.
+func (s *Store) GetUserByGithubID(ctx context.Context, githubUserID int64) (*model.User, error) {
+	var u model.User
+	var ghLogin *string
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, username, email, display_name, is_admin, is_active,
+		       approval_status, approval_note, approved_at, github_login, created_at
+		FROM users WHERE github_user_id = $1
+	`, githubUserID).Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &u.IsAdmin, &u.IsActive,
+		&u.ApprovalStatus, &u.ApprovalNote, &u.ApprovedAt, &ghLogin, &u.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apperr.NotFound("user")
+	}
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if ghLogin != nil {
+		u.GithubLogin = *ghLogin
+	}
+	return &u, nil
+}
+
+// LinkGithubAccount writes github_user_id / github_login onto an existing user.
+// Returns Conflict if the GitHub id is already linked to a different account.
+func (s *Store) LinkGithubAccount(ctx context.Context, userID uuid.UUID, githubUserID int64, githubLogin string) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE users
+		   SET github_user_id = $1,
+		       github_login   = $2,
+		       updated_at     = now()
+		 WHERE id = $3
+		   AND (github_user_id IS NULL OR github_user_id = $1)
+	`, githubUserID, githubLogin, userID)
+	if err != nil {
+		return mapInsertErr(err, "github link")
+	}
+	if tag.RowsAffected() == 0 {
+		return apperr.Conflict("user is already linked to a different GitHub account")
+	}
+	return nil
+}
+
+// UsernameExists reports whether a username is already taken (case-insensitive).
+// Used by the OAuth flow to dedupe a GitHub login into a unique local username.
+func (s *Store) UsernameExists(ctx context.Context, username string) (bool, error) {
+	var exists bool
+	err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM users WHERE LOWER(username) = LOWER($1))`,
+		username).Scan(&exists)
+	if err != nil {
+		return false, apperr.Internal(err)
+	}
+	return exists, nil
+}
+
+// ListUsersParams filters the admin user list. Status filters on approval_status
+// when non-empty; Limit is capped at 200.
+type ListUsersParams struct {
+	Status string
+	Limit  int
+}
+
+// ListUsers returns users for the admin user-management UI. Results are ordered
+// pending-first (so the approval queue surfaces at the top) then by creation
+// time descending.
+func (s *Store) ListUsers(ctx context.Context, p ListUsersParams) ([]model.User, error) {
+	if p.Limit <= 0 || p.Limit > 200 {
+		p.Limit = 100
+	}
+
+	var rows pgx.Rows
+	var err error
+	q := `
+		SELECT id, username, email, display_name, is_admin, is_active,
+		       approval_status, approval_note, approved_at, github_login, created_at
+		FROM users
+	`
+	order := `
+		ORDER BY (approval_status = 'pending') DESC, created_at DESC
+		LIMIT $%d
+	`
+	if p.Status != "" {
+		rows, err = s.pool.Query(ctx, q+`WHERE approval_status = $1`+fmt.Sprintf(order, 2), p.Status, p.Limit)
+	} else {
+		rows, err = s.pool.Query(ctx, q+fmt.Sprintf(order, 1), p.Limit)
+	}
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	defer rows.Close()
+	var out []model.User
+	for rows.Next() {
+		var u model.User
+		var ghLogin *string
+		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &u.IsAdmin, &u.IsActive,
+			&u.ApprovalStatus, &u.ApprovalNote, &u.ApprovedAt, &ghLogin, &u.CreatedAt); err != nil {
+			return nil, apperr.Internal(err)
+		}
+		if ghLogin != nil {
+			u.GithubLogin = *ghLogin
+		}
+		out = append(out, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return out, nil
+}
+
+// UpdateUserParams patches the admin-controlled fields of a user. Any non-nil
+// pointer is applied; nils are left untouched.
+type UpdateUserParams struct {
+	ApprovalStatus *string
+	ApprovalNote   *string
+	IsAdmin        *bool
+	IsActive       *bool
+	ApprovedBy     *uuid.UUID
+}
+
+// UpdateUser applies an admin patch. Returns NotFound if the user doesn't
+// exist, Validation if approval_status is set to something invalid.
+//
+// When the new status is "approved" we stamp approved_at; when it's "pending"
+// or "rejected" we clear it so the audit trail stays accurate.
+func (s *Store) UpdateUser(ctx context.Context, id uuid.UUID, p UpdateUserParams) (*model.User, error) {
+	if p.ApprovalStatus != nil {
+		switch *p.ApprovalStatus {
+		case model.UserApprovalPending, model.UserApprovalApproved, model.UserApprovalRejected:
+		default:
+			return nil, apperr.Validation("invalid approval_status", map[string]any{
+				"approval_status": "must be pending, approved, or rejected",
+			})
+		}
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if p.ApprovalStatus != nil {
+		if *p.ApprovalStatus == model.UserApprovalApproved {
+			var by any
+			if p.ApprovedBy != nil {
+				by = *p.ApprovedBy
+			}
+			if _, err := tx.Exec(ctx, `
+				UPDATE users
+				   SET approval_status = $1,
+				       approved_at     = COALESCE(approved_at, now()),
+				       approved_by     = COALESCE(approved_by, $2),
+				       updated_at      = now()
+				 WHERE id = $3
+			`, *p.ApprovalStatus, by, id); err != nil {
+				return nil, apperr.Internal(err)
+			}
+		} else {
+			if _, err := tx.Exec(ctx, `
+				UPDATE users
+				   SET approval_status = $1,
+				       approved_at     = NULL,
+				       approved_by     = NULL,
+				       updated_at      = now()
+				 WHERE id = $2
+			`, *p.ApprovalStatus, id); err != nil {
+				return nil, apperr.Internal(err)
+			}
+		}
+	}
+	if p.ApprovalNote != nil {
+		if _, err := tx.Exec(ctx, `UPDATE users SET approval_note = $1, updated_at = now() WHERE id = $2`, *p.ApprovalNote, id); err != nil {
+			return nil, apperr.Internal(err)
+		}
+	}
+	if p.IsAdmin != nil {
+		if _, err := tx.Exec(ctx, `UPDATE users SET is_admin = $1, updated_at = now() WHERE id = $2`, *p.IsAdmin, id); err != nil {
+			return nil, apperr.Internal(err)
+		}
+	}
+	if p.IsActive != nil {
+		if _, err := tx.Exec(ctx, `UPDATE users SET is_active = $1, updated_at = now() WHERE id = $2`, *p.IsActive, id); err != nil {
+			return nil, apperr.Internal(err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return s.GetUserByID(ctx, id)
+}
+
+// CountAdmins returns the number of active admin users — used to refuse
+// demoting/deactivating the last admin and locking the install out.
+func (s *Store) CountAdmins(ctx context.Context) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM users WHERE is_admin AND is_active`).Scan(&n)
+	if err != nil {
+		return 0, apperr.Internal(err)
+	}
+	return n, nil
+}
+
 // PasswordHashFor returns the hash for the username, used by the smart-HTTP
-// password auth fallback.
+// password auth fallback. Pending/rejected users are filtered out at the SQL
+// level: the smart-HTTP path doesn't surface friendly errors, so we'd rather
+// it just refuse them like any other unauthenticated request.
 func (s *Store) PasswordHashFor(ctx context.Context, username string) (uuid.UUID, string, error) {
 	var id uuid.UUID
 	var hash *string
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, password_hash FROM users WHERE LOWER(username) = LOWER($1) AND is_active
+		SELECT id, password_hash FROM users
+		 WHERE LOWER(username) = LOWER($1)
+		   AND is_active
+		   AND approval_status = 'approved'
 	`, username).Scan(&id, &hash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, "", apperr.NotFound("user")

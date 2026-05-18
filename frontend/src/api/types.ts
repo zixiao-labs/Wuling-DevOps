@@ -32,6 +32,8 @@ export interface ApiErrorBody {
 
 // ---------------- Auth ----------------
 
+export type UserApprovalStatus = "pending" | "approved" | "rejected";
+
 export interface User {
   id: string;
   username: string;
@@ -39,6 +41,10 @@ export interface User {
   display_name: string;
   is_admin: boolean;
   is_active: boolean;
+  approval_status: UserApprovalStatus;
+  approval_note?: string;
+  approved_at?: string | null;
+  github_login?: string;
   created_at: string;
 }
 
@@ -59,6 +65,26 @@ export interface TokenResponse {
   token_type: string;
   expires_at: string;
   user: User;
+}
+
+/** 202 response from /register when admin approval is required. */
+export interface PendingAccountResponse {
+  status: "pending" | "rejected";
+  message: string;
+  user: User;
+}
+
+export interface OAuthConfirmResponse extends TokenResponse {
+  new_account: boolean;
+}
+
+export type OAuthConfirmAction = "link" | "new";
+
+export interface PatchUserRequest {
+  approval_status?: UserApprovalStatus;
+  approval_note?: string;
+  is_admin?: boolean;
+  is_active?: boolean;
 }
 
 export type PatScope = "repo:read" | "repo:write";

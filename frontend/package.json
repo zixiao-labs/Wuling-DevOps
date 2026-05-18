@@ -8,6 +8,7 @@
     "build": "nasti build",
     "preview": "nasti preview",
     "api:types": "openapi-typescript ../api/openapi.yaml -o src/api/schema.gen.ts",
+    "typecheck": "tsc --noEmit",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [

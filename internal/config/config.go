@@ -23,6 +23,7 @@ type Config struct {
 	JWT     JWTConfig
 	Storage StorageConfig
 	OAuth   OAuthConfig
+	Signup  SignupConfig
 	Log     LogConfig
 }
 
@@ -83,12 +84,37 @@ type SSHConfig struct {
 	HostKeyPath string `env:"WULING_SSH_HOST_KEY" envDefault:"./var/ssh/host_ed25519"`
 }
 
-// OAuthConfig is the GitHub OAuth client configuration. Endpoint is wired
-// but issuance/callbacks are stubbed in Stage 1.
+// OAuthConfig is the GitHub OAuth client configuration plus the public URLs
+// the OAuth flow uses to bounce the user between API and frontend.
+//
+//   - GithubClientID/Secret: from your GitHub OAuth app.
+//   - GithubRedirectURL: the absolute URL of the callback handler, e.g.
+//     "https://devops.example.com/api/v1/auth/oauth/github/callback".
+//   - GithubScopes: comma-separated scope list requested at /authorize.
+//   - FrontendBaseURL: where the API redirects the browser after a successful
+//     OAuth callback (defaults to "/"). Should be an absolute URL in
+//     production so we never trip same-origin assumptions in reverse-proxy
+//     deployments.
 type OAuthConfig struct {
 	GithubClientID     string `env:"WULING_OAUTH_GITHUB_CLIENT_ID"`
 	GithubClientSecret string `env:"WULING_OAUTH_GITHUB_CLIENT_SECRET"`
 	GithubRedirectURL  string `env:"WULING_OAUTH_GITHUB_REDIRECT_URL"`
+	GithubScopes       string `env:"WULING_OAUTH_GITHUB_SCOPES" envDefault:"read:user,user:email"`
+	FrontendBaseURL    string `env:"WULING_OAUTH_FRONTEND_BASE_URL" envDefault:"/"`
+}
+
+// SignupConfig controls the new-account approval workflow.
+//
+// RequireApproval=true (the default) puts every new account into
+// "pending" until an admin approves it; "approved" accounts can log in
+// normally, "rejected" ones see a clear error.
+//
+// AutoApproveOAuth lets operators trust GitHub's identity assertion
+// (i.e. anyone who can prove they own a linked GitHub account skips the
+// approval queue). It's off by default to keep self-host installs closed.
+type SignupConfig struct {
+	RequireApproval  bool `env:"WULING_AUTH_REQUIRE_APPROVAL" envDefault:"true"`
+	AutoApproveOAuth bool `env:"WULING_AUTH_OAUTH_AUTO_APPROVE" envDefault:"false"`
 }
 
 // LogConfig controls slog output.

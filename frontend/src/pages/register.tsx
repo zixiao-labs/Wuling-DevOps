@@ -2,7 +2,7 @@ import { Button, Card, Description, FieldError, Input, Label, TextField } from "
 import { Link, useNavigate } from "chen-the-dawnstreak";
 import { useState } from "react";
 
-import { auth } from "@/api/endpoints";
+import { auth, githubOAuth, isPendingResponse } from "@/api/endpoints";
 import { ApiError } from "@/api/errors";
 import { ErrorBanner } from "@/components/error-banner";
 import { RequireAnon } from "@/auth/guards";
@@ -24,6 +24,7 @@ function RegisterForm() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<ApiError | null>(null);
   const [busy, setBusy] = useState(false);
+  const [pendingMessage, setPendingMessage] = useState<string | null>(null);
 
   const isPasswordWeak = password.length > 0 && password.length < 8;
   const isUsernameInvalid =
@@ -40,6 +41,12 @@ function RegisterForm() {
         password,
         display_name: displayName || undefined,
       });
+      if (isPendingResponse(res)) {
+        // Approval required — don't issue a session, surface a clear "your
+        // account is waiting for an admin to approve it" message instead.
+        setPendingMessage(res.message);
+        return;
+      }
       setSession(res.access_token, res.user);
       navigate("/orgs", { replace: true });
     } catch (err) {
@@ -49,12 +56,43 @@ function RegisterForm() {
     }
   }
 
+  function startGithubLogin() {
+    window.location.assign(githubOAuth.startURL());
+  }
+
+  if (pendingMessage) {
+    return (
+      <div style={{ maxWidth: 520, margin: "3rem auto" }}>
+        <Card>
+          <Card.Header>
+            <Card.Title>账号待审核</Card.Title>
+            <Card.Description>感谢注册武陵 DevOps。</Card.Description>
+          </Card.Header>
+          <Card.Content>
+            <p>
+              {pendingMessage}
+            </p>
+            <p style={{ color: "var(--muted)", marginTop: "0.75rem", fontSize: "0.9rem" }}>
+              管理员审核通过之后，你可以使用注册时填写的用户名和密码登录。
+              如果长时间未收到回复，请联系实例的管理员。
+            </p>
+          </Card.Content>
+          <Card.Footer>
+            <Link to="/login" style={{ color: "var(--accent)" }}>返回登录页</Link>
+          </Card.Footer>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div style={{ maxWidth: 480, margin: "3rem auto" }}>
       <Card>
         <Card.Header>
           <Card.Title>创建账号</Card.Title>
-          <Card.Description>注册后将自动获得一个同名个人组织。</Card.Description>
+          <Card.Description>
+            注册后将自动获得一个同名个人组织。新账号通常需要管理员审核才能登录。
+          </Card.Description>
         </Card.Header>
         <Card.Content>
           <form
@@ -107,6 +145,23 @@ function RegisterForm() {
               {busy ? "创建中…" : "注册"}
             </Button>
           </form>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "0.6rem",
+              margin: "1rem 0 0.6rem",
+              color: "var(--muted)",
+              fontSize: "0.75rem",
+            }}
+          >
+            <span style={{ flex: 1, height: 1, background: "var(--border)" }} />
+            或
+            <span style={{ flex: 1, height: 1, background: "var(--border)" }} />
+          </div>
+          <Button variant="outline" onPress={startGithubLogin} isDisabled={busy} style={{ width: "100%" }}>
+            使用 GitHub 注册 / 登录
+          </Button>
         </Card.Content>
         <Card.Footer>
           <span style={{ color: "var(--muted)", fontSize: "0.85rem" }}>
