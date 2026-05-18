@@ -261,9 +261,14 @@ jobs:
     env:
       SSH_HOST: ${{ secrets.ECS_HOST }}
       SSH_USER: ${{ secrets.ECS_USER }}
-      # Working directory on the server. Owned by SSH_USER. Change here (or
-      # override via a workflow variable) if your host uses a different path.
-      DEPLOY_DIR: /opt/wuling/production
+      # Sub-path under the SSH user's $HOME on the server. We deliberately
+      # do NOT use /opt or /srv: the snap-packaged `docker` (default on recent
+      # Ubuntu / many cloud images) is confined to $HOME by AppArmor and
+      # cannot read files outside it — symptoms look like
+      #   open /var/lib/snapd/void/docker-compose.prod.yml: no such file
+      # If you're on apt-packaged docker (docker-ce / docker.io) and want a
+      # system path, switch this to an absolute path and drop the resolve step.
+      DEPLOY_SUBDIR: wuling-prod
     steps:
       - uses: actions/checkout@v4
 
@@ -273,6 +278,16 @@ jobs:
           printf '%s\n' "${{ secrets.ECS_SSH_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Resolve absolute deploy dir on server
+        run: |
+          # `cd && pwd` gives us the absolute path after $HOME / tilde expansion
+          # on the remote — keeps the path portable across users whose home
+          # isn't /home/<user> (e.g. Amazon Linux uses /home/ec2-user).
+          DIR=$(ssh "$SSH_USER@$SSH_HOST" \
+            "mkdir -p \"\$HOME/$DEPLOY_SUBDIR\" && cd \"\$HOME/$DEPLOY_SUBDIR\" && pwd")
+          echo "Resolved DEPLOY_DIR=$DIR"
+          echo "DEPLOY_DIR=$DIR" >> "$GITHUB_ENV"
 
       - name: Stage .env from ENV_FILE secret
         env:
