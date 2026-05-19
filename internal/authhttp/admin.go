@@ -25,14 +25,23 @@ type AdminHandler struct {
 	Verifier *auth.Verifier
 }
 
-// Mount registers the admin subroutes. Mounted at /api/v1.
+// Mount registers the admin subroutes under /admin and applies the admin
+// guard middlewares itself. Kept for callers that wire authhttp standalone.
 func (h *AdminHandler) Mount(r chi.Router) {
 	r.Route("/admin", func(r chi.Router) {
 		r.Use(auth.Middleware(h.Verifier, false))
 		r.Use(h.requireAdmin)
-		r.Get("/users", h.listUsers)
-		r.Patch("/users/{user_id}", h.patchUser)
+		h.MountInner(r)
 	})
+}
+
+// MountInner registers the admin user-management endpoints onto a router
+// that already has JWT + admin-guard middlewares applied. Used by the main
+// server.go where /admin is a shared route with other admin handlers
+// (oauthhttp), so we mount the guards once at the route level.
+func (h *AdminHandler) MountInner(r chi.Router) {
+	r.Get("/users", h.listUsers)
+	r.Patch("/users/{user_id}", h.patchUser)
 }
 
 // requireAdmin is a middleware that loads the authenticated user from the DB

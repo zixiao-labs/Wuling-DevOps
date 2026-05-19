@@ -90,8 +90,8 @@ func TestRealGit_CloneEmpty(t *testing.T) {
 	h := &Handler{
 		Store:    store,
 		Layout:   layout,
-		PWReslv:  denyPasswordResolver{},
 		PATReslv: &realPATResolver{Store: store},
+		OATReslv: denyOATResolver{},
 	}
 	r := chi.NewRouter()
 	h.Mount(r)
@@ -126,8 +126,8 @@ func TestRealGit_PushAndClone(t *testing.T) {
 	h := &Handler{
 		Store:    store,
 		Layout:   layout,
-		PWReslv:  denyPasswordResolver{},
 		PATReslv: &realPATResolver{Store: store},
+		OATReslv: denyOATResolver{},
 	}
 	r := chi.NewRouter()
 	h.Mount(r)
