@@ -22,12 +22,14 @@ services:
       POSTGRES_DB: wuling
     # No port published — only the API talks to it
     volumes:
-      - wuling-pg:/var/lib/postgresql/data
+      - wuling-pg:/var/lib/postgresql # Postgres 18 defaults to /var/lib/postgresql/data, but that creates a root-owned dir on the host which is a pain to fix. Instead, we mount the volume at /var/lib/postgresql and let Postgres create the "data" subdir with correct ownership.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U wuling -d wuling"]
       interval: 5s
       timeout: 5s
       retries: 12
+    ports:
+      - "127.0.0.1:5432:5432" # Optional: expose Postgres on localhost for debugging and DBA access. Not needed for normal operation since the API talks to it over the internal Docker network.Accse via SSH TUNNEL: `ssh -L 5432:postgres:5432 user@host`
 
   # One-shot: fix ownership on the persistent wuling-ssh volume so the
   # non-root api container (uid 10001) can write the SSH host key on first
@@ -37,7 +39,12 @@ services:
   api-init:
     image: busybox:1.36
     user: "0:0"
-    command: ["sh", "-c", "mkdir -p /ssh && chown -R 10001:10001 /ssh && chmod 0700 /ssh"]
+    command:
+      [
+        "sh",
+        "-c",
+        "mkdir -p /ssh && chown -R 10001:10001 /ssh && chmod 0700 /ssh",
+      ]
     volumes:
       - wuling-ssh:/ssh
     restart: "no"
@@ -98,7 +105,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
-      - "443:443/udp"  # HTTP/3
+      - "443:443/udp" # HTTP/3
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - wuling-frontend:/srv/wuling-frontend:ro
