@@ -47,6 +47,17 @@ http://{$WULING_DOMAIN} {
         }
     }
 
+    # /.well-known/wuling-clients (IdP discovery) is served by the API at
+    # the root, not under /api. Without this handle, the SPA catch-all
+    # below rewrites it to /index.html and Esperanta's discover() gets
+    # HTML back, failing with "expected value at line 1 column 1".
+    handle /.well-known/* {
+        reverse_proxy api:8080 {
+            header_up X-Forwarded-Host {host}
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+
     # ---- Git smart HTTP ------------------------------------------------
     @git path_regexp git ^/[^/]+/[^/]+/[^/]+\.git(/|$)
     handle @git {
