@@ -18,7 +18,10 @@ type Identity struct {
 	// Source describes how the request authenticated, for audit and for
 	// behaviour gates (e.g. PATs may be scoped where JWTs are not).
 	Source IdentitySource
-	Scopes []string // populated when Source == IdentitySourcePAT
+	Scopes []string // populated when Source ∈ {PAT, OAT}
+	// ClientID is set when Source == OAT — the oauth_clients row that minted
+	// the bearer. Empty for PAT/JWT.
+	ClientID uuid.UUID
 }
 
 // IdentitySource discriminates between the auth methods.
@@ -27,6 +30,7 @@ type IdentitySource string
 const (
 	IdentitySourceJWT      IdentitySource = "jwt"
 	IdentitySourcePAT      IdentitySource = "pat"
+	IdentitySourceOAT      IdentitySource = "oat"
 	IdentitySourcePassword IdentitySource = "password"
 )
 
@@ -58,14 +62,60 @@ type PasswordResolver interface {
 	ResolvePassword(ctx context.Context, username, password string) (*Identity, error)
 }
 
-// Middleware enforces JWT bearer auth. If optional == true, requests without
-// a token pass through with no identity attached; otherwise missing/invalid
-// tokens get 401.
+// OATResolver resolves a raw OAuth access token (wloat_…) to the principal
+// the issuing /token call bound it to. Loaded scopes are the ones granted at
+// issuance, not the client's `default_scopes` — that distinction matters when
+// a user revokes one scope without revoking the whole grant.
+type OATResolver interface {
+	ResolveOAT(ctx context.Context, raw string) (*Identity, error)
+}
+
+// BearerResolver dispatches a Bearer token to the right backing resolver
+// based on the token's prefix. JWTs (no prefix) hit Verifier; OATs hit OAT.
+// This is what `Middleware` and the git smart-HTTP handler share so both code
+// paths accept both bearer shapes.
+type BearerResolver struct {
+	JWT *Verifier
+	OAT OATResolver
+}
+
+// Resolve inspects raw and routes to JWT.Verify or OAT.Resolve. Returns the
+// resolved Identity, or an apperr-shaped error suitable for writeAuthError.
+func (b BearerResolver) Resolve(ctx context.Context, raw string) (*Identity, error) {
+	if IsOATShaped(raw) {
+		if b.OAT == nil {
+			return nil, apperr.Unauthorized("OAuth tokens not accepted by this server")
+		}
+		return b.OAT.ResolveOAT(ctx, raw)
+	}
+	claims, err := b.JWT.Verify(raw)
+	if err != nil {
+		return nil, apperr.Wrap(apperr.CodeUnauthorized, "invalid or expired token", err)
+	}
+	return &Identity{
+		UserID:   claims.UserID,
+		Username: claims.Username,
+		Source:   IdentitySourceJWT,
+	}, nil
+}
+
+// Middleware enforces Bearer auth using only JWTs. Existing internal API
+// handlers that do not need to accept OAuth-issued access tokens (most of
+// them — admin actions, account self-service, etc.) keep this signature.
+// `optional == true` lets unauthenticated requests pass through.
 //
 // The middleware does NOT handle Basic auth — that's used by the git smart
 // HTTP handler which has its own resolver, since Bearer is the wrong shape
 // for the Git CLI.
 func Middleware(verifier *Verifier, optional bool) func(http.Handler) http.Handler {
+	return MiddlewareBearer(BearerResolver{JWT: verifier}, optional)
+}
+
+// MiddlewareBearer is the OAuth-aware variant. It dispatches Bearer tokens
+// to either the JWT verifier or the OAT resolver based on the token prefix,
+// so handlers that should accept third-party OAuth bearers (anything reading
+// or mutating repo / issue / mr state) mount this instead of `Middleware`.
+func MiddlewareBearer(resolver BearerResolver, optional bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authz := r.Header.Get("Authorization")
@@ -83,20 +133,57 @@ func Middleware(verifier *Verifier, optional bool) func(http.Handler) http.Handl
 				return
 			}
 			tok := strings.TrimSpace(strings.TrimPrefix(authz, prefix))
-			claims, err := verifier.Verify(tok)
+			id, err := resolver.Resolve(r.Context(), tok)
 			if err != nil {
-				writeAuthError(w, apperr.Wrap(apperr.CodeUnauthorized, "invalid or expired token", err))
+				if ae := apperr.As(err); ae != nil {
+					writeAuthError(w, ae)
+				} else {
+					writeAuthError(w, apperr.Wrap(apperr.CodeUnauthorized, "auth failed", err))
+				}
 				return
-			}
-			id := &Identity{
-				UserID:   claims.UserID,
-				Username: claims.Username,
-				Source:   IdentitySourceJWT,
 			}
 			r = r.WithContext(WithIdentity(r.Context(), id))
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// RequireScope blocks the wrapped handler unless the request's identity holds
+// every scope in `needed`. JWT identities (interactive sessions) bypass the
+// check — they represent a fully-trusted user-agent, not a delegated bearer.
+// PAT and OAT identities are gated; a missing scope produces 403 with
+// `insufficient_scope`.
+func RequireScope(needed ...string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			id, ok := IdentityFromContext(r.Context())
+			if !ok {
+				writeAuthError(w, apperr.Unauthorized("authentication required"))
+				return
+			}
+			if id.Source == IdentitySourceJWT {
+				next.ServeHTTP(w, r)
+				return
+			}
+			for _, want := range needed {
+				if !hasScope(id.Scopes, want) {
+					writeAuthError(w, apperr.New(apperr.CodeForbidden,
+						"token missing required scope: "+want))
+					return
+				}
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func hasScope(have []string, want string) bool {
+	for _, s := range have {
+		if s == want {
+			return true
+		}
+	}
+	return false
 }
 
 // RequireIdentity is a small helper for handlers — returns the identity or a

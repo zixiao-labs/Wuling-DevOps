@@ -459,3 +459,148 @@ export interface LanguageStats {
   files: Record<string, number>;
   truncated?: boolean;
 }
+
+// ---------------- OAuth Provider ----------------
+
+/**
+ * The canonical scope vocabulary, kept in sync with
+ * `internal/oauthhttp/handler.go::SupportedScopes`. The git:* pair only
+ * applies to the smart-HTTP transport — every other scope gates an
+ * `/api/v1/...` resource.
+ */
+export type OAuthScope =
+  | "user:read"
+  | "user:write"
+  | "repo:read"
+  | "repo:write"
+  | "issue:read"
+  | "issue:write"
+  | "mr:read"
+  | "mr:write"
+  | "git:read"
+  | "git:write";
+
+export const SUPPORTED_OAUTH_SCOPES: readonly OAuthScope[] = [
+  "user:read",
+  "user:write",
+  "repo:read",
+  "repo:write",
+  "issue:read",
+  "issue:write",
+  "mr:read",
+  "mr:write",
+  "git:read",
+  "git:write",
+];
+
+/** Public client metadata returned by /api/v1/oauth/clients/{id}. */
+export interface OAuthClientPublic {
+  client_id: string;
+  name: string;
+  homepage_url?: string;
+  description?: string;
+  logo_url?: string;
+  is_first_party: boolean;
+}
+
+/** Payload backing the consent SPA via /authorize/preview. */
+export interface AuthorizePreview {
+  req: string;
+  client: OAuthClientPublic;
+  scopes_requested: OAuthScope[];
+  expires_at: string;
+}
+
+/** RFC 6749 §5.1 token response (raw access/refresh tokens). */
+export interface OAuthTokenResponse {
+  access_token: string;
+  token_type: "Bearer";
+  expires_in: number;
+  refresh_token?: string;
+  scope: string;
+}
+
+/** RFC 6749 §5.2 OAuth error envelope. */
+export interface OAuthErrorBody {
+  error: string;
+  error_description?: string;
+}
+
+/** RFC 8628 §3.2 device authorization response. */
+export interface DeviceCodeResponse {
+  device_code: string;
+  user_code: string;
+  verification_uri: string;
+  verification_uri_complete: string;
+  expires_in: number;
+  interval: number;
+}
+
+/** Row in the user's "Authorized Apps" settings page. */
+export interface AuthorizationView {
+  id: string;
+  client_id: string;
+  client_name: string;
+  client_logo_url?: string;
+  is_first_party: boolean;
+  scopes: OAuthScope[];
+  granted_at: string;
+  updated_at: string;
+}
+
+/** Owner-facing view of an OAuth App; client_secret is never on this shape. */
+export interface OAuthAppView {
+  id: string;
+  client_id: string;
+  name: string;
+  homepage_url?: string;
+  description?: string;
+  logo_url?: string;
+  is_first_party: boolean;
+  is_confidential: boolean;
+  redirect_uris: string[];
+  default_scopes: OAuthScope[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateOAuthAppRequest {
+  name: string;
+  homepage_url?: string;
+  description?: string;
+  logo_url?: string;
+  is_confidential?: boolean;
+  redirect_uris: string[];
+  default_scopes: OAuthScope[];
+}
+
+export interface CreateOAuthAppResponse {
+  app: OAuthAppView;
+  client_id: string;
+  /** Raw client_secret — shown to the operator exactly once. Empty for public clients. */
+  client_secret: string;
+}
+
+export interface UpdateOAuthAppRequest {
+  name?: string;
+  homepage_url?: string;
+  description?: string;
+  logo_url?: string;
+  redirect_uris?: string[];
+  default_scopes?: OAuthScope[];
+}
+
+/** IdP discovery payload at /.well-known/wuling-clients. */
+export interface WellKnownDoc {
+  issuer: string;
+  desktop_official_client_id: string;
+  authorization_endpoint: string;
+  token_endpoint: string;
+  device_authorization_endpoint: string;
+  revocation_endpoint: string;
+  frontend_device_verification_uri: string;
+  scopes_supported: OAuthScope[];
+  response_types_supported: string[];
+  grant_types_supported: string[];
+  code_challenge_methods_supported: string[];
+}

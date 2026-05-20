@@ -9,6 +9,8 @@ import { apiDelete, apiGet, apiPatch, apiPost, apiPut, apiFetch, type QueryMap }
 import type {
   AccessTokenView,
   ActivityDay,
+  AuthorizationView,
+  AuthorizePreview,
   BlobResponse,
   Commit,
   ContributorStat,
@@ -16,6 +18,8 @@ import type {
   CreateLabelRequest,
   CreateMRReviewRequest,
   CreateMergeRequestRequest,
+  CreateOAuthAppRequest,
+  CreateOAuthAppResponse,
   CreateOrgRequest,
   CreatePatRequest,
   CreateProjectRequest,
@@ -34,6 +38,8 @@ import type {
   MRReview,
   MergeMRRequest,
   MergeRequest,
+  OAuthAppView,
+  OAuthClientPublic,
   OAuthConfirmAction,
   OAuthConfirmResponse,
   Org,
@@ -48,8 +54,10 @@ import type {
   SSHKey,
   TokenResponse,
   TreeResponse,
+  UpdateOAuthAppRequest,
   User,
   UserApprovalStatus,
+  WellKnownDoc,
   WikiHistoryCommit,
   WikiPage,
   WikiPageContent,
@@ -387,3 +395,91 @@ export function cloneUrls(
     ssh: `ssh://git@${host}:2222/${org}/${project}/${repo}.git`,
   };
 }
+
+// ---------------- OAuth Provider ----------------
+
+/**
+ * Endpoints for the OAuth provider role — both the consent flow that other
+ * apps drag the user into, and the user's own "Authorized Apps" / "OAuth
+ * Apps" settings pages.
+ *
+ * `authorizeStartURL` is intentionally a URL builder, not a fetch helper:
+ * the consent flow is a top-level navigation, and the SPA hands the user
+ * agent to the backend via window.location.assign.
+ */
+export const oauthProvider = {
+  wellKnown: () => apiGet<WellKnownDoc>("/.well-known/wuling-clients"),
+
+  /** GET /api/v1/oauth/clients/{client_id} */
+  publicClient: (clientId: string) =>
+    apiGet<OAuthClientPublic>(`/api/v1/oauth/clients/${enc(clientId)}`),
+
+  /** GET /api/v1/oauth/authorize/preview?req=... */
+  authorizePreview: (req: string) =>
+    apiGet<AuthorizePreview>("/api/v1/oauth/authorize/preview", { req }),
+
+  /** POST /api/v1/oauth/authorize/decision */
+  authorizeDecision: (req: string, decision: "allow" | "deny") =>
+    apiPost<{ redirect_url: string }>("/api/v1/oauth/authorize/decision", { req, decision }),
+
+  /** POST /api/v1/oauth/device/approve */
+  deviceApprove: (userCode: string) =>
+    apiPost<{ status: "approved" }>("/api/v1/oauth/device/approve", { user_code: userCode }),
+
+  /** POST /api/v1/oauth/device/deny */
+  deviceDeny: (userCode: string) =>
+    apiPost("/api/v1/oauth/device/deny", { user_code: userCode }),
+
+  /**
+   * Build the top-level URL that begins a third-party Authorization Code
+   * flow. Used by anything that needs to test the flow end-to-end from the
+   * frontend (e.g. a "Try this app" button on the OAuth Apps settings page).
+   */
+  authorizeStartURL: (params: {
+    clientId: string;
+    redirectUri: string;
+    scope: string;
+    state: string;
+    codeChallenge: string;
+  }): string => {
+    const q = new URLSearchParams({
+      response_type: "code",
+      client_id: params.clientId,
+      redirect_uri: params.redirectUri,
+      scope: params.scope,
+      state: params.state,
+      code_challenge: params.codeChallenge,
+      code_challenge_method: "S256",
+    });
+    return `/api/v1/oauth/authorize?${q.toString()}`;
+  },
+
+  authorizations: {
+    list: () =>
+      apiGet<AuthorizationView[]>("/api/v1/oauth/authorizations"),
+    revoke: (id: string) =>
+      apiDelete(`/api/v1/oauth/authorizations/${enc(id)}`),
+  },
+
+  apps: {
+    list: () =>
+      apiGet<OAuthAppView[]>("/api/v1/oauth/apps"),
+    create: (body: CreateOAuthAppRequest) =>
+      apiPost<CreateOAuthAppResponse>("/api/v1/oauth/apps", body),
+    update: (id: string, body: UpdateOAuthAppRequest) =>
+      apiPatch<OAuthAppView>(`/api/v1/oauth/apps/${enc(id)}`, body),
+    delete: (id: string) =>
+      apiDelete(`/api/v1/oauth/apps/${enc(id)}`),
+    resetSecret: (id: string) =>
+      apiPost<{ client_secret: string }>(`/api/v1/oauth/apps/${enc(id)}/reset-secret`),
+  },
+
+  admin: {
+    listApps: () =>
+      apiGet<OAuthAppView[]>("/api/v1/admin/oauth/apps"),
+    updateApp: (id: string, body: { is_first_party?: boolean }) =>
+      apiPatch<OAuthAppView>(`/api/v1/admin/oauth/apps/${enc(id)}`, body),
+    deleteApp: (id: string) =>
+      apiDelete(`/api/v1/admin/oauth/apps/${enc(id)}`),
+  },
+};

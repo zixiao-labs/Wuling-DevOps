@@ -280,6 +280,370 @@ paths:
         "204": { description: deleted }
         "404": { $ref: "#/components/responses/NotFoundError" }
 
+  # ---------------------------------------------------------------------------
+  # OAuth Provider role (Wuling-DevOps issuing tokens to other apps).
+  # ---------------------------------------------------------------------------
+  /.well-known/wuling-clients:
+    get:
+      security: []
+      summary: Discovery document — endpoint URLs and the official desktop client_id
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WellKnownDoc" }
+
+  /api/v1/oauth/authorize:
+    get:
+      security: []
+      summary: Start an Authorization Code (+ PKCE) flow
+      description: |
+        Validates query parameters, stashes them server-side, and redirects
+        the browser to `<frontend>/oauth/authorize?req=<opaque>`. PKCE is
+        mandatory for every client (including first-party).
+      parameters:
+        - in: query
+          name: response_type
+          required: true
+          schema: { type: string, enum: [code] }
+        - in: query
+          name: client_id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: redirect_uri
+          required: true
+          schema: { type: string, format: uri }
+        - in: query
+          name: scope
+          required: true
+          schema: { type: string }
+        - in: query
+          name: state
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 256 }
+        - in: query
+          name: code_challenge
+          required: true
+          schema: { type: string }
+        - in: query
+          name: code_challenge_method
+          schema: { type: string, enum: [S256], default: S256 }
+      responses:
+        "302":
+          description: redirect to the consent SPA
+
+  /api/v1/oauth/authorize/preview:
+    get:
+      security: []
+      summary: Consent-UI metadata fetch
+      parameters:
+        - in: query
+          name: req
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthorizePreview" }
+
+  /api/v1/oauth/authorize/decision:
+    post:
+      summary: Consent-UI decision (allow/deny)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [req, decision]
+              properties:
+                req: { type: string, format: uuid }
+                decision: { type: string, enum: [allow, deny] }
+      responses:
+        "200":
+          description: ok — redirect_url is where the SPA should send the browser
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  redirect_url: { type: string, format: uri }
+
+  /api/v1/oauth/token:
+    post:
+      security: []
+      summary: Exchange a code, refresh, or device_code for an access token
+      description: |
+        RFC 6749-shaped token endpoint. Accepts a form-urlencoded body. The
+        three supported grants are `authorization_code`, `refresh_token`,
+        and `urn:ietf:params:oauth:grant-type:device_code`.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [grant_type]
+              properties:
+                grant_type:    { type: string }
+                code:          { type: string }
+                code_verifier: { type: string }
+                redirect_uri:  { type: string, format: uri }
+                refresh_token: { type: string }
+                device_code:   { type: string }
+                client_id:     { type: string }
+                client_secret: { type: string }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OAuthTokenResponse" }
+        "400":
+          description: OAuth error envelope (see error / error_description)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OAuthError" }
+
+  /api/v1/oauth/device_authorization:
+    post:
+      security: []
+      summary: Start a Device Authorization Grant (RFC 8628)
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [client_id]
+              properties:
+                client_id: { type: string }
+                scope:     { type: string }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeviceCodeResponse" }
+
+  /api/v1/oauth/device/approve:
+    post:
+      summary: Approve a device flow user_code on behalf of the logged-in user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_code]
+              properties:
+                user_code: { type: string }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [approved] }
+
+  /api/v1/oauth/device/deny:
+    post:
+      summary: Deny a device flow user_code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_code]
+              properties:
+                user_code: { type: string }
+      responses:
+        "200":
+          description: ok
+
+  /api/v1/oauth/revoke:
+    post:
+      security: []
+      summary: RFC 7009 token revocation
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:           { type: string }
+                token_type_hint: { type: string, enum: [access_token, refresh_token] }
+      responses:
+        "200":
+          description: revoked or token was already inactive
+
+  /api/v1/oauth/clients/{client_id}:
+    get:
+      security: []
+      summary: Public client metadata (name/logo/homepage)
+      parameters:
+        - in: path
+          name: client_id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ClientPublicView" }
+
+  /api/v1/oauth/authorizations:
+    get:
+      summary: List the caller's granted (user, client) authorizations
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 200
+                items: { $ref: "#/components/schemas/AuthorizationView" }
+
+  /api/v1/oauth/authorizations/{id}:
+    delete:
+      summary: Revoke a granted authorization (also nukes live tokens)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: revoked }
+
+  /api/v1/oauth/apps:
+    get:
+      summary: List OAuth Apps owned by the caller
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 200
+                items: { $ref: "#/components/schemas/OAuthAppView" }
+    post:
+      summary: Register a new OAuth App
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateOAuthAppRequest" }
+      responses:
+        "201":
+          description: created — client_secret is shown exactly once
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateOAuthAppResponse" }
+
+  /api/v1/oauth/apps/{id}:
+    patch:
+      summary: Update an OAuth App's metadata
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateOAuthAppRequest" }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OAuthAppView" }
+    delete:
+      summary: Delete an OAuth App (cascades to authorizations and tokens)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: deleted }
+
+  /api/v1/oauth/apps/{id}/reset-secret:
+    post:
+      summary: Rotate a confidential client's secret (returns the new raw secret once)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  client_secret: { type: string }
+
+  /api/v1/admin/oauth/apps:
+    get:
+      summary: List every registered OAuth App (admin only)
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 1000
+                items: { $ref: "#/components/schemas/OAuthAppView" }
+
+  /api/v1/admin/oauth/apps/{id}:
+    patch:
+      summary: Admin update — toggle is_first_party etc.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                is_first_party: { type: boolean }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OAuthAppView" }
+    delete:
+      summary: Admin delete
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: deleted }
+
   # ---------------- admin ----------------
 
   /api/v1/admin/users:
@@ -1939,3 +2303,194 @@ components:
             else with 400.
 
 
+
+    # ---------------------------------------------------------------------------
+    # OAuth Provider schemas
+    # ---------------------------------------------------------------------------
+    WellKnownDoc:
+      type: object
+      description: |
+        IdP discovery document. Public, returned with `Cache-Control: public,
+        max-age=300` so a desktop client can poll it cheaply on first
+        connection. Esperanta uses `desktop_official_client_id` to skip the
+        manual client_id step on a self-hosted instance.
+      properties:
+        issuer:
+          type: string
+          format: uri
+          description: Absolute origin of this instance.
+        desktop_official_client_id:
+          type: string
+          description: client_id of the seeded first-party desktop app.
+        authorization_endpoint:        { type: string, format: uri }
+        token_endpoint:                { type: string, format: uri }
+        device_authorization_endpoint: { type: string, format: uri }
+        revocation_endpoint:           { type: string, format: uri }
+        frontend_device_verification_uri:
+          type: string
+          format: uri
+          description: |
+            URL of the SPA page where a user enters their user_code (i.e.
+            `verification_uri` in RFC 8628 terms).
+        scopes_supported:
+          type: array
+          maxItems: 64
+          items: { type: string }
+        response_types_supported:
+          type: array
+          maxItems: 8
+          items: { type: string }
+        grant_types_supported:
+          type: array
+          maxItems: 8
+          items: { type: string }
+        code_challenge_methods_supported:
+          type: array
+          maxItems: 4
+          items: { type: string, enum: [S256] }
+
+    ClientPublicView:
+      type: object
+      description: Public, unauthenticated view of an OAuth client.
+      properties:
+        client_id:      { type: string }
+        name:           { type: string }
+        homepage_url:   { type: string, format: uri }
+        description:    { type: string }
+        logo_url:       { type: string, format: uri }
+        is_first_party: { type: boolean }
+
+    AuthorizePreview:
+      type: object
+      description: Payload the consent SPA fetches via /authorize/preview.
+      properties:
+        req:    { type: string, format: uuid }
+        client: { $ref: "#/components/schemas/ClientPublicView" }
+        scopes_requested:
+          type: array
+          maxItems: 64
+          items: { type: string }
+        expires_at: { type: string, format: date-time }
+
+    OAuthTokenResponse:
+      type: object
+      description: RFC 6749 §5.1 token response.
+      properties:
+        access_token:  { type: string }
+        token_type:    { type: string, enum: [Bearer] }
+        expires_in:    { type: integer }
+        refresh_token: { type: string }
+        scope:         { type: string, description: "Space-separated granted scopes." }
+
+    OAuthError:
+      type: object
+      description: RFC 6749 §5.2 error envelope (distinct from the internal API envelope).
+      properties:
+        error: { type: string }
+        error_description: { type: string }
+
+    DeviceCodeResponse:
+      type: object
+      description: RFC 8628 §3.2 response for /device_authorization.
+      properties:
+        device_code:               { type: string }
+        user_code:                 { type: string, description: "Human-typable code (shaped like ABCD-1234)." }
+        verification_uri:          { type: string, format: uri }
+        verification_uri_complete: { type: string, format: uri }
+        expires_in:                { type: integer }
+        interval:                  { type: integer }
+
+    AuthorizationView:
+      type: object
+      description: |
+        A row in /api/v1/oauth/authorizations — the durable consent record
+        joining the user, the client they granted, and the scopes granted.
+      properties:
+        id:              { type: string, format: uuid }
+        client_id:       { type: string, description: "Public client_id string, not the internal UUID." }
+        client_name:     { type: string }
+        client_logo_url: { type: string, format: uri }
+        is_first_party:  { type: boolean }
+        scopes:
+          type: array
+          maxItems: 64
+          items: { type: string }
+        granted_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    OAuthAppView:
+      type: object
+      description: |
+        OAuth App as seen by its owner or by an admin. client_secret is NOT
+        included — it appears only in CreateOAuthAppResponse and the
+        reset-secret response, both of which return the raw secret exactly
+        once.
+      properties:
+        id:              { type: string, format: uuid }
+        client_id:       { type: string }
+        name:            { type: string }
+        homepage_url:    { type: string, format: uri }
+        description:     { type: string }
+        logo_url:        { type: string, format: uri }
+        is_first_party:  { type: boolean }
+        is_confidential: { type: boolean }
+        redirect_uris:
+          type: array
+          maxItems: 8
+          items: { type: string, format: uri }
+        default_scopes:
+          type: array
+          maxItems: 20
+          items: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CreateOAuthAppRequest:
+      type: object
+      required: [name, redirect_uris, default_scopes]
+      properties:
+        name:            { type: string, minLength: 1, maxLength: 128 }
+        homepage_url:    { type: string, format: uri }
+        description:     { type: string, maxLength: 512 }
+        logo_url:        { type: string, format: uri }
+        is_confidential: { type: boolean, description: "Public (false) by default — fits SPA / desktop / CLI apps that cannot keep a secret." }
+        redirect_uris:
+          type: array
+          minItems: 1
+          maxItems: 8
+          items: { type: string, format: uri }
+        default_scopes:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items: { type: string }
+
+    CreateOAuthAppResponse:
+      type: object
+      properties:
+        app: { $ref: "#/components/schemas/OAuthAppView" }
+        client_id: { type: string }
+        client_secret:
+          type: string
+          description: |
+            Raw secret. Shown exactly once on create / reset; the server
+            stores only HMAC. If you lose it, you must call /reset-secret.
+            Public clients (is_confidential=false) get an empty string here.
+
+    UpdateOAuthAppRequest:
+      type: object
+      properties:
+        name:         { type: string, minLength: 1, maxLength: 128 }
+        homepage_url: { type: string, format: uri }
+        description:  { type: string, maxLength: 512 }
+        logo_url:     { type: string, format: uri }
+        redirect_uris:
+          type: array
+          minItems: 1
+          maxItems: 8
+          items: { type: string, format: uri }
+        default_scopes:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items: { type: string }

@@ -8,6 +8,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -95,12 +96,26 @@ type SSHConfig struct {
 //     OAuth callback (defaults to "/"). Should be an absolute URL in
 //     production so we never trip same-origin assumptions in reverse-proxy
 //     deployments.
+//   - ProviderHMACSecret: server-held secret used to HMAC every OAuth token /
+//     auth-code we issue from the provider role (the bytes themselves never
+//     touch the DB; only their HMAC does). Must be set in production.
+//   - PublicBaseURL: absolute origin the server advertises to OAuth clients in
+//     /.well-known/wuling-clients and the token/authorize endpoints (e.g.
+//     "https://wuling.zixiaolabs.com"). Defaults to empty, in which case the
+//     handler falls back to deriving the origin from incoming Host headers —
+//     fine for local dev, dangerous behind multi-host proxies.
+//   - DesktopClientID: the public identifier used for the first-party desktop
+//     app row that gets upserted on boot. Exposed via well-known so Esperanta
+//     can dynamically discover it per-instance.
 type OAuthConfig struct {
 	GithubClientID     string `env:"WULING_OAUTH_GITHUB_CLIENT_ID"`
 	GithubClientSecret string `env:"WULING_OAUTH_GITHUB_CLIENT_SECRET"`
 	GithubRedirectURL  string `env:"WULING_OAUTH_GITHUB_REDIRECT_URL"`
 	GithubScopes       string `env:"WULING_OAUTH_GITHUB_SCOPES" envDefault:"read:user,user:email"`
 	FrontendBaseURL    string `env:"WULING_OAUTH_FRONTEND_BASE_URL" envDefault:"/"`
+	ProviderHMACSecret string `env:"WULING_OAUTH_HMAC_SECRET"`
+	PublicBaseURL      string `env:"WULING_OAUTH_PUBLIC_BASE_URL"`
+	DesktopClientID    string `env:"WULING_OAUTH_DESKTOP_CLIENT_ID" envDefault:"wuling-desktop"`
 }
 
 // SignupConfig controls the new-account approval workflow.
@@ -158,6 +173,19 @@ func (c *Config) validate() error {
 	}
 	if c.Storage.RepoRoot == "" {
 		problems = append(problems, "WULING_REPO_ROOT must not be empty")
+	}
+	if c.IsProd() && c.OAuth.ProviderHMACSecret == "" {
+		problems = append(problems, "WULING_OAUTH_HMAC_SECRET must be set in production")
+	}
+	if c.IsProd() {
+		if c.OAuth.PublicBaseURL == "" {
+			problems = append(problems, "WULING_OAUTH_PUBLIC_BASE_URL must be set in production")
+		} else {
+			u, err := url.Parse(c.OAuth.PublicBaseURL)
+			if err != nil || u.Scheme == "" || u.Host == "" {
+				problems = append(problems, "WULING_OAUTH_PUBLIC_BASE_URL must be an absolute URL with scheme and host")
+			}
+		}
 	}
 
 	if len(problems) > 0 {

@@ -19,9 +19,19 @@
 //	POST /<org>/<proj>/<repo>.git/git-upload-pack
 //	POST /<org>/<proj>/<repo>.git/git-receive-pack
 //
-// Authentication is HTTP Basic. The password may be a PAT (preferred,
-// recognised by the "wlpat_" prefix) or the user's account password
-// (allowed for compatibility; can be disabled in config later).
+// Authentication is HTTP Basic. The password slot accepts either kind of
+// token this server issues:
+//
+//   - `wlpat_…` (Personal Access Token) — resolved by PATResolver
+//   - `wloat_…` (OAuth provider access token) — resolved by OATResolver
+//
+// Username-and-password login is intentionally NOT accepted on the Git
+// transport: every user has a way to mint a token from the web UI, and
+// keeping passwords out of `~/.git-credentials` is a strict improvement
+// over the historical "user@pass" pattern.
+//
+// Bearer auth (Authorization: Bearer …) is also not accepted on these
+// endpoints because no major Git CLI sends it.
 package githttp
 
 import (
@@ -49,8 +59,8 @@ import (
 type Handler struct {
 	Store    *userstore.Store
 	Layout   *repostore.Layout
-	PWReslv  auth.PasswordResolver
 	PATReslv auth.PATResolver
+	OATReslv auth.OATResolver
 
 	// Logger is used for non-fatal post-RPC bookkeeping (e.g. failure to
 	// mark a repo non-empty after a successful push). May be nil; callers
@@ -133,10 +143,32 @@ func (h *Handler) resolveRepoFromURL(r *http.Request, needWrite bool) (*authedRe
 		if needWrite && role == "" {
 			return nil, apperr.Forbidden("write access required")
 		}
-		// PAT scope check: writes require repo:write.
-		if needWrite && identity.Source == auth.IdentitySourcePAT {
-			if !hasScope(identity.Scopes, "repo:write") {
-				return nil, apperr.Forbidden("token lacks repo:write scope")
+		// Token scope checks: differ by source.
+		//   - PAT: reads require repo:read; writes require repo:write (or
+		//     treat repo:write as sufficient for read).
+		//   - OAT: reads require git:read; writes require git:write. The PAT
+		//     scope names predate the OAuth provider rebuild, so we stay
+		//     compatible by using the original PAT scope semantics for PATs
+		//     and the dedicated git:* scopes for OATs.
+		switch identity.Source {
+		case auth.IdentitySourcePAT:
+			if needWrite {
+				if !hasScope(identity.Scopes, "repo:write") {
+					return nil, apperr.Forbidden("token lacks repo:write scope")
+				}
+			} else {
+				// For reads, accept either repo:read or repo:write (write implies read)
+				if !hasScope(identity.Scopes, "repo:read") && !hasScope(identity.Scopes, "repo:write") {
+					return nil, apperr.Forbidden("token lacks repo:read scope")
+				}
+			}
+		case auth.IdentitySourceOAT:
+			required := "git:read"
+			if needWrite {
+				required = "git:write"
+			}
+			if !hasScope(identity.Scopes, required) {
+				return nil, apperr.Forbidden("token lacks " + required + " scope")
 			}
 		}
 	} else if needWrite {
@@ -166,15 +198,22 @@ func hasScope(scopes []string, want string) bool {
 	return false
 }
 
-// authenticate parses HTTP Basic auth and returns the resolved identity.
+// authenticate parses HTTP Basic auth and dispatches the password slot to
+// the right resolver based on the token prefix.
 //
-// We accept two password formats:
+// Accepted password shapes:
 //
-//   - A wlpat_ PAT (preferred). Resolved by PATResolver.
-//   - The user's account password. Resolved by PasswordResolver.
+//   - `wlpat_…` (Personal Access Token) → PATResolver
+//   - `wloat_…` (OAuth provider access token) → OATResolver
 //
-// Bearer auth is *not* accepted on smart-HTTP endpoints because no major Git
-// CLI sends it that way. This is intentional and not a bug.
+// Anything else is rejected with 401. Username-and-password login was
+// deliberately removed when OAuth provider support landed: requiring users
+// to mint a token before they can `git push` keeps a leaked credentials
+// store (`~/.git-credentials`) from leaking a login password, and removes
+// the only auth path that was a session-cookie equivalent on the wire.
+//
+// Bearer auth is intentionally NOT accepted on smart-HTTP endpoints because
+// no major Git CLI sends it that way.
 func (h *Handler) authenticate(r *http.Request) (*auth.Identity, error) {
 	authz := r.Header.Get("Authorization")
 	if authz == "" || !strings.HasPrefix(authz, "Basic ") {
@@ -190,13 +229,24 @@ func (h *Handler) authenticate(r *http.Request) (*auth.Identity, error) {
 	}
 	username := string(raw[:idx])
 	password := string(raw[idx+1:])
-	if username == "" || password == "" {
+	if password == "" {
 		return nil, apperr.Unauthorized("missing credentials")
 	}
-	if strings.HasPrefix(password, auth.AccessTokenPrefix) {
+	switch {
+	case auth.IsPATShaped(password):
+		// PATs are looked up by username + token hash, so username is required.
+		if username == "" {
+			return nil, apperr.Unauthorized("username required for PAT authentication")
+		}
 		return h.PATReslv.ResolvePAT(r.Context(), username, password)
+	case auth.IsOATShaped(password):
+		if h.OATReslv == nil {
+			return nil, apperr.Unauthorized("OAuth tokens not accepted by this server")
+		}
+		return h.OATReslv.ResolveOAT(r.Context(), password)
+	default:
+		return nil, apperr.Unauthorized("password must be a wlpat_ or wloat_ token")
 	}
-	return h.PWReslv.ResolvePassword(r.Context(), username, password)
 }
 
 // ----------------------------------------------------------------------------

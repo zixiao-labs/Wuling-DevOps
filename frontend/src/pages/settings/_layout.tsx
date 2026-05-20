@@ -6,6 +6,8 @@ const tabs = [
   { to: "/settings/profile", label: "个人资料" },
   { to: "/settings/tokens", label: "访问令牌" },
   { to: "/settings/ssh-keys", label: "SSH 公钥" },
+  { to: "/settings/oauth-apps", label: "OAuth 应用" },
+  { to: "/settings/authorized-apps", label: "已授权应用" },
 ];
 
 export default function SettingsLayout() {

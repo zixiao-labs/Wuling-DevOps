@@ -72,18 +72,16 @@ func (f *fakePATResolver) ResolvePAT(_ context.Context, username, raw string) (*
 	return f.id, f.err
 }
 
-type fakePasswordResolver struct {
-	called   bool
-	username string
-	password string
-	id       *auth.Identity
-	err      error
+type fakeOATResolver struct {
+	called bool
+	raw    string
+	id     *auth.Identity
+	err    error
 }
 
-func (f *fakePasswordResolver) ResolvePassword(_ context.Context, username, password string) (*auth.Identity, error) {
+func (f *fakeOATResolver) ResolveOAT(_ context.Context, raw string) (*auth.Identity, error) {
 	f.called = true
-	f.username = username
-	f.password = password
+	f.raw = raw
 	return f.id, f.err
 }
 
@@ -131,7 +129,7 @@ func TestAuthenticate_NoColon(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid auth header")
 }
 
-func TestAuthenticate_EmptyCreds(t *testing.T) {
+func TestAuthenticate_EmptyPassword(t *testing.T) {
 	h := &Handler{}
 	_, err := h.authenticate(basicAuthReq(t, "", ""))
 	require.Error(t, err)
@@ -141,29 +139,44 @@ func TestAuthenticate_EmptyCreds(t *testing.T) {
 func TestAuthenticate_PATPath(t *testing.T) {
 	wantID := &auth.Identity{UserID: uuid.New(), Username: "alice", Source: auth.IdentitySourcePAT}
 	pat := &fakePATResolver{id: wantID}
-	pw := &fakePasswordResolver{}
-	h := &Handler{PATReslv: pat, PWReslv: pw}
+	oat := &fakeOATResolver{}
+	h := &Handler{PATReslv: pat, OATReslv: oat}
 
 	got, err := h.authenticate(basicAuthReq(t, "alice", auth.AccessTokenPrefix+"abcd"))
 	require.NoError(t, err)
 	assert.Equal(t, wantID, got)
 	assert.True(t, pat.called)
-	assert.False(t, pw.called, "password resolver must not be called for wlpat_ tokens")
+	assert.False(t, oat.called, "OAT resolver must not be called for wlpat_ tokens")
 	assert.Equal(t, "alice", pat.username)
 }
 
-func TestAuthenticate_PasswordPath(t *testing.T) {
-	wantID := &auth.Identity{UserID: uuid.New(), Username: "bob", Source: auth.IdentitySourcePassword}
+func TestAuthenticate_OATPath(t *testing.T) {
+	wantID := &auth.Identity{UserID: uuid.New(), Username: "bob", Source: auth.IdentitySourceOAT, Scopes: []string{"git:read"}}
 	pat := &fakePATResolver{}
-	pw := &fakePasswordResolver{id: wantID}
-	h := &Handler{PATReslv: pat, PWReslv: pw}
+	oat := &fakeOATResolver{id: wantID}
+	h := &Handler{PATReslv: pat, OATReslv: oat}
 
-	got, err := h.authenticate(basicAuthReq(t, "bob", "letmein"))
+	got, err := h.authenticate(basicAuthReq(t, "bob", auth.OATPrefix+"abcd"))
 	require.NoError(t, err)
 	assert.Equal(t, wantID, got)
 	assert.False(t, pat.called)
-	assert.True(t, pw.called)
-	assert.Equal(t, "letmein", pw.password)
+	assert.True(t, oat.called)
+	assert.Equal(t, auth.OATPrefix+"abcd", oat.raw)
+}
+
+func TestAuthenticate_PasswordRejected(t *testing.T) {
+	// After the OAuth provider rebuild, plain password auth is no longer
+	// accepted on the Git transport. A leaked /etc/git-credentials should
+	// never grant access to login passwords.
+	pat := &fakePATResolver{}
+	oat := &fakeOATResolver{}
+	h := &Handler{PATReslv: pat, OATReslv: oat}
+
+	_, err := h.authenticate(basicAuthReq(t, "bob", "letmein"))
+	require.Error(t, err)
+	assert.Equal(t, apperr.CodeUnauthorized, apperr.As(err).Code)
+	assert.False(t, pat.called)
+	assert.False(t, oat.called)
 }
 
 // ---------- subprocess plumbing via fakegit.sh ----------
@@ -337,10 +350,13 @@ func (r *realPATResolver) ResolvePAT(ctx context.Context, username, raw string) 
 	return nil, apperr.Unauthorized("invalid token")
 }
 
-type denyPasswordResolver struct{}
+// denyOATResolver is the OAuth-token analogue of the denyPasswordResolver:
+// it asserts the OAuth-token path is never taken in subprocess fixture tests
+// that exercise PAT auth only.
+type denyOATResolver struct{}
 
-func (denyPasswordResolver) ResolvePassword(_ context.Context, _, _ string) (*auth.Identity, error) {
-	return nil, apperr.Unauthorized("password auth disabled in test")
+func (denyOATResolver) ResolveOAT(_ context.Context, _ string) (*auth.Identity, error) {
+	return nil, apperr.Unauthorized("OAT not configured in test")
 }
 
 // newSubprocessHandler builds a Handler wired to the test DB and a fakegit
@@ -359,8 +375,8 @@ func newSubprocessHandler(t *testing.T, visibility string, patScopes []string) (
 	h := &Handler{
 		Store:     store,
 		Layout:    repostore.New(t.TempDir()),
-		PWReslv:   denyPasswordResolver{},
 		PATReslv:  &realPATResolver{Store: store},
+		OATReslv:  denyOATResolver{},
 		GitBinary: wrapper,
 	}
 	r := chi.NewRouter()

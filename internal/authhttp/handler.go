@@ -311,33 +311,14 @@ func (h *Handler) deleteToken(w http.ResponseWriter, r *http.Request) {
 
 // ---------- resolvers used by smart-HTTP basic auth ----------
 
-// PasswordResolver implements auth.PasswordResolver. We support the password
-// fallback so that `git clone https://user:pass@host` works for users who
-// haven't issued a PAT yet — at the cost of slightly looser security than
-// PAT-only mode. Operators can disable it once tooling is in place.
-type PasswordResolver struct{ Store *userstore.Store }
-
-// ResolvePassword authenticates user/password against the users table.
-func (p *PasswordResolver) ResolvePassword(ctx context.Context, username, password string) (*auth.Identity, error) {
-	id, hash, err := p.Store.PasswordHashFor(ctx, username)
-	if err != nil {
-		return nil, err
-	}
-	ok, verr := auth.VerifyPassword(password, hash)
-	if verr != nil {
-		return nil, apperr.Internal(verr)
-	}
-	if !ok {
-		return nil, apperr.Unauthorized("invalid credentials")
-	}
-	return &auth.Identity{
-		UserID:   id,
-		Username: username,
-		Source:   auth.IdentitySourcePassword,
-	}, nil
-}
-
 // PATResolver implements auth.PATResolver.
+//
+// PAT was historically one of two Basic-auth password formats accepted by the
+// Git smart-HTTP transport; the other was the user's login password, via the
+// (now removed) PasswordResolver. Once the OAuth provider rebuild landed we
+// dropped the password fallback so that a leaked `~/.git-credentials` file
+// can't expose login passwords — every user now mints a PAT or signs in via
+// OAuth to push.
 type PATResolver struct{ Store *userstore.Store }
 
 // ResolvePAT authenticates a username + raw PAT secret. It pulls all PATs for
