@@ -197,7 +197,11 @@ func (h *Handler) authorizeDecision(w http.ResponseWriter, r *http.Request) {
 		httpapi.RenderError(w, r, err)
 		return
 	}
-	reqID, _ := uuid.Parse(body.Req)
+	reqID, err := uuid.Parse(body.Req)
+	if err != nil {
+		httpapi.RenderError(w, r, apperr.New(apperr.CodeBadRequest, "invalid req parameter"))
+		return
+	}
 
 	ck, err := r.Cookie(consentCookieName)
 	if err != nil {

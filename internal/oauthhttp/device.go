@@ -153,6 +153,19 @@ func (h *Handler) deviceDeny(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	canonical := auth.NormalizeUserCode(body.UserCode)
+	row, err := h.OAuth.GetDeviceCodeByUserCode(r.Context(), canonical)
+	if err != nil {
+		httpapi.RenderError(w, r, err)
+		return
+	}
+	if row.Status != "pending" {
+		httpapi.RenderError(w, r, apperr.New(apperr.CodeConflict, "device code already decided"))
+		return
+	}
+	if h.Now().After(row.ExpiresAt) {
+		httpapi.RenderError(w, r, apperr.New(apperr.CodeConflict, "device code expired"))
+		return
+	}
 	if err := h.OAuth.DenyDeviceCode(r.Context(), canonical); err != nil {
 		httpapi.RenderError(w, r, err)
 		return

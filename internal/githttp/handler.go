@@ -144,15 +144,23 @@ func (h *Handler) resolveRepoFromURL(r *http.Request, needWrite bool) (*authedRe
 			return nil, apperr.Forbidden("write access required")
 		}
 		// Token scope checks: differ by source.
-		//   - PAT: writes require repo:write.
+		//   - PAT: reads require repo:read; writes require repo:write (or
+		//     treat repo:write as sufficient for read).
 		//   - OAT: reads require git:read; writes require git:write. The PAT
 		//     scope names predate the OAuth provider rebuild, so we stay
 		//     compatible by using the original PAT scope semantics for PATs
 		//     and the dedicated git:* scopes for OATs.
 		switch identity.Source {
 		case auth.IdentitySourcePAT:
-			if needWrite && !hasScope(identity.Scopes, "repo:write") {
-				return nil, apperr.Forbidden("token lacks repo:write scope")
+			if needWrite {
+				if !hasScope(identity.Scopes, "repo:write") {
+					return nil, apperr.Forbidden("token lacks repo:write scope")
+				}
+			} else {
+				// For reads, accept either repo:read or repo:write (write implies read)
+				if !hasScope(identity.Scopes, "repo:read") && !hasScope(identity.Scopes, "repo:write") {
+					return nil, apperr.Forbidden("token lacks repo:read scope")
+				}
 			}
 		case auth.IdentitySourceOAT:
 			required := "git:read"
@@ -226,9 +234,10 @@ func (h *Handler) authenticate(r *http.Request) (*auth.Identity, error) {
 	}
 	switch {
 	case auth.IsPATShaped(password):
-		// Git CLIs typically send some username (often the human's login) but
-		// PATs are looked up by their hash, so the username string is only
-		// used in the resolver for audit context — it can be empty.
+		// PATs are looked up by username + token hash, so username is required.
+		if username == "" {
+			return nil, apperr.Unauthorized("username required for PAT authentication")
+		}
 		return h.PATReslv.ResolvePAT(r.Context(), username, password)
 	case auth.IsOATShaped(password):
 		if h.OATReslv == nil {

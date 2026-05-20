@@ -8,6 +8,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -175,6 +176,16 @@ func (c *Config) validate() error {
 	}
 	if c.IsProd() && c.OAuth.ProviderHMACSecret == "" {
 		problems = append(problems, "WULING_OAUTH_HMAC_SECRET must be set in production")
+	}
+	if c.IsProd() {
+		if c.OAuth.PublicBaseURL == "" {
+			problems = append(problems, "WULING_OAUTH_PUBLIC_BASE_URL must be set in production")
+		} else {
+			u, err := url.Parse(c.OAuth.PublicBaseURL)
+			if err != nil || u.Scheme == "" || u.Host == "" {
+				problems = append(problems, "WULING_OAUTH_PUBLIC_BASE_URL must be an absolute URL with scheme and host")
+			}
+		}
 	}
 
 	if len(problems) > 0 {

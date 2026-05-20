@@ -24,15 +24,17 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 
 	// Try as access token first, then as refresh.
 	if row, err := h.OAuth.LookupAccessTokenByHash(r.Context(), hash); err == nil && row.RevokedAt == nil {
-		_ = h.OAuth.RevokeAccessToken(r.Context(), row.ID)
-		h.OAuth.Audit(r.Context(), "token_revoked",
-			uuidPtr(row.UserID), uuidPtr(row.ClientID),
-			map[string]any{"token_id": row.ID.String(), "via": "access"})
+		if err := h.OAuth.RevokeAccessToken(r.Context(), row.ID); err == nil {
+			h.OAuth.Audit(r.Context(), "token_revoked",
+				uuidPtr(row.UserID), uuidPtr(row.ClientID),
+				map[string]any{"token_id": row.ID.String(), "via": "access"})
+		}
 	} else if row, err := h.OAuth.LookupAccessTokenByRefreshHash(r.Context(), hash); err == nil && row.RevokedAt == nil {
-		_ = h.OAuth.RevokeAccessToken(r.Context(), row.ID)
-		h.OAuth.Audit(r.Context(), "token_revoked",
-			uuidPtr(row.UserID), uuidPtr(row.ClientID),
-			map[string]any{"token_id": row.ID.String(), "via": "refresh"})
+		if err := h.OAuth.RevokeAccessToken(r.Context(), row.ID); err == nil {
+			h.OAuth.Audit(r.Context(), "token_revoked",
+				uuidPtr(row.UserID), uuidPtr(row.ClientID),
+				map[string]any{"token_id": row.ID.String(), "via": "refresh"})
+		}
 	}
 
 	// RFC 7009 §2.2: success means "the response is the same regardless of

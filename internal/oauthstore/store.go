@@ -412,7 +412,10 @@ func (s *Store) ListAuthorizationsForUser(ctx context.Context, userID uuid.UUID)
 		}
 		out = append(out, v)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return out, apperr.Internal(err)
+	}
+	return out, nil
 }
 
 // RevokeAuthorization deletes the consent row AND every live access token
