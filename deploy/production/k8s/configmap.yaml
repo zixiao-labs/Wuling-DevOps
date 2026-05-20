@@ -17,6 +17,10 @@ data:
   # edit add configmap ... --from-literal=WULING_HTTP_CORS_ORIGINS=...`) before
   # `kubectl apply`. Leaving the placeholder will block every real frontend.
   WULING_HTTP_CORS_ORIGINS: "https://CHANGE_ME.example.com"
+  # Absolute origin the OAuth provider advertises to clients (Esperanta etc.)
+  # — must be a real URL with scheme + host (no trailing slash). Override the
+  # same way as CORS_ORIGINS; default placeholder will fail config validation.
+  WULING_OAUTH_PUBLIC_BASE_URL: "https://CHANGE_ME.example.com"
   WULING_JWT_ISSUER: "wuling-devops"
   WULING_JWT_AUDIENCE: "wuling-devops"
   WULING_JWT_TTL: "24h"

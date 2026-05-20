@@ -20,6 +20,9 @@
 | `WULING_OAUTH_GITHUB_REDIRECT_URL` | _（空）_ | 必须与 GitHub OAuth App 上配置的 Callback URL **完全一致**（含协议、域名、路径）。范式：`https://<your-domain>/api/v1/auth/oauth/github/callback`。 |
 | `WULING_OAUTH_GITHUB_SCOPES` | `read:user,user:email` | 向 GitHub 申请的 scope。逗号分隔，提交到 GitHub 时会被转成空格。 |
 | `WULING_OAUTH_FRONTEND_BASE_URL` | `/` | 回调完成后浏览器要跳到的前端基准 URL。同域部署时 `/` 就够用；如果前后端跨域、或部署在子路径下，填完整 URL。 |
+| `WULING_OAUTH_HMAC_SECRET` | _（空）_ | **生产环境必填**。本机签发 OAuth token / auth-code 时用来计算 HMAC 的密钥（明文不入库，只存摘要）。生成：`openssl rand -hex 32`。轮换会让所有 provider 签发的活跃 session 立刻失效。 |
+| `WULING_OAUTH_PUBLIC_BASE_URL` | _（空）_ | **生产环境必填**。本服务对外的绝对 origin，写在 `/.well-known/wuling-clients` 与 `/authorize`、`/token` 的响应里。必须带 scheme + host，不要末尾斜杠，例如 `https://devops.example.com`。开发环境可以省略——handler 会从请求的 `Host` 头回退（在多 Host 反代后面不安全）。 |
+| `WULING_OAUTH_DESKTOP_CLIENT_ID` | `wuling-desktop` | 第一方桌面端 (Esperanta) 通过 well-known 发现的 client_id。改值意味着已发行的桌面端登录态全部失效，一般保持默认。 |
 
 所有变量都通过 `caarlos0/env/v11` 读取，遵循全局规则：**生产环境必须从外部环境注入，禁止写到 git 里**。
 
