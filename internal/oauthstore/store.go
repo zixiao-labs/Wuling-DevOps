@@ -862,16 +862,17 @@ func (s *Store) ApproveDeviceCode(ctx context.Context, userCode string, userID u
 	return nil
 }
 
-// DenyDeviceCode marks status denied.
-func (s *Store) DenyDeviceCode(ctx context.Context, userCode string) error {
-	_, err := s.pool.Exec(ctx, `
+// DenyDeviceCode marks status denied. Returns the number of rows affected.
+// Returns 0 if the device code was already decided or expired.
+func (s *Store) DenyDeviceCode(ctx context.Context, userCode string) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `
 		UPDATE oauth_device_codes SET status = 'denied'
-		WHERE user_code = $1 AND status = 'pending'
+		WHERE user_code = $1 AND status = 'pending' AND expires_at > now()
 	`, userCode)
 	if err != nil {
-		return apperr.Internal(err)
+		return 0, apperr.Internal(err)
 	}
-	return nil
+	return tag.RowsAffected(), nil
 }
 
 // TouchDevicePoll records a poll attempt; used for `slow_down` detection in
