@@ -74,7 +74,7 @@ func (h *Handler) deviceAuthorization(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	base := h.publicBaseURL(r)
+	frontendDeviceURL := h.absoluteFrontendURL(r, "/oauth/device")
 	resp := struct {
 		DeviceCode              string `json:"device_code"`
 		UserCode                string `json:"user_code"`
@@ -85,8 +85,8 @@ func (h *Handler) deviceAuthorization(w http.ResponseWriter, r *http.Request) {
 	}{
 		DeviceCode:              rawDevice,
 		UserCode:                userCodeDisplay,
-		VerificationURI:         base + h.frontendURL("/oauth/device"),
-		VerificationURIComplete: base + h.frontendURL("/oauth/device") + "?user_code=" + userCodeDisplay,
+		VerificationURI:         frontendDeviceURL,
+		VerificationURIComplete: frontendDeviceURL + "?user_code=" + userCodeDisplay,
 		ExpiresIn:               int(h.DeviceCodeTTL.Seconds()),
 		Interval:                int(h.DevicePollMin.Seconds()),
 	}

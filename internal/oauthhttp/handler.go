@@ -156,6 +156,22 @@ func (h *Handler) frontendURL(path string) string {
 	return base + path
 }
 
+// absoluteFrontendURL returns a fully-qualified URL for the given frontend
+// path. When FrontendBaseURL is already absolute (production), frontendURL
+// resolves to e.g. "https://wuling.example.com/oauth/device" and we return
+// it untouched. When it's the relative default "/", frontendURL returns a
+// path-only string and we prefix the API's public origin so the URL is
+// usable verbatim from a JSON payload (well-known doc, device flow response).
+// Without this distinction, callers that always prepended publicBaseURL
+// produced "https://x.comhttps://x.com/oauth/device" in absolute mode.
+func (h *Handler) absoluteFrontendURL(r *http.Request, path string) string {
+	resolved := h.frontendURL(path)
+	if strings.HasPrefix(resolved, "http://") || strings.HasPrefix(resolved, "https://") {
+		return resolved
+	}
+	return h.publicBaseURL(r) + resolved
+}
+
 // redirectWithErr writes a 302 back to redirect_uri with an OAuth-style error
 // fragment ("?error=...&error_description=...&state=..."). RFC 6749 §4.1.2.1.
 func redirectWithErr(w http.ResponseWriter, r *http.Request, redirectURI, state, code, desc string) {

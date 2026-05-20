@@ -126,6 +126,65 @@ func TestWellKnown(t *testing.T) {
 	assert.Equal(t, "wuling-desktop", doc["desktop_official_client_id"])
 	assert.Equal(t, "http://test/api/v1/oauth/token", doc["token_endpoint"])
 	assert.Equal(t, "http://test/api/v1/oauth/device_authorization", doc["device_authorization_endpoint"])
+	// With FrontendBaseURL="/" the device verification URI is relative to the
+	// API origin. Regression guard: we used to double-prefix publicBaseURL
+	// when FrontendBaseURL was absolute, producing "http://xhttp://x/...".
+	assert.Equal(t, "http://test/oauth/device", doc["frontend_device_verification_uri"])
+}
+
+// Regression for the device-flow / well-known URL doubling bug: when
+// FrontendBaseURL is set to an absolute URL (the recommended production
+// config), the verification URIs must equal the frontend base URL, not be
+// concatenated on top of the API's publicBaseURL.
+func TestWellKnown_AbsoluteFrontendBaseURL(t *testing.T) {
+	pool := dbtest.Open(t)
+	dbtest.Reset(t, pool)
+	users := userstore.New(pool)
+	store := oauthstore.New(pool)
+	hasher := auth.NewHMACHasher(hmacSecret)
+	issuer := auth.NewIssuer(config.JWTConfig{
+		Secret: "jwt-secret", Issuer: "test", Audience: "test-aud", TTL: time.Hour,
+	})
+	h := oauthhttp.New(oauthhttp.Handler{
+		OAuth: store, Users: users, Issuer: issuer, Hasher: hasher,
+		Cfg: config.OAuthConfig{
+			FrontendBaseURL:    "https://devops.example.com",
+			DesktopClientID:    "wuling-desktop",
+			ProviderHMACSecret: hmacSecret,
+			PublicBaseURL:      "https://devops.example.com",
+		},
+		DevicePollMin: 10 * time.Millisecond,
+	})
+	r := chi.NewRouter()
+	r.Route("/api/v1/oauth", func(or chi.Router) { h.Mount(or) })
+	r.Get("/.well-known/wuling-clients", h.WellKnownHandler())
+	seedFirstParty(t, store)
+
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/.well-known/wuling-clients", nil))
+	require.Equal(t, http.StatusOK, rr.Code)
+	var doc map[string]any
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&doc))
+	assert.Equal(t, "https://devops.example.com/oauth/device", doc["frontend_device_verification_uri"])
+
+	form := url.Values{}
+	form.Set("client_id", "wuling-desktop")
+	form.Set("scope", "user:read")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/oauth/device_authorization",
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr = httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
+	var dev struct {
+		VerificationURI         string `json:"verification_uri"`
+		VerificationURIComplete string `json:"verification_uri_complete"`
+		UserCode                string `json:"user_code"`
+	}
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&dev))
+	assert.Equal(t, "https://devops.example.com/oauth/device", dev.VerificationURI)
+	assert.Equal(t, "https://devops.example.com/oauth/device?user_code="+dev.UserCode,
+		dev.VerificationURIComplete)
 }
 
 // --- device flow happy path ---

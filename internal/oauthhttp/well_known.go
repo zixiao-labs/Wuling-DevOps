@@ -23,7 +23,7 @@ func (h *Handler) WellKnownHandler() http.HandlerFunc {
 			"token_endpoint":                  base + "/api/v1/oauth/token",
 			"device_authorization_endpoint":   base + "/api/v1/oauth/device_authorization",
 			"revocation_endpoint":             base + "/api/v1/oauth/revoke",
-			"frontend_device_verification_uri": base + h.frontendURL("/oauth/device"),
+			"frontend_device_verification_uri": h.absoluteFrontendURL(r, "/oauth/device"),
 			"scopes_supported":                SupportedScopes,
 			"response_types_supported":        []string{"code"},
 			"grant_types_supported": []string{
