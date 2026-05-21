@@ -26,6 +26,11 @@ type Handler struct {
 	Store    *userstore.Store
 	Issuer   *auth.Issuer
 	Verifier *auth.Verifier
+	// OAT resolves OAuth-provider access tokens (wloat_…) so /me can serve
+	// third-party OAuth clients (e.g. Esperanta) in addition to logged-in
+	// JWT sessions. Optional: when nil, /me only accepts JWTs and rejects
+	// OAuth bearers with the standard "not accepted" 401.
+	OAT auth.OATResolver
 	// Signup controls the approval-required workflow. The zero value mirrors
 	// the production default (RequireApproval=false), so older test wiring
 	// keeps working without explicit setup.
@@ -38,9 +43,17 @@ type Handler struct {
 func (h *Handler) Mount(r chi.Router) {
 	r.Post("/register", h.register)
 	r.Post("/login", h.login)
+	// /me is the "who am I" identity endpoint. OAuth bearers must reach it
+	// so a third-party client can resolve the user it just authorised
+	// against — without this, a successful device flow ends in 401 here.
+	r.Group(func(r chi.Router) {
+		r.Use(auth.MiddlewareBearer(auth.BearerResolver{JWT: h.Verifier, OAT: h.OAT}, false))
+		r.Get("/me", h.me)
+	})
+	// Token management stays JWT-only on purpose: a third-party OAuth bearer
+	// should not be able to enumerate, mint, or revoke the user's PATs.
 	r.Group(func(r chi.Router) {
 		r.Use(auth.Middleware(h.Verifier, false))
-		r.Get("/me", h.me)
 		r.Get("/tokens", h.listTokens)
 		r.Post("/tokens", h.createToken)
 		r.Delete("/tokens/{token_id}", h.deleteToken)

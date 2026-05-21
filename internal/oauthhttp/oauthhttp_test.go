@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/zixiao-labs/wuling-devops/internal/auth"
+	"github.com/zixiao-labs/wuling-devops/internal/authhttp"
 	"github.com/zixiao-labs/wuling-devops/internal/config"
 	"github.com/zixiao-labs/wuling-devops/internal/oauthhttp"
 	"github.com/zixiao-labs/wuling-devops/internal/oauthstore"
@@ -290,8 +291,6 @@ func TestResolveOAT(t *testing.T) {
 	assert.Equal(t, client.ID, id.ClientID)
 }
 
-// --- scope check ---
-
 func TestResolveOAT_RevokedTokenRejected(t *testing.T) {
 	h, _, users, store := setup(t)
 	client := seedFirstParty(t, store)
@@ -312,4 +311,52 @@ func TestResolveOAT_RevokedTokenRejected(t *testing.T) {
 
 	_, err = h.ResolveOAT(context.Background(), raw)
 	require.Error(t, err)
+}
+
+// Regression for the 401 Esperanta hit when calling /api/v1/auth/me with an
+// OAuth access token: the authhttp.Handler used to mount /me behind the
+// JWT-only middleware, which rejected wloat_… tokens. With the OAT resolver
+// wired in, the same call must succeed and return the user record.
+func TestAuthMe_AcceptsOATBearer(t *testing.T) {
+	h, _, users, store := setup(t)
+	client := seedFirstParty(t, store)
+	uid := makeUser(t, users)
+
+	hasher := auth.NewHMACHasher(hmacSecret)
+	raw, hash, err := auth.NewOAT(hasher)
+	require.NoError(t, err)
+	_, err = store.CreateAccessToken(context.Background(), oauthstore.CreateAccessTokenParams{
+		UserID: uid, ClientID: client.ID, TokenHash: hash,
+		Scopes:   []string{"user:read"},
+		TokenTTL: time.Hour,
+	})
+	require.NoError(t, err)
+
+	verifier := auth.NewVerifier(config.JWTConfig{
+		Secret: "jwt-secret", Issuer: "test", Audience: "test-aud", TTL: time.Hour,
+	})
+	authH := &authhttp.Handler{Store: users, Issuer: nil, Verifier: verifier, OAT: h}
+	r := chi.NewRouter()
+	r.Route("/api/v1/auth", func(sub chi.Router) { authH.Mount(sub) })
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	req.Header.Set("Authorization", "Bearer "+raw)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, "body=%s", rr.Body.String())
+
+	var got map[string]any
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&got))
+	assert.Equal(t, "alice", got["username"])
+
+	// Without an OAT resolver, the same bearer must still 401 — proves the
+	// wiring (not just any code path) is what makes /me accept OAuth tokens.
+	authNoOAT := &authhttp.Handler{Store: users, Verifier: verifier}
+	r2 := chi.NewRouter()
+	r2.Route("/api/v1/auth", func(sub chi.Router) { authNoOAT.Mount(sub) })
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	req.Header.Set("Authorization", "Bearer "+raw)
+	r2.ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusUnauthorized, rr.Code)
 }

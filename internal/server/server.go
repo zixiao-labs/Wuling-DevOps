@@ -118,6 +118,7 @@ func New(d Deps) http.Handler {
 		authSub := chiSubrouter(api, "/auth")
 		(&authhttp.Handler{
 			Store: d.Store, Issuer: issuer, Verifier: verifier,
+			OAT:    oauthH,
 			Signup: struct{ RequireApproval bool }{RequireApproval: d.Cfg.Signup.RequireApproval},
 		}).Mount(authSub)
 		(&authhttp.SSHKeyHandler{
