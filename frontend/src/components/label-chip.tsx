@@ -19,13 +19,16 @@ export function LabelChip({
   label,
   onClick,
   onRemove,
+  size = "md",
 }: {
   label: Label;
   onClick?: () => void;
   onRemove?: () => void;
+  size?: "sm" | "md";
 }) {
   const bg = normalizeHex(label.color);
   const fg = isLight(bg) ? "#1a1a1a" : "#fafafa";
+  const padding = size === "sm" ? "px-1.5 py-0 text-[10.5px]" : "px-2 py-px text-[11.5px]";
   return (
     <span
       onClick={onClick}
@@ -42,20 +45,15 @@ export function LabelChip({
       role={onClick ? "button" : undefined}
       tabIndex={onClick ? 0 : undefined}
       title={label.description || label.name}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: "0.25rem",
-        background: bg,
-        color: fg,
-        padding: "0.1rem 0.5rem",
-        borderRadius: "999px",
-        fontSize: "0.75rem",
-        cursor: onClick ? "pointer" : "default",
-        userSelect: "none",
-      }}
+      className={[
+        "inline-flex items-center gap-1 select-none rounded-full font-medium leading-none ring-1 ring-inset ring-black/10",
+        padding,
+        onClick ? "cursor-pointer hover:brightness-110" : "cursor-default",
+      ].join(" ")}
+      style={{ background: bg, color: fg }}
     >
-      {label.name}
+      <span aria-hidden className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: fg, opacity: 0.45 }} />
+      <span>{label.name}</span>
       {onRemove ? (
         <button
           type="button"
@@ -63,14 +61,8 @@ export function LabelChip({
             e.stopPropagation();
             onRemove();
           }}
-          style={{
-            border: "none",
-            background: "transparent",
-            color: fg,
-            cursor: "pointer",
-            padding: 0,
-            lineHeight: 1,
-          }}
+          className="ml-0.5 grid h-3.5 w-3.5 place-items-center rounded-full leading-none hover:bg-black/15"
+          style={{ color: fg }}
           aria-label={`Remove ${label.name}`}
         >
           ×

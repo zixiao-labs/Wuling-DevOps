@@ -39,11 +39,14 @@ export function RefPicker({
   }, [org, project, repo]);
 
   if (error) {
-    return <span style={{ color: "var(--danger)", fontSize: "0.85rem" }}>refs 加载失败</span>;
+    return <span className="text-[12px] text-[var(--danger)]">refs 加载失败</span>;
   }
   if (!refs) {
     return (
-      <select disabled style={{ padding: "0.25rem 0.5rem" }}>
+      <select
+        disabled
+        className="h-7 rounded-sm border border-[var(--border)] bg-[var(--surface-secondary)] px-2 text-[12px] text-muted"
+      >
         <option>加载中…</option>
       </select>
     );
@@ -53,28 +56,12 @@ export function RefPicker({
   const tags = refs.filter((r) => r.is_tag);
 
   return (
-    <label
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: "0.4rem",
-        background: "var(--field-background)",
-        border: "1px solid var(--border)",
-        borderRadius: "var(--field-radius)",
-        padding: "0.2rem 0.5rem",
-      }}
-    >
-      <BranchesIcon width={16} height={16} />
+    <label className="inline-flex h-7 items-center gap-1.5 rounded-sm border border-[var(--border)] bg-[var(--field-background)] px-2 text-[12px]">
+      <BranchesIcon width={13} height={13} className="opacity-70" />
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        style={{
-          border: "none",
-          background: "transparent",
-          color: "var(--field-foreground)",
-          outline: "none",
-          minWidth: "8rem",
-        }}
+        className="min-w-[8rem] border-none bg-transparent text-[var(--field-foreground)] outline-none"
       >
         {branches.length > 0 ? (
           <optgroup label="branches">

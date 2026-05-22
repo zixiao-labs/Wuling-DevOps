@@ -2,8 +2,7 @@
  * Side-by-side unified-diff renderer. Accepts the `patch` string from
  * MRDiffEntry (a single file's unified diff including @@ hunk headers).
  *
- * No syntax highlighting — just colored gutters per line. About 100 lines on
- * purpose: pulls in zero deps and behaves predictably for big diffs.
+ * No syntax highlighting — just coloured gutters per line.
  */
 
 import { useMemo } from "react";
@@ -44,12 +43,12 @@ function parsePatch(patch: string): DiffLine[] {
   return out;
 }
 
-const STYLES: Record<DiffLine["kind"], React.CSSProperties> = {
-  context: { background: "transparent" },
-  add: { background: "color-mix(in oklab, var(--success) 12%, var(--surface))" },
-  del: { background: "color-mix(in oklab, var(--danger) 12%, var(--surface))" },
-  hunk: { background: "var(--surface-secondary)", color: "var(--muted)" },
-  meta: { color: "var(--muted)" },
+const LINE_BG: Record<DiffLine["kind"], string> = {
+  context: "",
+  add:    "bg-[color-mix(in_oklch,var(--success)_14%,transparent)]",
+  del:    "bg-[color-mix(in_oklch,var(--danger)_14%,transparent)]",
+  hunk:   "bg-[var(--surface-secondary)] text-muted",
+  meta:   "text-muted",
 };
 
 const MARK: Record<DiffLine["kind"], string> = {
@@ -63,36 +62,19 @@ const MARK: Record<DiffLine["kind"], string> = {
 export function DiffView({ patch }: { patch: string }) {
   const lines = useMemo(() => parsePatch(patch ?? ""), [patch]);
   if (lines.length === 0) {
-    return <div style={{ color: "var(--muted)", padding: "0.5rem" }}>（无差异）</div>;
+    return <div className="px-3 py-2 text-[12px] text-muted">（无差异）</div>;
   }
   return (
-    <div
-      style={{
-        fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-        fontSize: "0.8rem",
-        border: "1px solid var(--border)",
-        borderRadius: "var(--radius)",
-        overflow: "auto",
-        background: "var(--surface)",
-      }}
-    >
+    <div className="overflow-auto rounded-md border border-[var(--border)] bg-[var(--surface)] font-mono text-[12px] leading-[1.55]">
       {lines.map((l, i) => (
         <div
           key={i}
-          style={{
-            display: "grid",
-            gridTemplateColumns: "3rem 3rem 1.25rem 1fr",
-            ...STYLES[l.kind],
-          }}
+          className={["grid grid-cols-[3rem_3rem_1.25rem_1fr]", LINE_BG[l.kind]].join(" ")}
         >
-          <span style={{ color: "var(--muted)", textAlign: "right", padding: "0 0.4rem" }}>
-            {l.oldNo ?? ""}
-          </span>
-          <span style={{ color: "var(--muted)", textAlign: "right", padding: "0 0.4rem" }}>
-            {l.newNo ?? ""}
-          </span>
-          <span style={{ color: "var(--muted)", textAlign: "center" }}>{MARK[l.kind]}</span>
-          <span style={{ whiteSpace: "pre-wrap", padding: "0 0.4rem" }}>{l.text}</span>
+          <span className="px-1.5 text-right tabular-nums text-muted/80">{l.oldNo ?? ""}</span>
+          <span className="px-1.5 text-right tabular-nums text-muted/80">{l.newNo ?? ""}</span>
+          <span className="text-center text-muted/80">{MARK[l.kind]}</span>
+          <span className="whitespace-pre-wrap break-all px-1.5">{l.text}</span>
         </div>
       ))}
     </div>

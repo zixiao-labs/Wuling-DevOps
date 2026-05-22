@@ -1,10 +1,8 @@
 import {
   Button,
-  Card,
   Description,
   Input,
   Label,
-  Table,
   TextArea,
   TextField,
 } from "@heroui/react";
@@ -13,9 +11,17 @@ import { useEffect, useState } from "react";
 
 import { sshKeys as keysApi } from "@/api/endpoints";
 import { ApiError } from "@/api/errors";
+import { EmptyState } from "@/components/empty-state";
 import { ErrorBanner } from "@/components/error-banner";
 import { Loading } from "@/components/loading";
 import { RelativeTime } from "@/components/relative-time";
+import {
+  PageContainer,
+  PageHeader,
+  Surface,
+  SurfaceBody,
+  SurfaceHeader,
+} from "@/components/page/primitives";
 import type { SSHKey } from "@/api/types";
 
 export default function SshKeysPage() {
@@ -72,95 +78,89 @@ export default function SshKeysPage() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-      <Card>
-        <Card.Header>
-          <Card.Title>SSH 公钥</Card.Title>
-          <Card.Description>
-            注册公钥后即可用 <code>ssh://git@&lt;host&gt;:2222/&lt;org&gt;/&lt;project&gt;/&lt;repo&gt;.git</code> 推/拉。
-          </Card.Description>
-        </Card.Header>
-        <Card.Content>
-          <form onSubmit={onCreate} style={{ display: "flex", flexDirection: "column", gap: "0.9rem" }}>
+    <PageContainer>
+      <PageHeader
+        title="SSH 公钥"
+        description={
+          <>
+            注册公钥后即可用{" "}
+            <code className="font-mono">ssh://git@&lt;host&gt;:2222/&lt;org&gt;/&lt;project&gt;/&lt;repo&gt;.git</code>{" "}
+            推/拉。
+          </>
+        }
+      />
+
+      <Surface className="mb-4">
+        <SurfaceHeader title="添加新公钥" />
+        <SurfaceBody>
+          <form onSubmit={onCreate} className="flex flex-col gap-3.5">
             <TextField name="title" value={title} onChange={setTitle} isRequired>
               <Label>标题</Label>
               <Input placeholder="laptop / ci-runner / …" />
             </TextField>
             <TextField name="public_key" value={publicKey} onChange={setPublicKey} isRequired>
               <Label>公钥</Label>
-              <TextArea
-                rows={4}
-                placeholder="ssh-ed25519 AAAA…"
-                style={{
-                  fontFamily: "ui-monospace, monospace",
-                  fontSize: "0.85rem",
-                }}
-              />
+              <TextArea rows={4} placeholder="ssh-ed25519 AAAA…" className="font-mono text-[12.5px]" />
               <Description>
-                粘贴 <code>~/.ssh/id_*.pub</code> 全部内容。支持 ssh-rsa / ssh-ed25519 / ecdsa-sha2-*。
+                粘贴 <code className="font-mono">~/.ssh/id_*.pub</code> 全部内容。支持
+                ssh-rsa / ssh-ed25519 / ecdsa-sha2-*。
               </Description>
             </TextField>
             <ErrorBanner error={error} />
-            <div>
+            <div className="flex justify-end">
               <Button type="submit" isDisabled={creating || !title || !publicKey}>
                 {creating ? "添加中…" : "添加公钥"}
               </Button>
             </div>
           </form>
-        </Card.Content>
-      </Card>
+        </SurfaceBody>
+      </Surface>
 
-      {items === null ? (
-        <Loading />
-      ) : items.length === 0 ? (
-        <Card>
-          <Card.Content>
-            <div style={{ color: "var(--muted)", padding: "1rem 0" }}>还没有公钥。</div>
-          </Card.Content>
-        </Card>
-      ) : (
-        <Card>
-          <Card.Header>
-            <Card.Title>已注册公钥</Card.Title>
-          </Card.Header>
-          <Card.Content>
-            <Table>
-              <Table.ScrollContainer>
-                <Table.Content aria-label="SSH 公钥">
-                  <Table.Header>
-                    <Table.Column isRowHeader>标题</Table.Column>
-                    <Table.Column>指纹</Table.Column>
-                    <Table.Column>添加</Table.Column>
-                    <Table.Column>最近使用</Table.Column>
-                    <Table.Column>操作</Table.Column>
-                  </Table.Header>
-                  <Table.Body>
-                    {items.map((k) => (
-                      <Table.Row key={k.id}>
-                        <Table.Cell>{k.title}</Table.Cell>
-                        <Table.Cell>
-                          <code style={{ fontSize: "0.75rem" }}>{k.fingerprint}</code>
-                        </Table.Cell>
-                        <Table.Cell>
-                          <RelativeTime iso={k.created_at} />
-                        </Table.Cell>
-                        <Table.Cell>
-                          {k.last_used_at ? <RelativeTime iso={k.last_used_at} /> : "—"}
-                        </Table.Cell>
-                        <Table.Cell>
-                          <Button variant="danger-soft" size="sm" onPress={() => onRevoke(k.id)}>
-                            <TrashIcon width={14} height={14} /> 吊销
-                          </Button>
-                        </Table.Cell>
-                      </Table.Row>
-                    ))}
-                  </Table.Body>
-                </Table.Content>
-              </Table.ScrollContainer>
-            </Table>
-          </Card.Content>
-        </Card>
-      )}
-    </div>
+      <Surface>
+        <SurfaceHeader dense>
+          <span className="text-[12px] font-medium text-fg">
+            已注册公钥{items ? ` · ${items.length}` : ""}
+          </span>
+        </SurfaceHeader>
+        <SurfaceBody noPad>
+          {items === null ? (
+            <Loading />
+          ) : items.length === 0 ? (
+            <EmptyState inset title="还没有公钥" description="添加一把公钥就能用 SSH 推/拉了。" />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-[13px]">
+                <thead>
+                  <tr className="border-b border-[var(--separator)] bg-[var(--surface-secondary)]/40 text-left">
+                    <th className="px-4 py-2 text-[11.5px] uppercase tracking-wider text-muted">标题</th>
+                    <th className="px-4 py-2 text-[11.5px] uppercase tracking-wider text-muted">指纹</th>
+                    <th className="px-4 py-2 text-[11.5px] uppercase tracking-wider text-muted">添加</th>
+                    <th className="px-4 py-2 text-[11.5px] uppercase tracking-wider text-muted">最近使用</th>
+                    <th className="px-4 py-2"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((k) => (
+                    <tr key={k.id} className="border-b border-[var(--separator)] last:border-0">
+                      <td className="px-4 py-2 font-medium text-fg">{k.title}</td>
+                      <td className="px-4 py-2"><code className="font-mono text-[11px] text-muted">{k.fingerprint}</code></td>
+                      <td className="px-4 py-2 text-[11.5px] text-muted"><RelativeTime iso={k.created_at} /></td>
+                      <td className="px-4 py-2 text-[11.5px] text-muted">
+                        {k.last_used_at ? <RelativeTime iso={k.last_used_at} /> : "—"}
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        <Button variant="danger-soft" size="sm" onPress={() => onRevoke(k.id)}>
+                          <TrashIcon width={13} height={13} /> 吊销
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </SurfaceBody>
+      </Surface>
+    </PageContainer>
   );
 }

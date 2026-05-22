@@ -1,11 +1,9 @@
 import {
   Button,
-  Card,
   Description,
   Input,
   Label,
   Modal,
-  Table,
   TextField,
 } from "@heroui/react";
 import CopyIcon from "@gravity-ui/icons/Copy";
@@ -14,9 +12,18 @@ import { useEffect, useRef, useState } from "react";
 
 import { tokens as patApi } from "@/api/endpoints";
 import { ApiError } from "@/api/errors";
+import { EmptyState } from "@/components/empty-state";
 import { ErrorBanner } from "@/components/error-banner";
 import { Loading } from "@/components/loading";
 import { RelativeTime } from "@/components/relative-time";
+import {
+  PageContainer,
+  PageHeader,
+  Surface,
+  SurfaceBody,
+  SurfaceHeader,
+} from "@/components/page/primitives";
+import { Pill } from "@/components/page/badges";
 import type { AccessTokenView, PatScope } from "@/api/types";
 
 const SCOPES: PatScope[] = ["repo:read", "repo:write"];
@@ -31,8 +38,6 @@ export default function TokensPage() {
   const [created, setCreated] = useState<AccessTokenView | null>(null);
   const [copied, setCopied] = useState(false);
 
-  // Component-scoped controller so refreshes triggered by onCreate/onRevoke
-  // can also be aborted when the component unmounts.
   const loadController = useRef<AbortController | null>(null);
   const copyResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -93,116 +98,120 @@ export default function TokensPage() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-      <Card>
-        <Card.Header>
-          <Card.Title>访问令牌（PAT）</Card.Title>
-          <Card.Description>
-            创建后<strong>原始令牌只显示一次</strong>。CLI 推/拉时填到密码栏（用户名随意）。
-          </Card.Description>
-        </Card.Header>
-        <Card.Content>
-          <form
-            onSubmit={onCreate}
-            style={{ display: "flex", flexDirection: "column", gap: "0.9rem" }}
-          >
+    <PageContainer>
+      <PageHeader
+        title="访问令牌（PAT）"
+        description={
+          <>
+            创建后<strong>原始令牌只显示一次</strong>。
+            CLI 推/拉时填到密码栏（用户名随意）。
+          </>
+        }
+      />
+
+      <Surface className="mb-4">
+        <SurfaceHeader title="创建新令牌" />
+        <SurfaceBody>
+          <form onSubmit={onCreate} className="flex flex-col gap-3.5">
             <TextField name="name" value={name} onChange={setName} isRequired>
               <Label>名称</Label>
               <Input placeholder="laptop / ci-runner / …" />
               <Description>仅自己看，长度不超过 64。</Description>
             </TextField>
             <div>
-              <div style={{ fontSize: "0.85rem", marginBottom: "0.4rem" }}>范围</div>
-              <div style={{ display: "flex", gap: "0.5rem" }}>
-                {SCOPES.map((s) => (
-                  <label
-                    key={s}
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "0.3rem",
-                      padding: "0.25rem 0.6rem",
-                      border: "1px solid var(--border)",
-                      borderRadius: "var(--field-radius)",
-                      cursor: "pointer",
-                      background: scopes.includes(s) ? "var(--surface-secondary)" : "var(--surface)",
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={scopes.includes(s)}
-                      onChange={(e) =>
-                        setScopes((cur) =>
-                          e.target.checked ? [...cur, s] : cur.filter((x) => x !== s),
-                        )
-                      }
-                    />
-                    <code>{s}</code>
-                  </label>
-                ))}
+              <div className="mb-1.5 text-[12.5px] font-medium text-fg">范围（scope）</div>
+              <div className="flex flex-wrap gap-2">
+                {SCOPES.map((s) => {
+                  const selected = scopes.includes(s);
+                  return (
+                    <label
+                      key={s}
+                      className={[
+                        "inline-flex cursor-pointer items-center gap-2 rounded-md border px-3 py-1.5 transition-colors",
+                        selected
+                          ? "border-[var(--accent)] bg-[var(--surface-secondary)]"
+                          : "border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-secondary)]",
+                      ].join(" ")}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        onChange={(e) =>
+                          setScopes((cur) =>
+                            e.target.checked ? [...cur, s] : cur.filter((x) => x !== s),
+                          )
+                        }
+                        className="accent-[var(--accent)]"
+                      />
+                      <code className="font-mono text-[12.5px]">{s}</code>
+                    </label>
+                  );
+                })}
               </div>
             </div>
             <ErrorBanner error={error} />
-            <div>
+            <div className="flex justify-end">
               <Button type="submit" isDisabled={creating || !name || scopes.length === 0}>
                 {creating ? "创建中…" : "创建令牌"}
               </Button>
             </div>
           </form>
-        </Card.Content>
-      </Card>
+        </SurfaceBody>
+      </Surface>
 
-      {items === null ? (
-        <Loading />
-      ) : items.length === 0 ? (
-        <Card>
-          <Card.Content>
-            <div style={{ color: "var(--muted)", padding: "1rem 0" }}>还没有令牌。</div>
-          </Card.Content>
-        </Card>
-      ) : (
-        <Card>
-          <Card.Header>
-            <Card.Title>现有令牌</Card.Title>
-          </Card.Header>
-          <Card.Content>
-            <Table>
-              <Table.ScrollContainer>
-                <Table.Content aria-label="访问令牌">
-                  <Table.Header>
-                    <Table.Column isRowHeader>名称</Table.Column>
-                    <Table.Column>范围</Table.Column>
-                    <Table.Column>创建</Table.Column>
-                    <Table.Column>到期</Table.Column>
-                    <Table.Column>操作</Table.Column>
-                  </Table.Header>
-                  <Table.Body>
-                    {items.map((it) => (
-                      <Table.Row key={it.id}>
-                        <Table.Cell>{it.name}</Table.Cell>
-                        <Table.Cell>
-                          <code style={{ fontSize: "0.8rem" }}>{it.scopes.join(", ") || "—"}</code>
-                        </Table.Cell>
-                        <Table.Cell>
-                          <RelativeTime iso={it.created_at} />
-                        </Table.Cell>
-                        <Table.Cell>
-                          {it.expires_at ? <RelativeTime iso={it.expires_at} /> : "永久"}
-                        </Table.Cell>
-                        <Table.Cell>
-                          <Button variant="danger-soft" size="sm" onPress={() => onRevoke(it.id)}>
-                            <TrashIcon width={14} height={14} /> 吊销
-                          </Button>
-                        </Table.Cell>
-                      </Table.Row>
-                    ))}
-                  </Table.Body>
-                </Table.Content>
-              </Table.ScrollContainer>
-            </Table>
-          </Card.Content>
-        </Card>
-      )}
+      <Surface>
+        <SurfaceHeader dense>
+          <span className="text-[12px] font-medium text-fg">
+            现有令牌{items ? ` · ${items.length}` : ""}
+          </span>
+        </SurfaceHeader>
+        <SurfaceBody noPad>
+          {items === null ? (
+            <Loading />
+          ) : items.length === 0 ? (
+            <EmptyState inset title="还没有令牌" description="创建一个 PAT 让 CLI 可以推/拉。" />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-[13px]">
+                <thead>
+                  <tr className="border-b border-[var(--separator)] bg-[var(--surface-secondary)]/40 text-left">
+                    <th className="px-4 py-2 text-[11.5px] uppercase tracking-wider text-muted">名称</th>
+                    <th className="px-4 py-2 text-[11.5px] uppercase tracking-wider text-muted">范围</th>
+                    <th className="px-4 py-2 text-[11.5px] uppercase tracking-wider text-muted">创建</th>
+                    <th className="px-4 py-2 text-[11.5px] uppercase tracking-wider text-muted">到期</th>
+                    <th className="px-4 py-2"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((it) => (
+                    <tr key={it.id} className="border-b border-[var(--separator)] last:border-0">
+                      <td className="px-4 py-2 font-medium text-fg">{it.name}</td>
+                      <td className="px-4 py-2">
+                        <span className="flex flex-wrap gap-1">
+                          {it.scopes.map((s) => (
+                            <Pill key={s} tone="neutral">{s}</Pill>
+                          ))}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 text-[11.5px] text-muted">
+                        <RelativeTime iso={it.created_at} />
+                      </td>
+                      <td className="px-4 py-2 text-[11.5px] text-muted">
+                        {it.expires_at ? <RelativeTime iso={it.expires_at} /> : "永久"}
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        <Button variant="danger-soft" size="sm" onPress={() => onRevoke(it.id)}>
+                          <TrashIcon width={13} height={13} /> 吊销
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </SurfaceBody>
+      </Surface>
 
       <Modal>
         <Modal.Backdrop isOpen={created !== null} onOpenChange={(o) => !o && setCreated(null)}>
@@ -212,26 +221,17 @@ export default function TokensPage() {
                 <Modal.Heading>令牌已创建</Modal.Heading>
               </Modal.Header>
               <Modal.Body>
-                <p>
-                  <strong>这是你最后一次看到原始令牌。</strong>关闭窗口后将无法再次获取，只能吊销重建。
+                <p className="mb-3 text-[13px] text-fg">
+                  <strong>这是你最后一次看到原始令牌。</strong>
+                  关闭窗口后将无法再次获取，只能吊销重建。
                 </p>
-                <pre
-                  style={{
-                    background: "var(--surface-secondary)",
-                    padding: "0.75rem",
-                    borderRadius: "var(--radius)",
-                    overflowX: "auto",
-                    fontFamily: "ui-monospace, monospace",
-                    fontSize: "0.85rem",
-                    userSelect: "all",
-                  }}
-                >
+                <pre className="m-0 overflow-x-auto rounded-md border border-[var(--border)] bg-[var(--surface-secondary)] p-3 font-mono text-[12.5px] text-fg select-all">
                   {created?.token}
                 </pre>
               </Modal.Body>
               <Modal.Footer>
                 <Button
-                  variant="secondary"
+                  variant="outline"
                   onPress={async () => {
                     if (!created?.token) return;
                     if (!navigator.clipboard) {
@@ -248,7 +248,7 @@ export default function TokensPage() {
                     }
                   }}
                 >
-                  <CopyIcon width={16} height={16} /> {copied ? "已复制" : "复制"}
+                  <CopyIcon width={14} height={14} /> {copied ? "已复制" : "复制"}
                 </Button>
                 <Button onPress={() => setCreated(null)}>关闭</Button>
               </Modal.Footer>
@@ -256,6 +256,6 @@ export default function TokensPage() {
           </Modal.Container>
         </Modal.Backdrop>
       </Modal>
-    </div>
+    </PageContainer>
   );
 }

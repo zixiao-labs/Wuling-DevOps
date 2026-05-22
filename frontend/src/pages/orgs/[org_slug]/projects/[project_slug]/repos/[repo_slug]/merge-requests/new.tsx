@@ -1,11 +1,19 @@
-import { Button, Card, Description, Input, Label, TextArea, TextField } from "@heroui/react";
+import { Button, Description, Input, Label, TextArea, TextField } from "@heroui/react";
 import { useNavigate, useParams } from "chen-the-dawnstreak";
 import { useEffect, useState } from "react";
+
+import BranchesRight from "@gravity-ui/icons/BranchesRight";
 
 import { mergeRequests as mrApi, repos as reposApi } from "@/api/endpoints";
 import { ApiError } from "@/api/errors";
 import { ErrorBanner } from "@/components/error-banner";
 import { Loading } from "@/components/loading";
+import {
+  PageContainer,
+  PageHeader,
+  Surface,
+  SurfaceBody,
+} from "@/components/page/primitives";
 import { useOrgCtx, useProjectCtx } from "@/auth/org-context";
 import type { GitRef } from "@/api/types";
 
@@ -61,37 +69,50 @@ export default function NewMRPage() {
   }
 
   if (refs === null) return <Loading />;
+  const sameBranch = !!sourceRef && sourceRef === targetRef;
 
   return (
-    <Card style={{ maxWidth: 720 }}>
-      <Card.Header>
-        <Card.Title>新建合并请求</Card.Title>
-        <Card.Description>把 source 分支的提交合并到 target 分支。</Card.Description>
-      </Card.Header>
-      <Card.Content>
-        <form onSubmit={onSubmit} style={{ display: "flex", flexDirection: "column", gap: "0.9rem" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.9rem" }}>
-            <BranchField label="Source（合入源）" value={sourceRef} onChange={setSourceRef} refs={refs} />
-            <BranchField label="Target（合入目标）" value={targetRef} onChange={setTargetRef} refs={refs} />
-          </div>
-          <TextField name="title" value={title} onChange={setTitle} isRequired>
-            <Label>标题</Label>
-            <Input />
-          </TextField>
-          <TextField name="body" value={body} onChange={setBody}>
-            <Label>描述</Label>
-            <TextArea rows={6} placeholder="简述这个 MR 想解决什么问题…" />
-            <Description>支持简易 Markdown。</Description>
-          </TextField>
-          <ErrorBanner error={error} />
-          <div>
-            <Button type="submit" isDisabled={creating || !title || !sourceRef || !targetRef || sourceRef === targetRef}>
-              {creating ? "提交中…" : "提交 MR"}
-            </Button>
-          </div>
-        </form>
-      </Card.Content>
-    </Card>
+    <PageContainer>
+      <PageHeader title="新建合并请求" description="把 source 分支的提交合并到 target 分支。" />
+      <div className="max-w-[760px]">
+        <Surface>
+          <SurfaceBody>
+            <form onSubmit={onSubmit} className="flex flex-col gap-4">
+              <div className="grid items-end gap-4 sm:grid-cols-[1fr_auto_1fr]">
+                <BranchField label="Source · 合入源" value={sourceRef} onChange={setSourceRef} refs={refs} />
+                <div className="grid h-8 w-8 place-items-center self-end justify-self-center text-muted">
+                  <BranchesRight width={16} height={16} />
+                </div>
+                <BranchField label="Target · 合入目标" value={targetRef} onChange={setTargetRef} refs={refs} />
+              </div>
+              {sameBranch ? (
+                <div className="rounded-md border border-[var(--warning)]/40 bg-[color-mix(in_oklch,var(--warning)_10%,transparent)] px-3 py-2 text-[12.5px] text-[var(--warning)]">
+                  ⚠ Source 和 Target 不能是同一个分支。
+                </div>
+              ) : null}
+              <TextField name="title" value={title} onChange={setTitle} isRequired>
+                <Label>标题</Label>
+                <Input placeholder={sourceRef && targetRef ? `Merge ${sourceRef} into ${targetRef}` : "MR 标题"} />
+              </TextField>
+              <TextField name="body" value={body} onChange={setBody}>
+                <Label>描述</Label>
+                <TextArea rows={8} placeholder="简述这个 MR 想解决什么问题…" />
+                <Description>支持简易 Markdown。</Description>
+              </TextField>
+              <ErrorBanner error={error} />
+              <div className="flex justify-end">
+                <Button
+                  type="submit"
+                  isDisabled={creating || !title || !sourceRef || !targetRef || sameBranch}
+                >
+                  {creating ? "提交中…" : "提交 MR"}
+                </Button>
+              </div>
+            </form>
+          </SurfaceBody>
+        </Surface>
+      </div>
+    </PageContainer>
   );
 }
 
@@ -107,18 +128,12 @@ function BranchField({
   refs: GitRef[];
 }) {
   return (
-    <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-      <span style={{ fontSize: "0.85rem" }}>{label}</span>
+    <label className="flex flex-col gap-1.5">
+      <span className="text-[12.5px] font-medium text-fg">{label}</span>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        style={{
-          padding: "0.4rem 0.5rem",
-          background: "var(--field-background)",
-          color: "var(--field-foreground)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--field-radius)",
-        }}
+        className="h-9 rounded-md border border-[var(--border)] bg-[var(--field-background)] px-2.5 font-mono text-[13px] text-[var(--field-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--focus)]"
       >
         {refs.map((r) => (
           <option key={r.name} value={strip(r.name)}>

@@ -26,18 +26,13 @@ export function UserAvatar({
   return (
     <span
       title={user?.username}
+      className="inline-flex shrink-0 items-center justify-center rounded-full font-semibold text-[#1a1a1a] ring-1 ring-black/5"
       style={{
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
         width: size,
         height: size,
-        borderRadius: "50%",
-        background: `oklch(70% 0.12 ${h})`,
-        color: "#1a1a1a",
-        fontWeight: 600,
-        fontSize: `${size * 0.4}px`,
-        flex: "0 0 auto",
+        background: `oklch(74% 0.11 ${h})`,
+        fontSize: `${Math.max(9, size * 0.4)}px`,
+        letterSpacing: "0.02em",
       }}
     >
       {initials(name)}

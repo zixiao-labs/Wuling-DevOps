@@ -1,4 +1,4 @@
-import { Button, Card, Description, FieldError, Input, Label, TextField } from "@heroui/react";
+import { Button, Description, FieldError, Input, Label, TextField } from "@heroui/react";
 import { Link, useNavigate, useLocation } from "chen-the-dawnstreak";
 import { useState } from "react";
 
@@ -46,69 +46,54 @@ function LoginForm() {
   }
 
   function startGithubLogin() {
-    // Top-level navigation — the redirect dance must run in the document,
-    // not inside fetch (the browser has to follow GitHub's 302 back to us).
     window.location.assign(githubOAuth.startURL(from));
   }
 
   return (
-    <div style={{ maxWidth: 420, margin: "3rem auto" }}>
-      <Card>
-        <Card.Header>
-          <Card.Title>登录到武陵 DevOps</Card.Title>
-          <Card.Description>使用用户名或邮箱与密码登录，或者通过 GitHub 登录。</Card.Description>
-        </Card.Header>
-        <Card.Content>
-          <form
-            onSubmit={onSubmit}
-            style={{ display: "flex", flexDirection: "column", gap: "0.9rem" }}
-          >
-            <TextField name="login" value={login} onChange={setLogin} isRequired autoComplete="username">
-              <Label>用户名或邮箱</Label>
-              <Input placeholder="amiya" />
-            </TextField>
-            <TextField
-              name="password"
-              type="password"
-              value={password}
-              onChange={setPassword}
-              isRequired
-              autoComplete="current-password"
-            >
-              <Label>密码</Label>
-              <Input placeholder="••••••••" />
-              <Description>至少 8 个字符。</Description>
-              <FieldError />
-            </TextField>
-            <ErrorBanner error={error} />
-            <Button type="submit" isDisabled={busy}>
-              {busy ? "登录中…" : "登录"}
-            </Button>
-          </form>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "0.6rem",
-              margin: "1rem 0 0.6rem",
-              color: "var(--muted)",
-              fontSize: "0.75rem",
-            }}
-          >
-            <span style={{ flex: 1, height: 1, background: "var(--border)" }} />
-            或
-            <span style={{ flex: 1, height: 1, background: "var(--border)" }} />
-          </div>
-          <Button variant="outline" onPress={startGithubLogin} isDisabled={busy} style={{ width: "100%" }}>
-            使用 GitHub 登录
-          </Button>
-        </Card.Content>
-        <Card.Footer>
-          <span style={{ color: "var(--muted)", fontSize: "0.85rem" }}>
-            还没账号？<Link to="/register" style={{ color: "var(--accent)" }}>立即注册</Link>
-          </span>
-        </Card.Footer>
-      </Card>
+    <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-6 shadow-md">
+      <div className="mb-5">
+        <h1 className="m-0 text-[20px] font-semibold leading-tight text-fg">登录到武陵 DevOps</h1>
+        <p className="mt-1 text-[12.5px] text-muted">
+          使用用户名或邮箱与密码登录，或者通过 GitHub 登录。
+        </p>
+      </div>
+      <form onSubmit={onSubmit} className="flex flex-col gap-3.5">
+        <TextField name="login" value={login} onChange={setLogin} isRequired autoComplete="username">
+          <Label>用户名或邮箱</Label>
+          <Input placeholder="amiya" />
+        </TextField>
+        <TextField
+          name="password"
+          type="password"
+          value={password}
+          onChange={setPassword}
+          isRequired
+          autoComplete="current-password"
+        >
+          <Label>密码</Label>
+          <Input placeholder="••••••••" />
+          <Description>至少 8 个字符。</Description>
+          <FieldError />
+        </TextField>
+        <ErrorBanner error={error} />
+        <Button type="submit" isDisabled={busy}>
+          {busy ? "登录中…" : "登录"}
+        </Button>
+      </form>
+      <div className="my-4 flex items-center gap-3 text-[11px] text-muted">
+        <span className="h-px flex-1 bg-[var(--border)]" />
+        或
+        <span className="h-px flex-1 bg-[var(--border)]" />
+      </div>
+      <Button variant="outline" onPress={startGithubLogin} isDisabled={busy} className="w-full">
+        使用 GitHub 登录
+      </Button>
+      <div className="mt-5 border-t border-[var(--separator)] pt-3 text-center text-[12px] text-muted">
+        还没账号？
+        <Link to="/register" className="ml-1 font-medium text-[var(--accent)] hover:underline">
+          立即注册
+        </Link>
+      </div>
     </div>
   );
 }

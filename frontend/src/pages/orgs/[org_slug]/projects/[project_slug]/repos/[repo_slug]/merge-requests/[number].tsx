@@ -1,6 +1,8 @@
-import { Button, Card, Input, Label, Tabs, TextArea, TextField } from "@heroui/react";
+import { Button, Input, Label, TextArea, TextField } from "@heroui/react";
 import { useParams } from "chen-the-dawnstreak";
 import { useEffect, useState } from "react";
+
+import BranchesRight from "@gravity-ui/icons/BranchesRight";
 
 import { mergeRequests as mrApi } from "@/api/endpoints";
 import { ApiError } from "@/api/errors";
@@ -10,6 +12,14 @@ import { Loading } from "@/components/loading";
 import { Markdown } from "@/components/markdown";
 import { RelativeTime } from "@/components/relative-time";
 import { UserAvatar } from "@/components/user-avatar";
+import {
+  PageContainer,
+  PageHeader,
+  Surface,
+  SurfaceBody,
+  SurfaceHeader,
+} from "@/components/page/primitives";
+import { Pill, StateBadge } from "@/components/page/badges";
 import { useOrgCtx, useProjectCtx } from "@/auth/org-context";
 import type {
   Commit,
@@ -20,6 +30,8 @@ import type {
   MergeStrategy,
   ReviewState,
 } from "@/api/types";
+
+type Tab = "commits" | "files" | "comments" | "reviews";
 
 export default function MRDetailPage() {
   const org = useOrgCtx();
@@ -41,6 +53,7 @@ export default function MRDetailPage() {
   const [mergeMessage, setMergeMessage] = useState("");
   const [mergeError, setMergeError] = useState<ApiError | null>(null);
   const [busy, setBusy] = useState(false);
+  const [tab, setTab] = useState<Tab>("commits");
 
   function refresh() {
     if (!Number.isFinite(number)) return;
@@ -64,7 +77,7 @@ export default function MRDetailPage() {
 
   useEffect(refresh, [org.slug, project.slug, repoSlug, number]);
 
-  if (error) return <ErrorBanner error={error} />;
+  if (error) return <PageContainer><ErrorBanner error={error} /></PageContainer>;
   if (!mr || !commits || !diff || !comments || !reviews) return <Loading />;
 
   async function doMerge(strategy: MergeStrategy) {
@@ -134,284 +147,327 @@ export default function MRDetailPage() {
     }
   }
 
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-      <header>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-          <h1 style={{ margin: 0, fontSize: "1.5rem" }}>
-            {mr.title} <span style={{ color: "var(--muted)" }}>#{mr.number}</span>
-          </h1>
-          <StateBadge state={mr.state} />
-        </div>
-        <p style={{ color: "var(--muted)", marginTop: "0.25rem", fontSize: "0.9rem" }}>
-          <UserAvatar user={mr.author} size={18} /> {mr.author.username} 想把{" "}
-          <code>{shortRef(mr.source_ref)}</code> 合入 <code>{shortRef(mr.target_ref)}</code> · 创建{" "}
-          <RelativeTime iso={mr.created_at} />
-        </p>
-      </header>
-
-      <Card>
-        <Card.Content>
-          {mr.body ? <Markdown source={mr.body} /> : <span style={{ color: "var(--muted)" }}>（无描述）</span>}
-        </Card.Content>
-      </Card>
-
-      {mr.state === "open" ? (
-        <Card>
-          <Card.Header>
-            <Card.Title>合并</Card.Title>
-            <Card.Description>挑一种策略。FF 要求 target 是 source 的祖先。</Card.Description>
-          </Card.Header>
-          <Card.Content>
-            <ErrorBanner error={mergeError} />
-            <TextField name="merge_message" value={mergeMessage} onChange={setMergeMessage}>
-              <Label>提交信息（仅 merge-commit / squash）</Label>
-              <Input placeholder={`Merge #${mr.number}: ${mr.title}`} />
-            </TextField>
-            <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.75rem", flexWrap: "wrap" }}>
-              <Button onPress={() => doMerge("ff")} isDisabled={busy}>FF</Button>
-              <Button variant="secondary" onPress={() => doMerge("merge-commit")} isDisabled={busy}>
-                Merge commit
-              </Button>
-              <Button variant="secondary" onPress={() => doMerge("squash")} isDisabled={busy}>
-                Squash
-              </Button>
-              <span style={{ flex: 1 }} />
-              <Button variant="danger-soft" onPress={doClose} isDisabled={busy}>
-                关闭
-              </Button>
-            </div>
-          </Card.Content>
-        </Card>
-      ) : mr.state === "closed" ? (
-        <Card>
-          <Card.Content>
-            <Button variant="secondary" onPress={doReopen} isDisabled={busy}>
-              重新打开
-            </Button>
-          </Card.Content>
-        </Card>
-      ) : (
-        <Card>
-          <Card.Content>
-            <strong>已合并。</strong>提交 <code>{mr.merge_commit_oid?.slice(0, 8) ?? "—"}</code> ·{" "}
-            策略 {mr.merge_strategy} · <RelativeTime iso={mr.merged_at} />
-          </Card.Content>
-        </Card>
-      )}
-
-      <Tabs defaultSelectedKey="commits">
-        <Tabs.ListContainer>
-          <Tabs.List aria-label="MR 详情">
-            <Tabs.Tab id="commits">提交 ({commits.length}) <Tabs.Indicator /></Tabs.Tab>
-            <Tabs.Tab id="files">文件 ({diff.files.length}) <Tabs.Indicator /></Tabs.Tab>
-            <Tabs.Tab id="comments">评论 ({comments.length}) <Tabs.Indicator /></Tabs.Tab>
-            <Tabs.Tab id="reviews">评审 ({reviews.length}) <Tabs.Indicator /></Tabs.Tab>
-          </Tabs.List>
-        </Tabs.ListContainer>
-
-        <Tabs.Panel id="commits">
-          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-            {commits.map((c) => (
-              <li
-                key={c.oid}
-                style={{
-                  display: "flex",
-                  gap: "0.5rem",
-                  padding: "0.4rem 0",
-                  borderBottom: "1px solid var(--separator)",
-                  fontSize: "0.9rem",
-                }}
-              >
-                <code style={{ color: "var(--muted)" }}>{c.oid.slice(0, 8)}</code>
-                <span style={{ flex: 1 }}>{c.message.split("\n")[0]}</span>
-                <span style={{ color: "var(--muted)", fontSize: "0.8rem" }}>
-                  {c.author.name} · <RelativeTime iso={c.author.when} />
-                </span>
-              </li>
-            ))}
-          </ul>
-        </Tabs.Panel>
-
-        <Tabs.Panel id="files">
-          {diff.files.length === 0 ? (
-            <div style={{ color: "var(--muted)" }}>（无差异）</div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-              {diff.files.map((f) => (
-                <details key={f.path + f.status} open style={{ border: "1px solid var(--border)", borderRadius: "var(--radius)" }}>
-                  <summary
-                    style={{
-                      padding: "0.5rem 0.75rem",
-                      background: "var(--surface-secondary)",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "0.5rem",
-                    }}
-                  >
-                    <code style={{ fontSize: "0.85rem" }}>{f.path}</code>
-                    <span style={{ color: "var(--muted)", fontSize: "0.75rem" }}>
-                      {f.status} · <span style={{ color: "var(--success)" }}>+{f.additions}</span>{" "}
-                      <span style={{ color: "var(--danger)" }}>−{f.deletions}</span>
-                    </span>
-                  </summary>
-                  <div style={{ padding: "0.5rem" }}>
-                    {f.patch ? <DiffView patch={f.patch} /> : <em>未包含 patch</em>}
-                  </div>
-                </details>
-              ))}
-            </div>
-          )}
-        </Tabs.Panel>
-
-        <Tabs.Panel id="comments">
-          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-            {comments.map((c) => (
-              <li
-                key={c.id}
-                style={{
-                  padding: "0.75rem",
-                  background: "var(--surface)",
-                  border: "1px solid var(--border)",
-                  borderRadius: "var(--radius)",
-                  marginBottom: "0.5rem",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}>
-                  <UserAvatar user={c.author} size={20} />
-                  <strong>{c.author.username}</strong>
-                  <span style={{ color: "var(--muted)", fontSize: "0.8rem" }}>
-                    <RelativeTime iso={c.created_at} />
-                  </span>
-                </div>
-                <Markdown source={c.body} />
-              </li>
-            ))}
-          </ul>
-          <form onSubmit={postComment} style={{ marginTop: "1rem" }}>
-            <TextField name="comment" value={commentBody} onChange={setCommentBody} isRequired>
-              <Label>新评论</Label>
-              <TextArea rows={3} />
-            </TextField>
-            <div style={{ marginTop: "0.5rem" }}>
-              <Button type="submit" isDisabled={!commentBody.trim()}>
-                发表
-              </Button>
-            </div>
-          </form>
-        </Tabs.Panel>
-
-        <Tabs.Panel id="reviews">
-          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-            {reviews.map((r) => (
-              <li
-                key={r.id}
-                style={{
-                  padding: "0.75rem",
-                  border: "1px solid var(--border)",
-                  borderRadius: "var(--radius)",
-                  marginBottom: "0.5rem",
-                  background: "var(--surface)",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}>
-                  <UserAvatar user={r.author} size={20} />
-                  <strong>{r.author.username}</strong>
-                  <ReviewBadge state={r.state} />
-                  <span style={{ color: "var(--muted)", fontSize: "0.8rem" }}>
-                    <RelativeTime iso={r.created_at} />
-                  </span>
-                </div>
-                {r.body ? <Markdown source={r.body} /> : null}
-              </li>
-            ))}
-          </ul>
-          <form onSubmit={postReview} style={{ marginTop: "1rem" }}>
-            <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.5rem" }}>
-              {(["approved", "changes_requested", "commented"] as const).map((s) => (
-                <label
-                  key={s}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "0.3rem",
-                    padding: "0.25rem 0.6rem",
-                    border: "1px solid var(--border)",
-                    borderRadius: "var(--field-radius)",
-                    cursor: "pointer",
-                    background: reviewState === s ? "var(--surface-secondary)" : "var(--surface)",
-                  }}
-                >
-                  <input
-                    type="radio"
-                    name="review-state"
-                    checked={reviewState === s}
-                    onChange={() => setReviewState(s)}
-                  />
-                  {s.replace("_", " ")}
-                </label>
-              ))}
-            </div>
-            <TextField name="review_body" value={reviewBody} onChange={setReviewBody}>
-              <Label>评审说明</Label>
-              <TextArea rows={3} />
-            </TextField>
-            <div style={{ marginTop: "0.5rem" }}>
-              <Button type="submit">提交评审</Button>
-            </div>
-          </form>
-        </Tabs.Panel>
-      </Tabs>
-    </div>
+  const totals = diff.files.reduce(
+    (acc, f) => ({ adds: acc.adds + f.additions, dels: acc.dels + f.deletions }),
+    { adds: 0, dels: 0 },
   );
+
+  return (
+    <PageContainer wide>
+      <PageHeader
+        eyebrow={
+          <span className="font-mono">
+            #{mr.number} · {mr.author.username} 想合并
+          </span>
+        }
+        title={
+          <span className="inline-flex items-center gap-3">
+            <span>{mr.title}</span>
+            <StateBadge state={mr.state} />
+          </span>
+        }
+        description={
+          <span className="inline-flex flex-wrap items-center gap-2 font-mono text-[12px]">
+            <code className="rounded-sm bg-[var(--surface-secondary)] px-1.5 py-px text-fg">
+              {shortRef(mr.source_ref)}
+            </code>
+            <BranchesRight width={11} height={11} className="opacity-60" />
+            <code className="rounded-sm bg-[var(--surface-secondary)] px-1.5 py-px text-fg">
+              {shortRef(mr.target_ref)}
+            </code>
+            <span className="text-muted">
+              · 创建 <RelativeTime iso={mr.created_at} />
+            </span>
+          </span>
+        }
+      />
+
+      <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+        <div className="flex flex-col gap-4">
+          <Surface>
+            <SurfaceHeader title="描述" />
+            <SurfaceBody>
+              {mr.body ? <Markdown source={mr.body} /> : <span className="text-[13px] text-muted">（无描述）</span>}
+            </SurfaceBody>
+          </Surface>
+
+          {/* Tabs */}
+          <nav className="-mb-3 flex items-center gap-0 overflow-x-auto border-b border-[var(--separator)]">
+            {[
+              { id: "commits" as const, label: `提交`, count: commits.length },
+              { id: "files" as const, label: `文件`, count: diff.files.length },
+              { id: "comments" as const, label: `评论`, count: comments.length },
+              { id: "reviews" as const, label: `评审`, count: reviews.length },
+            ].map((t) => {
+              const active = tab === t.id;
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setTab(t.id)}
+                  className={[
+                    "relative inline-flex items-center gap-1.5 whitespace-nowrap px-3 py-2 text-[13px]",
+                    active ? "text-fg" : "text-fg/65 hover:text-fg",
+                  ].join(" ")}
+                >
+                  {t.label}
+                  <span className="rounded-full bg-[var(--surface-tertiary)] px-1.5 py-px text-[10px] tabular-nums text-muted">
+                    {t.count}
+                  </span>
+                  {active ? (
+                    <span aria-hidden className="absolute inset-x-2 -bottom-px h-[2px] rounded-full bg-accent" />
+                  ) : null}
+                </button>
+              );
+            })}
+          </nav>
+
+          {tab === "commits" ? (
+            <Surface>
+              <SurfaceBody noPad>
+                <ul className="list-none divide-y divide-[var(--separator)] m-0 p-0">
+                  {commits.map((c) => (
+                    <li key={c.oid} className="flex items-center gap-3 px-4 py-2 text-[12.5px]">
+                      <code className="font-mono text-[11px] text-muted">{c.oid.slice(0, 8)}</code>
+                      <span className="min-w-0 flex-1 truncate text-fg">{c.message.split("\n")[0]}</span>
+                      <span className="shrink-0 text-[11.5px] text-muted">
+                        {c.author.name} · <RelativeTime iso={c.author.when} />
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </SurfaceBody>
+            </Surface>
+          ) : null}
+
+          {tab === "files" ? (
+            diff.files.length === 0 ? (
+              <Surface>
+                <SurfaceBody>
+                  <div className="text-[13px] text-muted">（无差异）</div>
+                </SurfaceBody>
+              </Surface>
+            ) : (
+              <div className="flex flex-col gap-3">
+                <div className="text-[11.5px] text-muted">
+                  共 {diff.files.length} 个文件变更 ·{" "}
+                  <span className="text-[var(--success)]">+{totals.adds}</span>{" "}
+                  <span className="text-[var(--danger)]">−{totals.dels}</span>
+                </div>
+                {diff.files.map((f) => (
+                  <details key={f.path + f.status} open className="overflow-hidden rounded-md border border-[var(--border)] bg-[var(--surface)]">
+                    <summary className="flex cursor-pointer items-center gap-3 border-b border-[var(--separator)] bg-[var(--surface-secondary)]/60 px-3 py-2 text-[12.5px]">
+                      <code className="font-mono text-fg">{f.path}</code>
+                      <span className="text-[11px] uppercase tracking-wider text-muted">{f.status}</span>
+                      <span className="ml-auto text-[11px] font-mono">
+                        <span className="text-[var(--success)]">+{f.additions}</span>{" "}
+                        <span className="text-[var(--danger)]">−{f.deletions}</span>
+                      </span>
+                    </summary>
+                    <div className="p-2">
+                      {f.patch ? <DiffView patch={f.patch} /> : <em className="text-muted">未包含 patch</em>}
+                    </div>
+                  </details>
+                ))}
+              </div>
+            )
+          ) : null}
+
+          {tab === "comments" ? (
+            <div className="flex flex-col gap-3">
+              {comments.map((c) => (
+                <article key={c.id} className="overflow-hidden rounded-md border border-[var(--border)] bg-[var(--surface)]">
+                  <header className="flex items-center gap-2.5 border-b border-[var(--separator)] px-4 py-2">
+                    <UserAvatar user={c.author} size={20} />
+                    <span className="text-[13px] font-medium text-fg">{c.author.username}</span>
+                    <span className="text-[11.5px] text-muted">
+                      <RelativeTime iso={c.created_at} />
+                    </span>
+                  </header>
+                  <div className="px-4 py-3"><Markdown source={c.body} /></div>
+                </article>
+              ))}
+              <Surface>
+                <SurfaceHeader title="新评论" />
+                <SurfaceBody>
+                  <form onSubmit={postComment} className="flex flex-col gap-2">
+                    <TextField name="comment" value={commentBody} onChange={setCommentBody} isRequired>
+                      <Label className="sr-only">新评论</Label>
+                      <TextArea rows={3} placeholder="留下你的反馈…" />
+                    </TextField>
+                    <div className="flex justify-end">
+                      <Button type="submit" isDisabled={!commentBody.trim()}>
+                        发表评论
+                      </Button>
+                    </div>
+                  </form>
+                </SurfaceBody>
+              </Surface>
+            </div>
+          ) : null}
+
+          {tab === "reviews" ? (
+            <div className="flex flex-col gap-3">
+              {reviews.map((r) => (
+                <article key={r.id} className="overflow-hidden rounded-md border border-[var(--border)] bg-[var(--surface)]">
+                  <header className="flex items-center gap-2.5 border-b border-[var(--separator)] px-4 py-2">
+                    <UserAvatar user={r.author} size={20} />
+                    <span className="text-[13px] font-medium text-fg">{r.author.username}</span>
+                    <ReviewBadge state={r.state} />
+                    <span className="ml-auto text-[11.5px] text-muted">
+                      <RelativeTime iso={r.created_at} />
+                    </span>
+                  </header>
+                  {r.body ? <div className="px-4 py-3"><Markdown source={r.body} /></div> : null}
+                </article>
+              ))}
+              <Surface>
+                <SurfaceHeader title="提交评审" />
+                <SurfaceBody>
+                  <form onSubmit={postReview} className="flex flex-col gap-3">
+                    <div className="flex flex-wrap gap-2">
+                      {(["approved", "changes_requested", "commented"] as const).map((s) => {
+                        const selected = reviewState === s;
+                        return (
+                          <label
+                            key={s}
+                            className={[
+                              "inline-flex cursor-pointer items-center gap-2 rounded-md border px-3 py-1.5 text-[12.5px]",
+                              selected
+                                ? "border-[var(--accent)] bg-[var(--surface-secondary)] text-fg"
+                                : "border-[var(--border)] bg-[var(--surface)] text-fg/85 hover:bg-[var(--surface-secondary)]",
+                            ].join(" ")}
+                          >
+                            <input
+                              type="radio"
+                              name="review-state"
+                              checked={selected}
+                              onChange={() => setReviewState(s)}
+                              className="accent-[var(--accent)]"
+                            />
+                            {reviewLabel(s)}
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <TextField name="review_body" value={reviewBody} onChange={setReviewBody}>
+                      <Label className="sr-only">评审说明</Label>
+                      <TextArea rows={3} placeholder="评审说明（可选）" />
+                    </TextField>
+                    <div className="flex justify-end">
+                      <Button type="submit">提交评审</Button>
+                    </div>
+                  </form>
+                </SurfaceBody>
+              </Surface>
+            </div>
+          ) : null}
+        </div>
+
+        {/* Sidebar — merge controls + metadata */}
+        <aside className="flex flex-col gap-3">
+          {mr.state === "open" ? (
+            <Surface>
+              <SurfaceHeader title="合并" description="FF 要求 target 是 source 的祖先。" />
+              <SurfaceBody>
+                <ErrorBanner error={mergeError} />
+                <TextField name="merge_message" value={mergeMessage} onChange={setMergeMessage}>
+                  <Label>提交信息（仅 merge-commit / squash）</Label>
+                  <Input placeholder={`Merge #${mr.number}: ${mr.title}`} />
+                </TextField>
+                <div className="mt-3 flex flex-col gap-1.5">
+                  <Button onPress={() => doMerge("ff")} isDisabled={busy}>
+                    FF 合并
+                  </Button>
+                  <Button variant="outline" onPress={() => doMerge("merge-commit")} isDisabled={busy}>
+                    Merge commit
+                  </Button>
+                  <Button variant="outline" onPress={() => doMerge("squash")} isDisabled={busy}>
+                    Squash
+                  </Button>
+                  <div className="mt-1 border-t border-[var(--separator)] pt-2">
+                    <Button variant="danger-soft" onPress={doClose} isDisabled={busy} className="w-full">
+                      关闭 MR
+                    </Button>
+                  </div>
+                </div>
+              </SurfaceBody>
+            </Surface>
+          ) : mr.state === "closed" ? (
+            <Surface>
+              <SurfaceHeader title="已关闭" />
+              <SurfaceBody>
+                <Button variant="outline" onPress={doReopen} isDisabled={busy} className="w-full">
+                  重新打开
+                </Button>
+              </SurfaceBody>
+            </Surface>
+          ) : (
+            <Surface>
+              <SurfaceHeader title="已合并" />
+              <SurfaceBody>
+                <div className="text-[12.5px] text-fg">
+                  策略：<Pill tone="info">{mr.merge_strategy ?? "—"}</Pill>
+                </div>
+                <div className="mt-2 text-[12px] text-muted">
+                  提交：<code className="font-mono text-fg">{mr.merge_commit_oid?.slice(0, 8) ?? "—"}</code>
+                </div>
+                <div className="mt-1 text-[12px] text-muted">
+                  时间：<RelativeTime iso={mr.merged_at} />
+                </div>
+              </SurfaceBody>
+            </Surface>
+          )}
+
+          <Surface>
+            <SurfaceHeader title="元数据" />
+            <SurfaceBody>
+              <Meta label="作者">
+                <span className="inline-flex items-center gap-1.5">
+                  <UserAvatar user={mr.author} size={18} />
+                  <span className="text-fg">{mr.author.username}</span>
+                </span>
+              </Meta>
+              <Meta label="状态">
+                <StateBadge state={mr.state} />
+              </Meta>
+              <Meta label="评审"><span className="font-mono">{mr.review_count}</span></Meta>
+              <Meta label="评论"><span className="font-mono">{mr.comment_count}</span></Meta>
+              <Meta label="Source">
+                <code className="font-mono text-fg">{shortRef(mr.source_ref)}</code>
+              </Meta>
+              <Meta label="Target">
+                <code className="font-mono text-fg">{shortRef(mr.target_ref)}</code>
+              </Meta>
+            </SurfaceBody>
+          </Surface>
+        </aside>
+      </div>
+    </PageContainer>
+  );
+}
+
+function reviewLabel(s: ReviewState): string {
+  if (s === "approved") return "Approved";
+  if (s === "changes_requested") return "Changes Requested";
+  return "Commented";
 }
 
 function shortRef(r: string): string {
   return r.replace(/^refs\/(heads|tags)\//, "");
 }
 
-function StateBadge({ state }: { state: MergeRequest["state"] }) {
-  const map = {
-    open: { bg: "var(--success)", fg: "var(--success-foreground)", label: "Open" },
-    merged: { bg: "var(--accent)", fg: "var(--accent-foreground)", label: "Merged" },
-    closed: { bg: "var(--default)", fg: "var(--default-foreground)", label: "Closed" },
-  } as const;
-  const c = map[state];
-  return (
-    <span
-      style={{
-        background: c.bg,
-        color: c.fg,
-        padding: "0.1rem 0.6rem",
-        borderRadius: "999px",
-        fontSize: "0.75rem",
-        textTransform: "uppercase",
-      }}
-    >
-      {c.label}
-    </span>
-  );
+function ReviewBadge({ state }: { state: ReviewState }) {
+  if (state === "approved") return <Pill tone="success">Approved</Pill>;
+  if (state === "changes_requested") return <Pill tone="warning">Changes Requested</Pill>;
+  return <Pill tone="neutral">Commented</Pill>;
 }
 
-function ReviewBadge({ state }: { state: ReviewState }) {
-  const map: Record<ReviewState, { bg: string; fg: string; label: string }> = {
-    approved: { bg: "var(--success)", fg: "var(--success-foreground)", label: "Approved" },
-    changes_requested: { bg: "var(--warning)", fg: "var(--warning-foreground)", label: "Changes Requested" },
-    commented: { bg: "var(--surface-secondary)", fg: "var(--foreground)", label: "Commented" },
-  };
-  const c = map[state];
+function Meta({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <span
-      style={{
-        background: c.bg,
-        color: c.fg,
-        padding: "0.05rem 0.5rem",
-        borderRadius: "999px",
-        fontSize: "0.7rem",
-      }}
-    >
-      {c.label}
-    </span>
+    <div className="flex items-start justify-between gap-3 border-b border-[var(--separator)] py-2 last:border-b-0">
+      <span className="text-[11.5px] uppercase tracking-wider text-muted">{label}</span>
+      <span className="min-w-0 text-right text-[12.5px]">{children}</span>
+    </div>
   );
 }

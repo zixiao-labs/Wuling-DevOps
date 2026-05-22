@@ -1,11 +1,10 @@
 import {
+  Avatar,
   Button,
-  Card,
   Description,
   Input,
   Label,
   Modal,
-  Table,
   TextField,
 } from "@heroui/react";
 import CopyIcon from "@gravity-ui/icons/Copy";
@@ -14,9 +13,18 @@ import { useEffect, useRef, useState } from "react";
 
 import { oauthProvider } from "@/api/endpoints";
 import { ApiError } from "@/api/errors";
+import { EmptyState } from "@/components/empty-state";
 import { ErrorBanner } from "@/components/error-banner";
 import { Loading } from "@/components/loading";
 import { RelativeTime } from "@/components/relative-time";
+import {
+  PageContainer,
+  PageHeader,
+  Surface,
+  SurfaceBody,
+  SurfaceHeader,
+} from "@/components/page/primitives";
+import { Pill } from "@/components/page/badges";
 import {
   type CreateOAuthAppRequest,
   type CreateOAuthAppResponse,
@@ -25,13 +33,6 @@ import {
   SUPPORTED_OAUTH_SCOPES,
 } from "@/api/types";
 
-/**
- * /settings/oauth-apps — owner-facing CRUD for OAuth Apps. Patterned after
- * tokens.tsx: a creation form on top, a table of existing apps below, and a
- * one-time-only modal that shows the raw client_secret. Confidential apps
- * get a long-lived `wlocs_…` secret; public apps (default) get nothing — the
- * Authorization Code + PKCE flow doesn't need a secret.
- */
 export default function OAuthAppsPage() {
   const [items, setItems] = useState<OAuthAppView[] | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
@@ -72,10 +73,7 @@ export default function OAuthAppsPage() {
 
   async function onCreate(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
-    const redirects = form.redirectUris
-      .split("\n")
-      .map((s) => s.trim())
-      .filter(Boolean);
+    const redirects = form.redirectUris.split("\n").map((s) => s.trim()).filter(Boolean);
     if (redirects.length === 0) {
       setError(new ApiError(0, "bad_request", "请至少填一个 redirect URI（每行一个）。"));
       return;
@@ -130,43 +128,32 @@ export default function OAuthAppsPage() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-      <Card>
-        <Card.Header>
-          <Card.Title>OAuth 应用</Card.Title>
-          <Card.Description>
-            创建一个 OAuth 应用让第三方在你的账户身份下访问数据。Authorization Code + PKCE 是默认流程；
-            Device Authorization Grant 适用于 IDE、CLI 等环境。
-          </Card.Description>
-        </Card.Header>
-        <Card.Content>
-          <form onSubmit={onCreate} style={{ display: "flex", flexDirection: "column", gap: "0.9rem" }}>
+    <PageContainer>
+      <PageHeader
+        title="OAuth 应用"
+        description="创建一个 OAuth 应用让第三方在你的账户身份下访问数据。Authorization Code + PKCE 是默认流程；Device Authorization Grant 适用于 IDE、CLI 等环境。"
+      />
+
+      <Surface className="mb-4">
+        <SurfaceHeader title="创建新应用" />
+        <SurfaceBody>
+          <form onSubmit={onCreate} className="flex flex-col gap-3.5">
             <TextField name="name" value={form.name} onChange={(v) => setForm({ ...form, name: v })} isRequired>
               <Label>名称</Label>
               <Input placeholder="My App" />
               <Description>展示给授权对话框上的用户看的名字。</Description>
             </TextField>
-            <TextField
-              name="homepage_url"
-              value={form.homepageUrl}
-              onChange={(v) => setForm({ ...form, homepageUrl: v })}
-            >
-              <Label>主页 URL</Label>
-              <Input placeholder="https://example.com" />
-            </TextField>
-            <TextField
-              name="logo_url"
-              value={form.logoUrl}
-              onChange={(v) => setForm({ ...form, logoUrl: v })}
-            >
-              <Label>Logo URL</Label>
-              <Input placeholder="https://example.com/logo.png" />
-            </TextField>
-            <TextField
-              name="description"
-              value={form.description}
-              onChange={(v) => setForm({ ...form, description: v })}
-            >
+            <div className="grid gap-3.5 sm:grid-cols-2">
+              <TextField name="homepage_url" value={form.homepageUrl} onChange={(v) => setForm({ ...form, homepageUrl: v })}>
+                <Label>主页 URL</Label>
+                <Input placeholder="https://example.com" />
+              </TextField>
+              <TextField name="logo_url" value={form.logoUrl} onChange={(v) => setForm({ ...form, logoUrl: v })}>
+                <Label>Logo URL</Label>
+                <Input placeholder="https://example.com/logo.png" />
+              </TextField>
+            </div>
+            <TextField name="description" value={form.description} onChange={(v) => setForm({ ...form, description: v })}>
               <Label>简介</Label>
               <Input placeholder="一句话说明这个 app 做什么。" />
             </TextField>
@@ -177,24 +164,16 @@ export default function OAuthAppsPage() {
                 onChange={(e) => setForm({ ...form, redirectUris: e.target.value })}
                 placeholder={"https://example.com/oauth/callback\nhttp://127.0.0.1"}
                 rows={3}
-                style={{
-                  width: "100%",
-                  padding: "0.5rem 0.6rem",
-                  border: "1px solid var(--border)",
-                  borderRadius: "var(--field-radius)",
-                  background: "var(--surface)",
-                  fontFamily: "ui-monospace, monospace",
-                  fontSize: "0.85rem",
-                }}
+                className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--field-background)] px-2.5 py-1.5 font-mono text-[12.5px] text-[var(--field-foreground)] focus:border-[var(--accent)] focus:outline-none"
               />
               <Description>
-                每行一个；必须与发起授权时的 redirect_uri 完全一致。<code>http://127.0.0.1</code> 是
-                loopback 例外，允许任意端口。
+                每行一个；必须与发起授权时的 redirect_uri 完全一致。
+                <code className="font-mono">http://127.0.0.1</code> 是 loopback 例外，允许任意端口。
               </Description>
             </div>
             <div>
               <Label>默认 scope</Label>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginTop: "0.3rem" }}>
+              <div className="mt-1.5 flex flex-wrap gap-2">
                 {SUPPORTED_OAUTH_SCOPES.map((s) => (
                   <ScopeCheckbox
                     key={s}
@@ -212,97 +191,80 @@ export default function OAuthAppsPage() {
                 ))}
               </div>
             </div>
-            <label
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "0.5rem",
-                fontSize: "0.9rem",
-              }}
-            >
+            <label className="inline-flex cursor-pointer items-center gap-2 text-[13px]">
               <input
                 type="checkbox"
                 checked={form.isConfidential}
                 onChange={(e) => setForm({ ...form, isConfidential: e.target.checked })}
+                className="accent-[var(--accent)]"
               />
               <span>这是个机密客户端（服务端持有 client_secret）</span>
             </label>
             <ErrorBanner error={error} />
-            <div>
+            <div className="flex justify-end">
               <Button type="submit" isDisabled={creating || !form.name}>
                 {creating ? "创建中…" : "创建 OAuth 应用"}
               </Button>
             </div>
           </form>
-        </Card.Content>
-      </Card>
+        </SurfaceBody>
+      </Surface>
 
-      {items === null ? (
-        <Loading />
-      ) : items.length === 0 ? (
-        <Card>
-          <Card.Content>
-            <div style={{ color: "var(--muted)", padding: "1rem 0" }}>还没有 OAuth 应用。</div>
-          </Card.Content>
-        </Card>
-      ) : (
-        <Card>
-          <Card.Header>
-            <Card.Title>现有应用</Card.Title>
-          </Card.Header>
-          <Card.Content>
-            <Table>
-              <Table.ScrollContainer>
-                <Table.Content aria-label="OAuth 应用">
-                  <Table.Header>
-                    <Table.Column isRowHeader>名称</Table.Column>
-                    <Table.Column>Client ID</Table.Column>
-                    <Table.Column>类型</Table.Column>
-                    <Table.Column>scope</Table.Column>
-                    <Table.Column>创建</Table.Column>
-                    <Table.Column>操作</Table.Column>
-                  </Table.Header>
-                  <Table.Body>
-                    {items.map((a) => (
-                      <Table.Row key={a.id}>
-                        <Table.Cell>{a.name}</Table.Cell>
-                        <Table.Cell>
-                          <code style={{ fontSize: "0.8rem" }}>{a.client_id}</code>
-                        </Table.Cell>
-                        <Table.Cell>{a.is_confidential ? "机密" : "公开"}</Table.Cell>
-                        <Table.Cell>
-                          <code style={{ fontSize: "0.75rem" }}>
-                            {a.default_scopes.join(", ") || "—"}
-                          </code>
-                        </Table.Cell>
-                        <Table.Cell>
-                          <RelativeTime iso={a.created_at} />
-                        </Table.Cell>
-                        <Table.Cell>
-                          <div style={{ display: "flex", gap: "0.4rem" }}>
-                            {a.is_confidential && (
-                              <Button size="sm" variant="secondary" onPress={() => onResetSecret(a.id)}>
-                                重置 secret
-                              </Button>
-                            )}
-                            <Button
-                              variant="danger-soft"
-                              size="sm"
-                              onPress={() => onDelete(a.id)}
-                            >
-                              <TrashIcon width={14} height={14} /> 删除
-                            </Button>
-                          </div>
-                        </Table.Cell>
-                      </Table.Row>
-                    ))}
-                  </Table.Body>
-                </Table.Content>
-              </Table.ScrollContainer>
-            </Table>
-          </Card.Content>
-        </Card>
-      )}
+      <Surface>
+        <SurfaceHeader dense>
+          <span className="text-[12px] font-medium text-fg">
+            现有应用{items ? ` · ${items.length}` : ""}
+          </span>
+        </SurfaceHeader>
+        <SurfaceBody noPad>
+          {items === null ? (
+            <Loading />
+          ) : items.length === 0 ? (
+            <EmptyState inset title="还没有 OAuth 应用" description="创建一个就能让第三方接入。" />
+          ) : (
+            <ul className="list-none divide-y divide-[var(--separator)] m-0 p-0">
+              {items.map((a) => (
+                <li key={a.id} className="flex items-start gap-3 px-4 py-3">
+                  <Avatar size="md">
+                    {a.logo_url && <Avatar.Image alt={a.name} src={a.logo_url} />}
+                    <Avatar.Fallback>{a.name.slice(0, 2).toUpperCase()}</Avatar.Fallback>
+                  </Avatar>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[13.5px] font-medium text-fg">{a.name}</span>
+                      <Pill tone={a.is_confidential ? "info" : "neutral"}>
+                        {a.is_confidential ? "机密" : "公开"}
+                      </Pill>
+                      {a.is_first_party ? <Pill tone="success">官方</Pill> : null}
+                    </div>
+                    <div className="mt-0.5 truncate text-[11.5px] text-muted">
+                      <code className="font-mono">{a.client_id}</code> ·{" "}
+                      <RelativeTime iso={a.created_at} /> 创建
+                    </div>
+                    {a.default_scopes.length > 0 ? (
+                      <div className="mt-1.5 flex flex-wrap gap-1">
+                        {a.default_scopes.map((s) => (
+                          <Pill key={s} tone="neutral">{s}</Pill>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {a.is_confidential && (
+                      <Button size="sm" variant="outline" onPress={() => onResetSecret(a.id)}>
+                        重置 secret
+                      </Button>
+                    )}
+                    <Button size="sm" variant="danger-soft" onPress={() => onDelete(a.id)}>
+                      <TrashIcon width={13} height={13} /> 删除
+                    </Button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </SurfaceBody>
+      </Surface>
 
       <Modal>
         <Modal.Backdrop isOpen={created !== null} onOpenChange={(o) => !o && setCreated(null)}>
@@ -312,31 +274,25 @@ export default function OAuthAppsPage() {
                 <Modal.Heading>OAuth 应用已创建</Modal.Heading>
               </Modal.Header>
               <Modal.Body>
-                <p>
-                  <strong>client_id</strong>
-                </p>
+                <p className="text-[12.5px] font-medium text-fg">client_id</p>
                 <CopyableBlock value={created?.client_id ?? ""} />
                 {created?.client_secret ? (
                   <>
-                    <p style={{ marginTop: "1rem" }}>
-                      <strong>client_secret（只显示一次）</strong>
+                    <p className="mt-4 text-[12.5px] font-medium text-fg">
+                      client_secret（只显示一次）
                     </p>
                     <CopyableBlock
                       value={created.client_secret}
                       onCopiedChange={(v) => {
                         setCopied(v);
-                        if (copyResetTimer.current !== null) {
-                          clearTimeout(copyResetTimer.current);
-                        }
-                        if (v) {
-                          copyResetTimer.current = setTimeout(() => setCopied(false), 1500);
-                        }
+                        if (copyResetTimer.current !== null) clearTimeout(copyResetTimer.current);
+                        if (v) copyResetTimer.current = setTimeout(() => setCopied(false), 1500);
                       }}
                       copied={copied}
                     />
                   </>
                 ) : (
-                  <p style={{ marginTop: "1rem", color: "var(--muted)" }}>
+                  <p className="mt-4 text-[12.5px] text-muted">
                     公开客户端不签发 client_secret —— 使用 Authorization Code + PKCE 即可。
                   </p>
                 )}
@@ -357,8 +313,9 @@ export default function OAuthAppsPage() {
                 <Modal.Heading>新的 client_secret</Modal.Heading>
               </Modal.Header>
               <Modal.Body>
-                <p>
-                  <strong>这是新的 secret，只显示一次。</strong>未更新的客户端会无法换 token。
+                <p className="mb-3 text-[12.5px] text-fg">
+                  <strong>这是新的 secret，只显示一次。</strong>
+                  未更新的客户端会无法换 token。
                 </p>
                 <CopyableBlock value={resetSecret?.secret ?? ""} />
               </Modal.Body>
@@ -369,11 +326,9 @@ export default function OAuthAppsPage() {
           </Modal.Container>
         </Modal.Backdrop>
       </Modal>
-    </div>
+    </PageContainer>
   );
 }
-
-// ---------- helpers ----------
 
 interface NewAppForm {
   name: string;
@@ -381,7 +336,7 @@ interface NewAppForm {
   description: string;
   logoUrl: string;
   isConfidential: boolean;
-  redirectUris: string; // newline-separated
+  redirectUris: string;
   scopes: OAuthScope[];
 }
 
@@ -408,19 +363,20 @@ function ScopeCheckbox({
 }) {
   return (
     <label
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: "0.3rem",
-        padding: "0.25rem 0.6rem",
-        border: "1px solid var(--border)",
-        borderRadius: "var(--field-radius)",
-        cursor: "pointer",
-        background: checked ? "var(--surface-secondary)" : "var(--surface)",
-      }}
+      className={[
+        "inline-flex cursor-pointer items-center gap-2 rounded-md border px-2.5 py-1 transition-colors",
+        checked
+          ? "border-[var(--accent)] bg-[var(--surface-secondary)]"
+          : "border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-secondary)]",
+      ].join(" ")}
     >
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
-      <code style={{ fontSize: "0.85rem" }}>{scope}</code>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="accent-[var(--accent)]"
+      />
+      <code className="font-mono text-[12px]">{scope}</code>
     </label>
   );
 }
@@ -444,25 +400,13 @@ function CopyableBlock({
     }
   }
   return (
-    <div style={{ display: "flex", gap: "0.4rem", alignItems: "stretch", marginTop: "0.3rem" }}>
-      <pre
-        style={{
-          flex: 1,
-          background: "var(--surface-secondary)",
-          padding: "0.6rem 0.75rem",
-          borderRadius: "var(--radius)",
-          overflowX: "auto",
-          fontFamily: "ui-monospace, monospace",
-          fontSize: "0.85rem",
-          userSelect: "all",
-          margin: 0,
-        }}
-      >
+    <div className="mt-1.5 flex items-stretch gap-2">
+      <pre className="m-0 flex-1 overflow-x-auto rounded-md border border-[var(--border)] bg-[var(--surface-secondary)] px-2.5 py-2 font-mono text-[12.5px] text-fg select-all">
         {value}
       </pre>
       {onCopiedChange && (
-        <Button variant="secondary" onPress={copy}>
-          <CopyIcon width={16} height={16} /> {copied ? "已复制" : "复制"}
+        <Button variant="outline" onPress={copy}>
+          <CopyIcon width={14} height={14} /> {copied ? "已复制" : "复制"}
         </Button>
       )}
     </div>
