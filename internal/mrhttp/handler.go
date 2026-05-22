@@ -39,6 +39,10 @@ type Handler struct {
 	MRs      *mrstore.Store
 	Layout   *repostore.Layout
 	Verifier *auth.Verifier
+	// OAT resolves OAuth-provider access tokens (wloat_…) so third-party
+	// OAuth clients can read/write MRs with a bearer. When nil, OAT-shaped
+	// bearers are rejected with the standard 401.
+	OAT auth.OATResolver
 
 	// mergeLocks serialises concurrent merges that target the same branch in
 	// the same repo, so two MRs landing on refs/heads/main can't race the
@@ -52,7 +56,7 @@ type Handler struct {
 // Mount registers routes under "/api/v1".
 func (h *Handler) Mount(r chi.Router) {
 	r.Route("/orgs/{org_slug}/projects/{project_slug}/repos/{repo_slug}/merge-requests", func(r chi.Router) {
-		r.Use(auth.Middleware(h.Verifier, false))
+		r.Use(auth.MiddlewareBearer(auth.BearerResolver{JWT: h.Verifier, OAT: h.OAT}, false))
 		r.Get("/", h.list)
 		r.Post("/", h.create)
 		r.Route("/{number}", func(r chi.Router) {

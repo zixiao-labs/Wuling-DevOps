@@ -20,6 +20,10 @@ import (
 type Handler struct {
 	Store    *userstore.Store
 	Verifier *auth.Verifier
+	// OAT resolves OAuth-provider access tokens (wloat_…) so third-party
+	// OAuth clients can read/create orgs and projects with a bearer. When
+	// nil, OAT-shaped bearers are rejected with the standard 401.
+	OAT auth.OATResolver
 }
 
 // Mount registers routes. We wrap in Group() so r.Use() doesn't conflict
@@ -27,7 +31,7 @@ type Handler struct {
 // router (chi forbids middleware-after-routes on the same mux).
 func (h *Handler) Mount(r chi.Router) {
 	r.Group(func(r chi.Router) {
-		r.Use(auth.Middleware(h.Verifier, false))
+		r.Use(auth.MiddlewareBearer(auth.BearerResolver{JWT: h.Verifier, OAT: h.OAT}, false))
 
 		r.Route("/orgs", func(r chi.Router) {
 			r.Get("/", h.listOrgs)

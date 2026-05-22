@@ -28,6 +28,10 @@ type Handler struct {
 	Store    *userstore.Store
 	Layout   *repostore.Layout
 	Verifier *auth.Verifier
+	// OAT resolves OAuth-provider access tokens (wloat_…) so third-party
+	// OAuth clients can read/write repos with a bearer. When nil, OAT-shaped
+	// bearers are rejected with the standard 401.
+	OAT auth.OATResolver
 }
 
 // Permission is the access level required by a resolveAndCheck call.
@@ -41,7 +45,7 @@ const (
 // Mount registers routes under "/api/v1".
 func (h *Handler) Mount(r chi.Router) {
 	r.Route("/orgs/{org_slug}/projects/{project_slug}/repos", func(r chi.Router) {
-		r.Use(auth.Middleware(h.Verifier, false))
+		r.Use(auth.MiddlewareBearer(auth.BearerResolver{JWT: h.Verifier, OAT: h.OAT}, false))
 		r.Get("/", h.list)
 		r.Post("/", h.create)
 		r.Route("/{repo_slug}", func(r chi.Router) {

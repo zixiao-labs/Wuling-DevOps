@@ -35,6 +35,10 @@ type Handler struct {
 	Users    *userstore.Store
 	Issues   *issuestore.Store
 	Verifier *auth.Verifier
+	// OAT resolves OAuth-provider access tokens (wloat_…) so third-party
+	// OAuth clients (e.g. Esperanta) can read/write issues with a bearer.
+	// When nil, OAT-shaped bearers are rejected with the standard 401.
+	OAT auth.OATResolver
 }
 
 // Mount registers routes under "/api/v1".
@@ -47,7 +51,7 @@ type Handler struct {
 // unreachable. See orghttp.Handler.Mount.
 func (h *Handler) Mount(r chi.Router) {
 	r.Group(func(r chi.Router) {
-		r.Use(auth.Middleware(h.Verifier, false))
+		r.Use(auth.MiddlewareBearer(auth.BearerResolver{JWT: h.Verifier, OAT: h.OAT}, false))
 
 		r.Route("/orgs/{org_slug}/projects/{project_slug}/issues", func(r chi.Router) {
 			r.Get("/", h.listIssues)

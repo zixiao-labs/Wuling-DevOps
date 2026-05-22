@@ -156,31 +156,31 @@ func New(d Deps) http.Handler {
 		})
 
 		(&orghttp.Handler{
-			Store: d.Store, Verifier: verifier,
+			Store: d.Store, Verifier: verifier, OAT: oauthH,
 		}).Mount(api)
 
 		(&repohttp.Handler{
-			Store: d.Store, Layout: d.Layout, Verifier: verifier,
+			Store: d.Store, Layout: d.Layout, Verifier: verifier, OAT: oauthH,
 		}).Mount(api)
 
 		(&issuehttp.Handler{
-			Users: d.Store, Issues: d.Issues, Verifier: verifier,
+			Users: d.Store, Issues: d.Issues, Verifier: verifier, OAT: oauthH,
 		}).Mount(api)
 
 		(&mrhttp.Handler{
-			Users: d.Store, MRs: d.MRs, Layout: d.Layout, Verifier: verifier,
+			Users: d.Store, MRs: d.MRs, Layout: d.Layout, Verifier: verifier, OAT: oauthH,
 		}).Mount(api)
 
 		if d.Wikis != nil {
 			(&wikihttp.Handler{
-				Users: d.Store, Wikis: d.Wikis, Verifier: verifier,
+				Users: d.Store, Wikis: d.Wikis, Verifier: verifier, OAT: oauthH,
 			}).Mount(api)
 		}
 
 		if d.Insights != nil {
 			(&insighthttp.Handler{
 				Users: d.Store, Insights: d.Insights,
-				Layout: d.Layout, Verifier: verifier,
+				Layout: d.Layout, Verifier: verifier, OAT: oauthH,
 			}).Mount(api)
 		}
 	})

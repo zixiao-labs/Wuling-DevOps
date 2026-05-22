@@ -32,12 +32,16 @@ type Handler struct {
 	Insights *insightstore.Store
 	Layout   *repostore.Layout
 	Verifier *auth.Verifier
+	// OAT resolves OAuth-provider access tokens (wloat_…) so third-party
+	// OAuth clients can read insights with a bearer. When nil, OAT-shaped
+	// bearers are rejected with the standard 401.
+	OAT auth.OATResolver
 }
 
 // Mount registers routes under "/api/v1".
 func (h *Handler) Mount(r chi.Router) {
 	r.Route("/orgs/{org_slug}/projects/{project_slug}/insights", func(r chi.Router) {
-		r.Use(auth.Middleware(h.Verifier, false))
+		r.Use(auth.MiddlewareBearer(auth.BearerResolver{JWT: h.Verifier, OAT: h.OAT}, false))
 		r.Get("/activity", h.activity)
 		r.Get("/contributors", h.contributors)
 		r.Get("/languages", h.languages)

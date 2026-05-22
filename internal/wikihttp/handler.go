@@ -39,6 +39,10 @@ type Handler struct {
 	Users    *userstore.Store
 	Wikis    *wikistore.Store
 	Verifier *auth.Verifier
+	// OAT resolves OAuth-provider access tokens (wloat_…) so third-party
+	// OAuth clients can read/write wiki pages with a bearer. When nil,
+	// OAT-shaped bearers are rejected with the standard 401.
+	OAT auth.OATResolver
 }
 
 // md is the package-wide goldmark instance. GFM gives us tables, strikethrough,
@@ -78,7 +82,7 @@ func renderMarkdown(raw []byte) string {
 // Mount registers routes under "/api/v1".
 func (h *Handler) Mount(r chi.Router) {
 	r.Route("/orgs/{org_slug}/projects/{project_slug}/wiki", func(r chi.Router) {
-		r.Use(auth.Middleware(h.Verifier, false))
+		r.Use(auth.MiddlewareBearer(auth.BearerResolver{JWT: h.Verifier, OAT: h.OAT}, false))
 		r.Get("/pages", h.listPages)
 		// chi's "*" wildcard matches the remainder of the path including
 		// slashes, so "docs/usage.md" routes correctly to the same handler.
