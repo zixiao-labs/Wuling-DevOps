@@ -44,7 +44,10 @@ export default function NewMRPage() {
           setSourceRef(branches.length > 1 ? strip(branches[1]!.name) : strip(def.name));
         }
       })
-      .catch((e) => setError(e as ApiError));
+      .catch((e) => {
+        setRefs([]);
+        setError(e as ApiError);
+      });
   }, [org.slug, project.slug, repoSlug]);
 
   async function onSubmit(e: React.SyntheticEvent<HTMLFormElement>) {

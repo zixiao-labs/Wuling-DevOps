@@ -58,7 +58,7 @@ export default function BlobPage() {
           <>
             <ArrowChevronRight width={11} height={11} className="opacity-50" />
             <Link
-              to={`${base}/tree/${parentPath}${refSuffix}`}
+              to={`${base}/tree/${encodeURI(parentPath)}${refSuffix}`}
               className="font-mono text-[var(--accent)] hover:underline"
             >
               {parentPath}

@@ -45,8 +45,9 @@ function AdminInner() {
   }, []);
 
   useEffect(() => {
+    if (!user?.is_admin) return;
     refresh();
-  }, [refresh]);
+  }, [refresh, user?.is_admin]);
 
   if (!user?.is_admin) return <Navigate to="/orgs" replace />;
 

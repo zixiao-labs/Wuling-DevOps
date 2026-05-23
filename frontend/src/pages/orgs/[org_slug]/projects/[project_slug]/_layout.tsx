@@ -29,10 +29,18 @@ export default function ProjectLayout() {
     setProject(null);
     setError(null);
     if (!projectSlug) return;
+    let cancelled = false;
     projectsApi
       .get(org.slug, projectSlug)
-      .then(setProject)
-      .catch((e) => setError(e as ApiError));
+      .then((p) => {
+        if (!cancelled) setProject(p);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e as ApiError);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [org.slug, projectSlug]);
 
   // Push display data into the sidebar store as soon as the project is known;

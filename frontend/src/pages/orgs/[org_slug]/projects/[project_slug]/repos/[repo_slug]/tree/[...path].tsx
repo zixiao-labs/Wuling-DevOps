@@ -139,7 +139,7 @@ function TreeBreadcrumb({
   return (
     <nav className="inline-flex flex-wrap items-center gap-0.5 text-[12px]">
       <Link
-        to={`${repoBase}`}
+        to={`${repoBase}${refSuffix}`}
         className="font-mono text-[var(--accent)] hover:underline"
       >
         {repoSlug}

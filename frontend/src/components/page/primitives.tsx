@@ -109,7 +109,6 @@ export interface PageTab {
 export function PageTabs({ items }: { items: PageTab[] }) {
   return (
     <nav
-      role="tablist"
       aria-label="二级导航"
       className="-mt-1 mb-4 flex items-center gap-0 overflow-x-auto border-b border-[var(--separator)]"
     >

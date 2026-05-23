@@ -260,7 +260,7 @@ function Meta({ label, children }: { label: string; children: React.ReactNode })
   return (
     <div className="flex items-start justify-between gap-3 border-b border-[var(--separator)] py-2 last:border-b-0">
       <span className="text-[11.5px] uppercase tracking-wider text-muted">{label}</span>
-      <span className="min-w-0 text-right text-[12.5px]">{children}</span>
+      <div className="min-w-0 text-right text-[12.5px]">{children}</div>
     </div>
   );
 }

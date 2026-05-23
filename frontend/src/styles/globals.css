@@ -14,6 +14,10 @@
 @import "tailwindcss";
 @import "@heroui/styles";
 
+@import "./theme-clean.css";
+@import "./theme-green.css";
+@import "./theme-zixiaolabsvi.css";
+
 /* ---------------------------------------------------------------------------
  * Source declarations — without these, nasti's Tailwind plugin only scans
  * CSS files (its `oxide.Scanner` is fed `compiler.sources`, which defaults
@@ -23,10 +27,6 @@
  * --------------------------------------------------------------------------- */
 @source "../**/*.{ts,tsx,jsx,js}";
 @source "../../index.html";
-
-@import "./theme-clean.css";
-@import "./theme-green.css";
-@import "./theme-zixiaolabsvi.css";
 
 /* ---------------------------------------------------------------------------
  * Tailwind v4 bridge — map existing theme CSS variables to utility classes.

@@ -39,6 +39,7 @@ export default function MRDetailPage() {
   const params = useParams();
   const repoSlug = params.repo_slug ?? "";
   const number = Number(params.number);
+  const numberValid = Number.isInteger(number) && number > 0;
 
   const [mr, setMR] = useState<MergeRequest | null>(null);
   const [commits, setCommits] = useState<Commit[] | null>(null);
@@ -56,7 +57,7 @@ export default function MRDetailPage() {
   const [tab, setTab] = useState<Tab>("commits");
 
   function refresh() {
-    if (!Number.isFinite(number)) return;
+    if (!numberValid) return;
     setError(null);
     Promise.all([
       mrApi.get(org.slug, project.slug, repoSlug, number),
@@ -77,6 +78,15 @@ export default function MRDetailPage() {
 
   useEffect(refresh, [org.slug, project.slug, repoSlug, number]);
 
+  if (!numberValid) {
+    return (
+      <PageContainer>
+        <div className="rounded-md border border-[var(--danger)]/40 bg-[color-mix(in_oklch,var(--danger)_10%,transparent)] px-3 py-2 text-[13px] text-[var(--danger)]">
+          无效的 MR 编号。
+        </div>
+      </PageContainer>
+    );
+  }
   if (error) return <PageContainer><ErrorBanner error={error} /></PageContainer>;
   if (!mr || !commits || !diff || !comments || !reviews) return <Loading />;
 
@@ -192,7 +202,28 @@ export default function MRDetailPage() {
           </Surface>
 
           {/* Tabs */}
-          <nav className="-mb-3 flex items-center gap-0 overflow-x-auto border-b border-[var(--separator)]">
+          <nav
+            role="tablist"
+            aria-label="MR 视图"
+            className="-mb-3 flex items-center gap-0 overflow-x-auto border-b border-[var(--separator)]"
+            onKeyDown={(e) => {
+              const order: Tab[] = ["commits", "files", "comments", "reviews"];
+              const idx = order.indexOf(tab);
+              if (e.key === "ArrowRight") {
+                e.preventDefault();
+                setTab(order[(idx + 1) % order.length]!);
+              } else if (e.key === "ArrowLeft") {
+                e.preventDefault();
+                setTab(order[(idx - 1 + order.length) % order.length]!);
+              } else if (e.key === "Home") {
+                e.preventDefault();
+                setTab(order[0]!);
+              } else if (e.key === "End") {
+                e.preventDefault();
+                setTab(order[order.length - 1]!);
+              }
+            }}
+          >
             {[
               { id: "commits" as const, label: `提交`, count: commits.length },
               { id: "files" as const, label: `文件`, count: diff.files.length },
@@ -204,6 +235,11 @@ export default function MRDetailPage() {
                 <button
                   key={t.id}
                   type="button"
+                  role="tab"
+                  id={`mr-tab-${t.id}`}
+                  aria-selected={active}
+                  aria-controls={`mr-panel-${t.id}`}
+                  tabIndex={active ? 0 : -1}
                   onClick={() => setTab(t.id)}
                   className={[
                     "relative inline-flex items-center gap-1.5 whitespace-nowrap px-3 py-2 text-[13px]",
@@ -223,58 +259,62 @@ export default function MRDetailPage() {
           </nav>
 
           {tab === "commits" ? (
-            <Surface>
-              <SurfaceBody noPad>
-                <ul className="list-none divide-y divide-[var(--separator)] m-0 p-0">
-                  {commits.map((c) => (
-                    <li key={c.oid} className="flex items-center gap-3 px-4 py-2 text-[12.5px]">
-                      <code className="font-mono text-[11px] text-muted">{c.oid.slice(0, 8)}</code>
-                      <span className="min-w-0 flex-1 truncate text-fg">{c.message.split("\n")[0]}</span>
-                      <span className="shrink-0 text-[11.5px] text-muted">
-                        {c.author.name} · <RelativeTime iso={c.author.when} />
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </SurfaceBody>
-            </Surface>
+            <div role="tabpanel" id="mr-panel-commits" aria-labelledby="mr-tab-commits">
+              <Surface>
+                <SurfaceBody noPad>
+                  <ul className="list-none divide-y divide-[var(--separator)] m-0 p-0">
+                    {commits.map((c) => (
+                      <li key={c.oid} className="flex items-center gap-3 px-4 py-2 text-[12.5px]">
+                        <code className="font-mono text-[11px] text-muted">{c.oid.slice(0, 8)}</code>
+                        <span className="min-w-0 flex-1 truncate text-fg">{c.message.split("\n")[0]}</span>
+                        <span className="shrink-0 text-[11.5px] text-muted">
+                          {c.author.name} · <RelativeTime iso={c.author.when} />
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </SurfaceBody>
+              </Surface>
+            </div>
           ) : null}
 
           {tab === "files" ? (
-            diff.files.length === 0 ? (
-              <Surface>
-                <SurfaceBody>
-                  <div className="text-[13px] text-muted">（无差异）</div>
-                </SurfaceBody>
-              </Surface>
-            ) : (
-              <div className="flex flex-col gap-3">
-                <div className="text-[11.5px] text-muted">
-                  共 {diff.files.length} 个文件变更 ·{" "}
-                  <span className="text-[var(--success)]">+{totals.adds}</span>{" "}
-                  <span className="text-[var(--danger)]">−{totals.dels}</span>
+            <div role="tabpanel" id="mr-panel-files" aria-labelledby="mr-tab-files">
+              {diff.files.length === 0 ? (
+                <Surface>
+                  <SurfaceBody>
+                    <div className="text-[13px] text-muted">（无差异）</div>
+                  </SurfaceBody>
+                </Surface>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  <div className="text-[11.5px] text-muted">
+                    共 {diff.files.length} 个文件变更 ·{" "}
+                    <span className="text-[var(--success)]">+{totals.adds}</span>{" "}
+                    <span className="text-[var(--danger)]">−{totals.dels}</span>
+                  </div>
+                  {diff.files.map((f) => (
+                    <details key={f.path + f.status} open className="overflow-hidden rounded-md border border-[var(--border)] bg-[var(--surface)]">
+                      <summary className="flex cursor-pointer items-center gap-3 border-b border-[var(--separator)] bg-[var(--surface-secondary)]/60 px-3 py-2 text-[12.5px]">
+                        <code className="font-mono text-fg">{f.path}</code>
+                        <span className="text-[11px] uppercase tracking-wider text-muted">{f.status}</span>
+                        <span className="ml-auto text-[11px] font-mono">
+                          <span className="text-[var(--success)]">+{f.additions}</span>{" "}
+                          <span className="text-[var(--danger)]">−{f.deletions}</span>
+                        </span>
+                      </summary>
+                      <div className="p-2">
+                        {f.patch ? <DiffView patch={f.patch} /> : <em className="text-muted">未包含 patch</em>}
+                      </div>
+                    </details>
+                  ))}
                 </div>
-                {diff.files.map((f) => (
-                  <details key={f.path + f.status} open className="overflow-hidden rounded-md border border-[var(--border)] bg-[var(--surface)]">
-                    <summary className="flex cursor-pointer items-center gap-3 border-b border-[var(--separator)] bg-[var(--surface-secondary)]/60 px-3 py-2 text-[12.5px]">
-                      <code className="font-mono text-fg">{f.path}</code>
-                      <span className="text-[11px] uppercase tracking-wider text-muted">{f.status}</span>
-                      <span className="ml-auto text-[11px] font-mono">
-                        <span className="text-[var(--success)]">+{f.additions}</span>{" "}
-                        <span className="text-[var(--danger)]">−{f.deletions}</span>
-                      </span>
-                    </summary>
-                    <div className="p-2">
-                      {f.patch ? <DiffView patch={f.patch} /> : <em className="text-muted">未包含 patch</em>}
-                    </div>
-                  </details>
-                ))}
-              </div>
-            )
+              )}
+            </div>
           ) : null}
 
           {tab === "comments" ? (
-            <div className="flex flex-col gap-3">
+            <div role="tabpanel" id="mr-panel-comments" aria-labelledby="mr-tab-comments" className="flex flex-col gap-3">
               {comments.map((c) => (
                 <article key={c.id} className="overflow-hidden rounded-md border border-[var(--border)] bg-[var(--surface)]">
                   <header className="flex items-center gap-2.5 border-b border-[var(--separator)] px-4 py-2">
@@ -307,7 +347,7 @@ export default function MRDetailPage() {
           ) : null}
 
           {tab === "reviews" ? (
-            <div className="flex flex-col gap-3">
+            <div role="tabpanel" id="mr-panel-reviews" aria-labelledby="mr-tab-reviews" className="flex flex-col gap-3">
               {reviews.map((r) => (
                 <article key={r.id} className="overflow-hidden rounded-md border border-[var(--border)] bg-[var(--surface)]">
                   <header className="flex items-center gap-2.5 border-b border-[var(--separator)] px-4 py-2">

@@ -40,6 +40,14 @@ interface RouteMatch {
   projectSlug?: string;
 }
 
+function safeDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 /** Parse `pathname` into one of the contextual buckets above. */
 export function matchRoute(pathname: string): RouteMatch {
   if (pathname.startsWith("/settings")) return { kind: "settings" };
@@ -47,10 +55,10 @@ export function matchRoute(pathname: string): RouteMatch {
 
   // /orgs/{slug}/projects/{slug}...
   const proj = pathname.match(/^\/orgs\/([^/]+)\/projects\/([^/]+)/);
-  if (proj) return { kind: "project", orgSlug: decodeURIComponent(proj[1]!), projectSlug: decodeURIComponent(proj[2]!) };
+  if (proj) return { kind: "project", orgSlug: safeDecodeURIComponent(proj[1]!), projectSlug: safeDecodeURIComponent(proj[2]!) };
 
   const org = pathname.match(/^\/orgs\/([^/]+)/);
-  if (org) return { kind: "org", orgSlug: decodeURIComponent(org[1]!) };
+  if (org) return { kind: "org", orgSlug: safeDecodeURIComponent(org[1]!) };
 
   if (pathname === "/orgs" || pathname.startsWith("/orgs")) return { kind: "orgs" };
   return { kind: "root" };

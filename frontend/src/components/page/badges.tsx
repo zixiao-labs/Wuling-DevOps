@@ -66,7 +66,11 @@ export function VisibilityBadge({
   const meta = VIS_META[v];
   const Icon = meta.icon;
   return (
-    <span className="inline-flex items-center gap-1 rounded-sm border border-[var(--border)] bg-[var(--surface-secondary)] px-1.5 py-0.5 text-[11px] text-muted">
+    <span
+      className="inline-flex items-center gap-1 rounded-sm border border-[var(--border)] bg-[var(--surface-secondary)] px-1.5 py-0.5 text-[11px] text-muted"
+      aria-label={hideLabel ? meta.label : undefined}
+      title={hideLabel ? meta.label : undefined}
+    >
       <Icon width={11} height={11} />
       {hideLabel ? null : meta.label}
     </span>

@@ -144,7 +144,7 @@ export default function ProjectOverview() {
                 }
                 meta={
                   <span>
-                    {Math.max(1, Math.round(r.size_bytes / 1024))} KB ·{" "}
+                    {Math.round(r.size_bytes / 1024)} KB ·{" "}
                     <RelativeTime iso={r.created_at} />
                   </span>
                 }

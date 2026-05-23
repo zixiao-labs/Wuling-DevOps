@@ -35,10 +35,13 @@ export default function InsightsPage() {
   const [error, setError] = useState<ApiError | null>(null);
 
   useEffect(() => {
-    reposApi.list(org.slug, project.slug).then((r) => {
-      setRepos(r);
-      if (r.length > 0 && !selectedRepo) setSelectedRepo(r[0]!.slug);
-    });
+    reposApi
+      .list(org.slug, project.slug)
+      .then((r) => {
+        setRepos(r);
+        setSelectedRepo(r.length > 0 ? r[0]!.slug : "");
+      })
+      .catch((e) => setError(e as ApiError));
   }, [org.slug, project.slug]);
 
   useEffect(() => {

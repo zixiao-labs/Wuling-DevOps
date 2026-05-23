@@ -103,15 +103,17 @@ export function NavGroup({ icon: Icon, label, match, children }: NavGroupProps) 
   const { pathname } = useLocation();
   const auto = match ? pathname.startsWith(match) : false;
   const [open, setOpen] = useState(auto);
-  // Re-sync when the URL changes underneath us. (useEffect would be cleaner
-  // but the cost of a tiny re-render here is negligible.)
-  const effectiveOpen = open || auto;
+  const [userToggled, setUserToggled] = useState(false);
+  const effectiveOpen = userToggled ? open : open || auto;
 
   return (
     <div className="flex flex-col">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          setUserToggled(true);
+          setOpen((v) => !v);
+        }}
         className="flex h-7 items-center gap-2 rounded-sm pl-3 pr-2 text-[13px] text-fg/85 hover:bg-[var(--surface-secondary)] hover:text-fg"
       >
         {Icon ? <Icon width={14} height={14} className="shrink-0 opacity-80" /> : null}

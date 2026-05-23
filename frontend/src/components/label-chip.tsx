@@ -29,26 +29,27 @@ export function LabelChip({
   const bg = normalizeHex(label.color);
   const fg = isLight(bg) ? "#1a1a1a" : "#fafafa";
   const padding = size === "sm" ? "px-1.5 py-0 text-[10.5px]" : "px-2 py-px text-[11.5px]";
+  const interactive = !!onClick && !onRemove;
   return (
     <span
-      onClick={onClick}
+      onClick={interactive ? onClick : undefined}
       onKeyDown={
-        onClick
+        interactive
           ? (e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
-                onClick();
+                onClick!();
               }
             }
           : undefined
       }
-      role={onClick ? "button" : undefined}
-      tabIndex={onClick ? 0 : undefined}
+      role={interactive ? "button" : undefined}
+      tabIndex={interactive ? 0 : undefined}
       title={label.description || label.name}
       className={[
         "inline-flex items-center gap-1 select-none rounded-full font-medium leading-none ring-1 ring-inset ring-black/10",
         padding,
-        onClick ? "cursor-pointer hover:brightness-110" : "cursor-default",
+        interactive ? "cursor-pointer hover:brightness-110" : "cursor-default",
       ].join(" ")}
       style={{ background: bg, color: fg }}
     >

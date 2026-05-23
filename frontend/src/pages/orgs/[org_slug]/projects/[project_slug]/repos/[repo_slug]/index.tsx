@@ -247,7 +247,7 @@ function CloneRow({ label, url }: { label: string; url: string }) {
         type="button"
         variant="outline"
         size="sm"
-        className="!h-[26px] !rounded-none border-0 border-l border-[var(--border)]"
+        className="h-[26px]! rounded-none! border-0 border-l border-[var(--border)]"
         onPress={async () => {
           if (!navigator.clipboard) {
             alert("当前浏览器不支持自动复制；请手动选中地址。");

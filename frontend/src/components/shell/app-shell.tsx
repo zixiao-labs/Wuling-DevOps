@@ -41,7 +41,11 @@ const COLLAPSE_KEY = "wuling.sidebarCollapsed";
 
 function readCollapsed(): boolean {
   if (typeof window === "undefined") return false;
-  return localStorage.getItem(COLLAPSE_KEY) === "1";
+  try {
+    return localStorage.getItem(COLLAPSE_KEY) === "1";
+  } catch {
+    return false;
+  }
 }
 
 export function AppShell() {
@@ -249,7 +253,7 @@ function ContextRail() {
       {RAIL_TOP.map((it, i) => {
         const Icon = it.icon;
         let active = false;
-        if (i === 0) active = pathname === "/" || pathname === "/orgs" && route.kind === "orgs";
+        if (i === 0) active = pathname === "/";
         if (i === 1) active = inOrgsScope;
         return <RailButton key={`${it.to}#${i}`} to={it.to} icon={Icon} label={it.label} active={active} />;
       })}

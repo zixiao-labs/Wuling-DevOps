@@ -132,11 +132,11 @@ export default function SshKeysPage() {
               <table className="w-full border-collapse text-[13px]">
                 <thead>
                   <tr className="border-b border-[var(--separator)] bg-[var(--surface-secondary)]/40 text-left">
-                    <th className="px-4 py-2 text-[11.5px] uppercase tracking-wider text-muted">标题</th>
-                    <th className="px-4 py-2 text-[11.5px] uppercase tracking-wider text-muted">指纹</th>
-                    <th className="px-4 py-2 text-[11.5px] uppercase tracking-wider text-muted">添加</th>
-                    <th className="px-4 py-2 text-[11.5px] uppercase tracking-wider text-muted">最近使用</th>
-                    <th className="px-4 py-2"></th>
+                    <th scope="col" className="px-4 py-2 text-[11.5px] uppercase tracking-wider text-muted">标题</th>
+                    <th scope="col" className="px-4 py-2 text-[11.5px] uppercase tracking-wider text-muted">指纹</th>
+                    <th scope="col" className="px-4 py-2 text-[11.5px] uppercase tracking-wider text-muted">添加</th>
+                    <th scope="col" className="px-4 py-2 text-[11.5px] uppercase tracking-wider text-muted">最近使用</th>
+                    <th scope="col" className="px-4 py-2"></th>
                   </tr>
                 </thead>
                 <tbody>
