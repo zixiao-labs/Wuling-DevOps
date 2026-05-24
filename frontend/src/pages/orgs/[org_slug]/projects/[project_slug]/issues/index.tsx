@@ -1,5 +1,7 @@
-import { Button, Description, Input, Label, TextField } from "@heroui/react";
+import { Button } from "@heroui/react";
 import PlusIcon from "@gravity-ui/icons/Plus";
+import Magnifier from "@gravity-ui/icons/Magnifier";
+import CircleQuestion from "@gravity-ui/icons/CircleQuestion";
 import { Link, useSearchParams } from "chen-the-dawnstreak";
 import { useEffect, useState } from "react";
 
@@ -8,9 +10,17 @@ import { ApiError } from "@/api/errors";
 import { EmptyState } from "@/components/empty-state";
 import { ErrorBanner } from "@/components/error-banner";
 import { LabelChip } from "@/components/label-chip";
-import { Loading } from "@/components/loading";
+import { SkeletonRows } from "@/components/loading";
 import { RelativeTime } from "@/components/relative-time";
 import { UserAvatar } from "@/components/user-avatar";
+import {
+  PageContainer,
+  PageHeader,
+  Surface,
+  SurfaceBody,
+  SurfaceHeader,
+} from "@/components/page/primitives";
+import { StateBadge } from "@/components/page/badges";
 import { useOrgCtx, useProjectCtx } from "@/auth/org-context";
 import type { Issue, IssueState } from "@/api/types";
 
@@ -34,6 +44,11 @@ export default function IssuesIndex() {
   const [items, setItems] = useState<Issue[] | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
 
+  // Mirror the URL search box in local state so typing doesn't pound the
+  // router on every keystroke — commit on blur or Enter.
+  const [searchDraft, setSearchDraft] = useState(q);
+  useEffect(() => setSearchDraft(q), [q]);
+
   useEffect(() => {
     setItems(null);
     setError(null);
@@ -52,166 +67,177 @@ export default function IssuesIndex() {
 
   const base = `/orgs/${encodeURIComponent(org.slug)}/projects/${encodeURIComponent(project.slug)}/issues`;
 
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-      <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <h1 style={{ margin: 0, fontSize: "1.5rem" }}>Issues</h1>
-        <Link to={`${base}/new`}>
-          <Button>
-            <PlusIcon width={16} height={16} /> 新建
-          </Button>
-        </Link>
-      </header>
+  function update(key: string, value: string) {
+    const sp = new URLSearchParams(search);
+    if (value) sp.set(key, value);
+    else sp.delete(key);
+    setSearch(sp);
+  }
 
-      <div style={{ display: "flex", gap: "1rem", alignItems: "end", flexWrap: "wrap" }}>
-        <div style={{ display: "inline-flex", gap: "0.25rem" }}>
-          {STATES.map((s) => (
-            <button
-              key={s.id}
-              onClick={() => {
-                const sp = new URLSearchParams(search);
-                if (s.id === "open") sp.delete("state");
-                else sp.set("state", s.id);
-                setSearch(sp);
-              }}
-              style={pillStyle(s.id === state)}
-            >
-              {s.label}
-            </button>
-          ))}
-        </div>
-        <FilterField
-          label="搜索"
-          value={q}
-          onChange={(v) => updateParam(search, setSearch, "search", v)}
-          placeholder="标题/正文…"
-        />
-        <FilterField
-          label="标签"
-          value={label}
-          onChange={(v) => updateParam(search, setSearch, "label", v)}
-        />
-        <FilterField
-          label="作者"
-          value={author}
-          onChange={(v) => updateParam(search, setSearch, "author", v)}
-        />
-        <FilterField
-          label="指派"
-          value={assignee}
-          onChange={(v) => updateParam(search, setSearch, "assignee", v)}
-        />
-      </div>
+  return (
+    <PageContainer wide>
+      <PageHeader
+        title="Issues"
+        description="任务、缺陷和讨论。可以用标签、作者、被指派人过滤。"
+        actions={
+          <Link to={`${base}/new`}>
+            <Button>
+              <PlusIcon width={14} height={14} /> 新建 Issue
+            </Button>
+          </Link>
+        }
+      />
+
+      {/* State toggle + filters */}
+      <Surface className="mb-3">
+        <SurfaceBody>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="inline-flex h-7 items-center overflow-hidden rounded-md border border-[var(--border)] bg-[var(--surface)]">
+              {STATES.map((s, i) => {
+                const active = s.id === state;
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => {
+                      const sp = new URLSearchParams(search);
+                      if (s.id === "open") sp.delete("state");
+                      else sp.set("state", s.id);
+                      setSearch(sp);
+                    }}
+                    className={[
+                      "h-full px-3 text-[12px]",
+                      i > 0 ? "border-l border-[var(--border)]" : "",
+                      active
+                        ? "bg-[var(--surface-secondary)] font-medium text-fg"
+                        : "text-fg/70 hover:bg-[var(--surface-secondary)] hover:text-fg",
+                    ].join(" ")}
+                  >
+                    {s.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <label className="inline-flex h-7 flex-1 min-w-[200px] max-w-md items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--field-background)] px-2 text-[12px] focus-within:border-[var(--accent)]">
+              <Magnifier width={13} height={13} className="opacity-60" />
+              <input
+                type="search"
+                value={searchDraft}
+                onChange={(e) => setSearchDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") update("search", searchDraft);
+                }}
+                onBlur={() => update("search", searchDraft)}
+                placeholder="搜索标题或正文…"
+                className="h-full flex-1 bg-transparent text-fg placeholder:text-muted/80 focus:outline-none"
+              />
+            </label>
+
+            <FilterChip label="标签" value={label} onChange={(v) => update("label", v)} />
+            <FilterChip label="作者" value={author} onChange={(v) => update("author", v)} />
+            <FilterChip label="指派" value={assignee} onChange={(v) => update("assignee", v)} />
+          </div>
+        </SurfaceBody>
+      </Surface>
 
       <ErrorBanner error={error} />
 
-      {items === null ? (
-        <Loading />
-      ) : items.length === 0 ? (
-        <EmptyState title="没有匹配的 issue" description="试着换个过滤条件，或新建一个。" />
-      ) : (
-        <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-          {items.map((it) => (
-            <li
-              key={it.id}
-              style={{
-                padding: "0.75rem 1rem",
-                borderBottom: "1px solid var(--separator)",
-                background: "var(--surface)",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "baseline", gap: "0.75rem" }}>
-                <StateBadge state={it.state} />
-                <Link
-                  to={`${base}/${it.number}`}
-                  style={{ color: "var(--foreground)", textDecoration: "none", fontWeight: 600, flex: 1 }}
-                >
-                  #{it.number} · {it.title}
+      <Surface>
+        <SurfaceHeader dense>
+          <span className="text-[12px] font-medium text-fg">
+            Issues{items ? ` · ${items.length}` : ""}
+          </span>
+          <span className="text-[11.5px] text-muted">按更新时间倒序</span>
+        </SurfaceHeader>
+        <SurfaceBody noPad>
+          {items === null ? (
+            <SkeletonRows count={6} />
+          ) : items.length === 0 ? (
+            <EmptyState
+              inset
+              icon={<CircleQuestion width={20} height={20} />}
+              title="没有匹配的 Issue"
+              description="试着换个过滤条件，或新建一个。"
+              action={
+                <Link to={`${base}/new`}>
+                  <Button>
+                    <PlusIcon width={14} height={14} /> 新建 Issue
+                  </Button>
                 </Link>
-                <span style={{ color: "var(--muted)", fontSize: "0.8rem" }}>
-                  {it.comment_count} 评论
-                </span>
-              </div>
-              <div style={{ marginTop: "0.35rem", display: "flex", alignItems: "center", gap: "0.5rem", color: "var(--muted)", fontSize: "0.8rem", flexWrap: "wrap" }}>
-                <UserAvatar user={it.author} size={18} />
-                <span>{it.author.username}</span>
-                <span>
-                  <RelativeTime iso={it.updated_at} /> 更新
-                </span>
-                {it.labels.map((l) => (
-                  <LabelChip key={l.id} label={l} />
-                ))}
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+              }
+            />
+          ) : (
+            <ul className="list-none divide-y divide-[var(--separator)] m-0 p-0">
+              {items.map((it) => (
+                <li key={it.id} className="px-4 py-2.5 hover:bg-[var(--surface-secondary)]/40">
+                  <div className="flex items-baseline gap-3">
+                    <StateBadge state={it.state} />
+                    <Link
+                      to={`${base}/${it.number}`}
+                      className="min-w-0 flex-1 truncate text-[13.5px] font-medium text-fg hover:text-[var(--accent)] hover:underline"
+                    >
+                      {it.title}
+                    </Link>
+                    <span className="shrink-0 font-mono text-[11.5px] text-muted">
+                      #{it.number}
+                    </span>
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11.5px] text-muted">
+                    <span className="inline-flex items-center gap-1.5">
+                      <UserAvatar user={it.author} size={16} />
+                      {it.author.username}
+                    </span>
+                    <span>
+                      <RelativeTime iso={it.updated_at} /> 更新
+                    </span>
+                    {it.comment_count > 0 ? (
+                      <span className="inline-flex items-center gap-1">
+                        <CircleQuestion width={11} height={11} />
+                        {it.comment_count}
+                      </span>
+                    ) : null}
+                    {it.labels.length > 0 ? (
+                      <span className="inline-flex flex-wrap gap-1">
+                        {it.labels.map((l) => (
+                          <LabelChip key={l.id} label={l} size="sm" />
+                        ))}
+                      </span>
+                    ) : null}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </SurfaceBody>
+      </Surface>
+    </PageContainer>
   );
 }
 
-function FilterField({
+function FilterChip({
   label,
   value,
   onChange,
-  placeholder,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
-  placeholder?: string;
 }) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
   return (
-    <TextField name={label} value={value} onChange={onChange}>
-      <Label>{label}</Label>
-      <Input placeholder={placeholder} style={{ minWidth: "10rem" }} />
-      <Description>留空忽略此过滤。</Description>
-    </TextField>
-  );
-}
-
-function updateParam(
-  cur: URLSearchParams,
-  setter: (p: URLSearchParams) => void,
-  key: string,
-  value: string,
-) {
-  const sp = new URLSearchParams(cur);
-  if (value) sp.set(key, value);
-  else sp.delete(key);
-  setter(sp);
-}
-
-function pillStyle(active: boolean) {
-  return {
-    border: "1px solid var(--border)",
-    background: active ? "var(--accent)" : "var(--surface)",
-    color: active ? "var(--accent-foreground)" : "var(--foreground)",
-    padding: "0.25rem 0.75rem",
-    borderRadius: "999px",
-    cursor: "pointer",
-    fontSize: "0.85rem",
-  } as const;
-}
-
-function StateBadge({ state }: { state: IssueState }) {
-  const map: Record<IssueState, { bg: string; fg: string; label: string }> = {
-    open: { bg: "var(--success)", fg: "var(--success-foreground)", label: "Open" },
-    closed: { bg: "var(--accent)", fg: "var(--accent-foreground)", label: "Closed" },
-  };
-  const c = map[state];
-  return (
-    <span
-      style={{
-        background: c.bg,
-        color: c.fg,
-        padding: "0.05rem 0.5rem",
-        borderRadius: "999px",
-        fontSize: "0.7rem",
-        textTransform: "uppercase",
-      }}
-    >
-      {c.label}
-    </span>
+    <label className="inline-flex h-7 items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--field-background)] px-2 text-[12px] focus-within:border-[var(--accent)]">
+      <span className="text-[11px] uppercase tracking-wider text-muted">{label}</span>
+      <input
+        type="text"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => onChange(draft)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") onChange(draft);
+        }}
+        className="h-full w-[7rem] bg-transparent text-fg focus:outline-none"
+      />
+    </label>
   );
 }

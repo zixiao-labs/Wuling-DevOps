@@ -1,9 +1,9 @@
-import { Card } from "@heroui/react";
 import { useNavigate } from "chen-the-dawnstreak";
 import { useEffect, useRef, useState } from "react";
 
 import { auth as authApi } from "@/api/endpoints";
 import { setSession, setUser } from "@/auth/store";
+import { Loading } from "@/components/loading";
 
 /**
  * /oauth/callback — terminal landing page for the GitHub OAuth flow.
@@ -12,11 +12,6 @@ import { setSession, setUser } from "@/auth/store";
  *   #access_token=...&expires_at=...
  *   #pending_approval=1&status=pending&username=...
  *   #error=...&error_description=...
- *
- * The fragment is the established SPA convention because it never leaves the
- * browser (the OAuth helper relies on this to keep the JWT out of server
- * logs). On success we hydrate the session via /me — the redirect handler
- * doesn't get to call setSession itself, so we round-trip through the API.
  */
 export default function OAuthCallbackPage() {
   const navigate = useNavigate();
@@ -26,8 +21,6 @@ export default function OAuthCallbackPage() {
     | { kind: "error"; code: string; message: string }
   >({ kind: "loading" });
 
-  // Guard against React's StrictMode mounting the component twice in dev —
-  // we only want to consume the fragment once.
   const ran = useRef(false);
 
   useEffect(() => {
@@ -38,7 +31,6 @@ export default function OAuthCallbackPage() {
       ? window.location.hash.slice(1)
       : window.location.hash;
     const params = new URLSearchParams(hash);
-    // Wipe the fragment so a forward-nav doesn't re-process the token.
     history.replaceState(null, "", window.location.pathname);
 
     const err = params.get("error");
@@ -67,10 +59,6 @@ export default function OAuthCallbackPage() {
     }
 
     (async () => {
-      // configureClient pulls the bearer through the auth store on every
-      // request, so the token has to land in the store BEFORE /me — otherwise
-      // /me goes out unauthenticated and the session never hydrates. Drop in
-      // a placeholder user first, then replace it once /me returns.
       const placeholder = {
         id: "",
         username: "",
@@ -88,40 +76,34 @@ export default function OAuthCallbackPage() {
         const returnTo = params.get("return_to") ?? "/orgs";
         navigate(returnTo, { replace: true });
       } catch {
-        // /me failed — keep the token (it might just be a transient network
-        // blip) and let the next page surface a real error via the auth guard.
         navigate("/orgs", { replace: true });
       }
     })();
   }, [navigate]);
 
   return (
-    <div style={{ maxWidth: 480, margin: "3rem auto" }}>
-      <Card>
-        <Card.Header>
-          <Card.Title>GitHub 登录</Card.Title>
-        </Card.Header>
-        <Card.Content>
-          {state.kind === "loading" && <p>正在完成登录…</p>}
-          {state.kind === "pending" && (
-            <>
-              <p>账号已经创建，但还需要管理员审核才能登录。</p>
-              <p style={{ color: "var(--muted)", marginTop: "0.5rem", fontSize: "0.9rem" }}>
-                {state.username ? `用户名：${state.username}。 ` : ""}
-                管理员通过审核后，再次使用 GitHub 登录即可。
-              </p>
-            </>
-          )}
-          {state.kind === "error" && (
-            <>
-              <p style={{ color: "var(--danger, #c0392b)" }}>登录失败：{state.message}</p>
-              <p style={{ color: "var(--muted)", fontSize: "0.85rem", marginTop: "0.5rem" }}>
-                错误代码：<code>{state.code}</code>
-              </p>
-            </>
-          )}
-        </Card.Content>
-      </Card>
+    <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-6 shadow-md">
+      <h1 className="m-0 text-[18px] font-semibold text-fg">GitHub 登录</h1>
+      <div className="mt-4">
+        {state.kind === "loading" && <Loading label="正在完成登录…" />}
+        {state.kind === "pending" && (
+          <>
+            <p className="text-[13px] text-fg">账号已经创建，但还需要管理员审核才能登录。</p>
+            <p className="mt-2 text-[12.5px] text-muted">
+              {state.username ? `用户名：${state.username}。 ` : ""}
+              管理员通过审核后，再次使用 GitHub 登录即可。
+            </p>
+          </>
+        )}
+        {state.kind === "error" && (
+          <>
+            <p className="text-[13px] text-[var(--danger)]">登录失败：{state.message}</p>
+            <p className="mt-2 text-[12.5px] text-muted">
+              错误代码：<code className="rounded-sm bg-[var(--surface-secondary)] px-1.5 py-0.5">{state.code}</code>
+            </p>
+          </>
+        )}
+      </div>
     </div>
   );
 }

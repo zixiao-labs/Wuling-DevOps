@@ -1,5 +1,6 @@
-import { Button, Description, Input, Label, TextField } from "@heroui/react";
+import { Button } from "@heroui/react";
 import PlusIcon from "@gravity-ui/icons/Plus";
+import CodePullRequest from "@gravity-ui/icons/CodePullRequest";
 import { Link, useParams, useSearchParams } from "chen-the-dawnstreak";
 import { useEffect, useState } from "react";
 
@@ -7,9 +8,17 @@ import { mergeRequests as mrApi } from "@/api/endpoints";
 import { ApiError } from "@/api/errors";
 import { EmptyState } from "@/components/empty-state";
 import { ErrorBanner } from "@/components/error-banner";
-import { Loading } from "@/components/loading";
+import { SkeletonRows } from "@/components/loading";
 import { RelativeTime } from "@/components/relative-time";
 import { UserAvatar } from "@/components/user-avatar";
+import {
+  PageContainer,
+  PageHeader,
+  Surface,
+  SurfaceBody,
+  SurfaceHeader,
+} from "@/components/page/primitives";
+import { StateBadge } from "@/components/page/badges";
 import { useOrgCtx, useProjectCtx } from "@/auth/org-context";
 import type { MRState, MergeRequest } from "@/api/types";
 
@@ -29,6 +38,8 @@ export default function MRListPage() {
 
   const state = (search.get("state") ?? "open") as MRState | "all";
   const author = search.get("author") ?? "";
+  const [authorDraft, setAuthorDraft] = useState(author);
+  useEffect(() => setAuthorDraft(author), [author]);
 
   const [items, setItems] = useState<MergeRequest[] | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
@@ -48,136 +59,144 @@ export default function MRListPage() {
 
   const base = `/orgs/${encodeURIComponent(org.slug)}/projects/${encodeURIComponent(project.slug)}/repos/${encodeURIComponent(repoSlug)}/merge-requests`;
 
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-      <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <h1 style={{ margin: 0, fontSize: "1.5rem" }}>合并请求</h1>
-        <Link to={`${base}/new`}>
-          <Button>
-            <PlusIcon width={16} height={16} /> 新建 MR
-          </Button>
-        </Link>
-      </header>
+  function commitAuthor() {
+    const sp = new URLSearchParams(search);
+    if (authorDraft) sp.set("author", authorDraft);
+    else sp.delete("author");
+    setSearch(sp);
+  }
 
-      <div style={{ display: "flex", gap: "1rem", alignItems: "center", flexWrap: "wrap" }}>
-        <div style={{ display: "inline-flex", gap: "0.25rem" }}>
-          {STATES.map((s) => (
-            <button
-              key={s.id}
-              onClick={() => {
-                const sp = new URLSearchParams(search);
-                if (s.id === "open") sp.delete("state");
-                else sp.set("state", s.id);
-                setSearch(sp);
-              }}
-              style={pillStyle(s.id === state)}
-            >
-              {s.label}
-            </button>
-          ))}
-        </div>
-        <TextField
-          name="author"
-          value={author}
-          onChange={(v) => {
-            const sp = new URLSearchParams(search);
-            if (v) sp.set("author", v);
-            else sp.delete("author");
-            setSearch(sp);
-          }}
-        >
-          <Label>作者</Label>
-          <Input placeholder="username 或 UUID" />
-          <Description>留空显示所有作者。</Description>
-        </TextField>
-      </div>
+  return (
+    <PageContainer wide>
+      <PageHeader
+        title="合并请求"
+        description={`仓库 ${repoSlug} 的所有 MR，按更新时间倒序。`}
+        actions={
+          <Link to={`${base}/new`}>
+            <Button>
+              <PlusIcon width={14} height={14} /> 新建 MR
+            </Button>
+          </Link>
+        }
+      />
+
+      <Surface className="mb-3">
+        <SurfaceBody>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="inline-flex h-7 items-center overflow-hidden rounded-md border border-[var(--border)] bg-[var(--surface)]">
+              {STATES.map((s, i) => {
+                const active = s.id === state;
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => {
+                      const sp = new URLSearchParams(search);
+                      if (s.id === "open") sp.delete("state");
+                      else sp.set("state", s.id);
+                      setSearch(sp);
+                    }}
+                    className={[
+                      "h-full px-3 text-[12px]",
+                      i > 0 ? "border-l border-[var(--border)]" : "",
+                      active
+                        ? "bg-[var(--surface-secondary)] font-medium text-fg"
+                        : "text-fg/70 hover:bg-[var(--surface-secondary)] hover:text-fg",
+                    ].join(" ")}
+                  >
+                    {s.label}
+                  </button>
+                );
+              })}
+            </div>
+            <label className="inline-flex h-7 items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--field-background)] px-2 text-[12px] focus-within:border-[var(--accent)]">
+              <span className="text-[11px] uppercase tracking-wider text-muted">作者</span>
+              <input
+                type="text"
+                value={authorDraft}
+                onChange={(e) => setAuthorDraft(e.target.value)}
+                onBlur={commitAuthor}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") commitAuthor();
+                }}
+                placeholder="username 或 UUID"
+                className="h-full w-[10rem] bg-transparent text-fg placeholder:text-muted/80 focus:outline-none"
+              />
+            </label>
+          </div>
+        </SurfaceBody>
+      </Surface>
 
       <ErrorBanner error={error} />
 
-      {items === null ? (
-        <Loading />
-      ) : items.length === 0 ? (
-        <EmptyState
-          title="没有匹配的 MR"
-          description="尝试切换状态过滤，或新建一个 MR。"
-        />
-      ) : (
-        <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-          {items.map((mr) => (
-            <li
-              key={mr.id}
-              style={{
-                padding: "0.75rem 1rem",
-                borderBottom: "1px solid var(--separator)",
-                background: "var(--surface)",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "baseline", gap: "0.75rem" }}>
-                <StateBadge state={mr.state} />
-                <Link
-                  to={`${base}/${mr.number}`}
-                  style={{ color: "var(--foreground)", textDecoration: "none", fontWeight: 600, flex: 1 }}
-                >
-                  #{mr.number} · {mr.title}
+      <Surface>
+        <SurfaceHeader dense>
+          <span className="text-[12px] font-medium text-fg">
+            合并请求{items ? ` · ${items.length}` : ""}
+          </span>
+        </SurfaceHeader>
+        <SurfaceBody noPad>
+          {items === null ? (
+            <SkeletonRows count={5} />
+          ) : items.length === 0 ? (
+            <EmptyState
+              inset
+              icon={<CodePullRequest width={20} height={20} />}
+              title="没有匹配的 MR"
+              description="尝试切换状态过滤，或新建一个 MR。"
+              action={
+                <Link to={`${base}/new`}>
+                  <Button>
+                    <PlusIcon width={14} height={14} /> 新建 MR
+                  </Button>
                 </Link>
-                <span style={{ color: "var(--muted)", fontSize: "0.8rem" }}>
-                  {mr.comment_count} 评论 · {mr.review_count} 评审
-                </span>
-              </div>
-              <div style={{ marginTop: "0.35rem", display: "flex", alignItems: "center", gap: "0.5rem", color: "var(--muted)", fontSize: "0.8rem" }}>
-                <UserAvatar user={mr.author} size={18} />
-                <span>{mr.author.username}</span>
-                <span>
-                  <code>{shortRef(mr.source_ref)}</code> → <code>{shortRef(mr.target_ref)}</code>
-                </span>
-                <span>
-                  <RelativeTime iso={mr.updated_at} /> 更新
-                </span>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+              }
+            />
+          ) : (
+            <ul className="list-none divide-y divide-[var(--separator)] m-0 p-0">
+              {items.map((mr) => (
+                <li key={mr.id} className="px-4 py-2.5 hover:bg-[var(--surface-secondary)]/40">
+                  <div className="flex items-baseline gap-3">
+                    <StateBadge state={mr.state} />
+                    <Link
+                      to={`${base}/${mr.number}`}
+                      className="min-w-0 flex-1 truncate text-[13.5px] font-medium text-fg hover:text-[var(--accent)] hover:underline"
+                    >
+                      {mr.title}
+                    </Link>
+                    <span className="shrink-0 font-mono text-[11.5px] text-muted">
+                      #{mr.number}
+                    </span>
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11.5px] text-muted">
+                    <span className="inline-flex items-center gap-1.5">
+                      <UserAvatar user={mr.author} size={16} />
+                      {mr.author.username}
+                    </span>
+                    <span className="inline-flex items-center gap-1 font-mono text-[11px]">
+                      <code className="rounded-sm bg-[var(--surface-secondary)] px-1.5 py-px text-fg">
+                        {shortRef(mr.source_ref)}
+                      </code>
+                      <span>→</span>
+                      <code className="rounded-sm bg-[var(--surface-secondary)] px-1.5 py-px text-fg">
+                        {shortRef(mr.target_ref)}
+                      </code>
+                    </span>
+                    <span>
+                      <RelativeTime iso={mr.updated_at} /> 更新
+                    </span>
+                    {mr.review_count > 0 ? <span>{mr.review_count} 评审</span> : null}
+                    {mr.comment_count > 0 ? <span>{mr.comment_count} 评论</span> : null}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </SurfaceBody>
+      </Surface>
+    </PageContainer>
   );
 }
 
 function shortRef(r: string): string {
   return r.replace(/^refs\/(heads|tags)\//, "");
-}
-
-function pillStyle(active: boolean) {
-  return {
-    border: "1px solid var(--border)",
-    background: active ? "var(--accent)" : "var(--surface)",
-    color: active ? "var(--accent-foreground)" : "var(--foreground)",
-    padding: "0.25rem 0.75rem",
-    borderRadius: "999px",
-    cursor: "pointer",
-    fontSize: "0.85rem",
-  } as const;
-}
-
-function StateBadge({ state }: { state: MRState }) {
-  const map: Record<MRState, { bg: string; fg: string; label: string }> = {
-    open: { bg: "var(--success)", fg: "var(--success-foreground)", label: "Open" },
-    merged: { bg: "var(--accent)", fg: "var(--accent-foreground)", label: "Merged" },
-    closed: { bg: "var(--default)", fg: "var(--default-foreground)", label: "Closed" },
-  };
-  const c = map[state];
-  return (
-    <span
-      style={{
-        background: c.bg,
-        color: c.fg,
-        padding: "0.05rem 0.5rem",
-        borderRadius: "999px",
-        fontSize: "0.7rem",
-        textTransform: "uppercase",
-        letterSpacing: "0.05em",
-      }}
-    >
-      {c.label}
-    </span>
-  );
 }

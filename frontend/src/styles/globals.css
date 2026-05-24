@@ -18,6 +18,64 @@
 @import "./theme-green.css";
 @import "./theme-zixiaolabsvi.css";
 
+/* ---------------------------------------------------------------------------
+ * Source declarations — without these, nasti's Tailwind plugin only scans
+ * CSS files (its `oxide.Scanner` is fed `compiler.sources`, which defaults
+ * to nothing). We point it at every JSX/TS source under `src/` so the
+ * utility classes used in component code actually get generated.
+ * Paths are relative to THIS file (`src/styles/globals.css`).
+ * --------------------------------------------------------------------------- */
+@source "../**/*.{ts,tsx,jsx,js}";
+@source "../../index.html";
+
+/* ---------------------------------------------------------------------------
+ * Tailwind v4 bridge — map existing theme CSS variables to utility classes.
+ * `inline` keeps the var() reference live so theme switching is reactive.
+ * We only ALIAS variables already defined in theme-*.css; no new colors are
+ * introduced here.
+ * --------------------------------------------------------------------------- */
+@theme inline {
+  /* Surfaces & background */
+  --color-bg:                 var(--background);
+  --color-surface:            var(--surface);
+  --color-surface-2:          var(--surface-secondary);
+  --color-surface-3:          var(--surface-tertiary);
+  --color-overlay:            var(--overlay);
+
+  /* Borders & dividers */
+  --color-border:             var(--border);
+  --color-separator:          var(--separator);
+
+  /* Text */
+  --color-fg:                 var(--foreground);
+  --color-muted:              var(--muted);
+
+  /* Brand & semantic */
+  --color-accent:             var(--accent);
+  --color-accent-fg:          var(--accent-foreground);
+  --color-danger:             var(--danger);
+  --color-danger-fg:          var(--danger-foreground);
+  --color-success:            var(--success);
+  --color-success-fg:         var(--success-foreground);
+  --color-warning:            var(--warning);
+  --color-warning-fg:         var(--warning-foreground);
+  --color-focus:              var(--focus);
+
+  /* Fields / inputs */
+  --color-field:              var(--field-background);
+  --color-field-fg:           var(--field-foreground);
+  --color-field-placeholder:  var(--field-placeholder);
+
+  /* Radii — alias only, theme files own the actual values */
+  --radius-token:             var(--radius);
+  --radius-field:             var(--field-radius);
+
+  /* Font */
+  --font-sans:                var(--font-sans);
+  --font-mono:                "JetBrains Mono", "SF Mono", ui-monospace,
+                              Menlo, Consolas, monospace;
+}
+
 html,
 body,
 #root {

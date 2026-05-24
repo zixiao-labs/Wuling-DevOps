@@ -1,14 +1,22 @@
-import { Button, Card, Description, Input, Label, TextField } from "@heroui/react";
+import { Button, Description, Input, Label, TextField } from "@heroui/react";
 import PlusIcon from "@gravity-ui/icons/Plus";
-import HouseIcon from "@gravity-ui/icons/House";
-import { Link } from "chen-the-dawnstreak";
+import LayersIcon from "@gravity-ui/icons/Layers";
 import { useEffect, useState } from "react";
 
 import { orgs as orgsApi } from "@/api/endpoints";
 import { ApiError } from "@/api/errors";
 import { EmptyState } from "@/components/empty-state";
 import { ErrorBanner } from "@/components/error-banner";
-import { Loading } from "@/components/loading";
+import { SkeletonRows } from "@/components/loading";
+import { DataList, ListRow } from "@/components/page/data-list";
+import {
+  PageContainer,
+  PageHeader,
+  Surface,
+  SurfaceBody,
+  SurfaceHeader,
+} from "@/components/page/primitives";
+import { Pill } from "@/components/page/badges";
 import { RelativeTime } from "@/components/relative-time";
 import { RequireAuth } from "@/auth/guards";
 import type { Org } from "@/api/types";
@@ -25,7 +33,6 @@ function OrgsList() {
   const [items, setItems] = useState<Org[] | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
 
-  // Create-form state
   const [slug, setSlug] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [description, setDescription] = useState("");
@@ -61,28 +68,22 @@ function OrgsList() {
   }
 
   return (
-    <div>
-      <header
-        style={{
-          display: "flex",
-          alignItems: "baseline",
-          justifyContent: "space-between",
-          marginBottom: "1rem",
-        }}
-      >
-        <h1 style={{ margin: 0, fontSize: "1.5rem" }}>组织</h1>
-        <Button variant="primary" onPress={() => setShowForm((v) => !v)}>
-          <PlusIcon width={16} height={16} /> {showForm ? "取消" : "新建组织"}
-        </Button>
-      </header>
+    <PageContainer>
+      <PageHeader
+        title="组织"
+        description="组织是项目和成员的承载单元。每个用户都自带一个同名个人组织。"
+        actions={
+          <Button onPress={() => setShowForm((v) => !v)}>
+            <PlusIcon width={14} height={14} /> {showForm ? "取消" : "新建组织"}
+          </Button>
+        }
+      />
 
       {showForm ? (
-        <Card style={{ marginBottom: "1rem" }}>
-          <Card.Content>
-            <form
-              onSubmit={onCreate}
-              style={{ display: "flex", flexDirection: "column", gap: "0.9rem" }}
-            >
+        <Surface className="mb-4">
+          <SurfaceHeader title="新建组织" description="Slug 决定 URL 路径段；显示名可以稍后修改。" />
+          <SurfaceBody>
+            <form onSubmit={onCreate} className="flex flex-col gap-3.5">
               <TextField name="slug" value={slug} onChange={setSlug} isRequired>
                 <Label>Slug</Label>
                 <Input placeholder="zixiao-labs" />
@@ -97,79 +98,80 @@ function OrgsList() {
                 <Input />
               </TextField>
               <ErrorBanner error={error} />
-              <div>
+              <div className="flex justify-end">
                 <Button type="submit" isDisabled={creating || !slug}>
-                  {creating ? "创建中…" : "创建"}
+                  {creating ? "创建中…" : "创建组织"}
                 </Button>
               </div>
             </form>
-          </Card.Content>
-        </Card>
+          </SurfaceBody>
+        </Surface>
       ) : (
         <ErrorBanner error={error} />
       )}
 
-      {items === null ? (
-        <Loading />
-      ) : items.length === 0 ? (
-        <EmptyState
-          icon={<HouseIcon width={32} height={32} />}
-          title="还没有任何组织"
-          description="新建你的第一个组织来托管项目。"
-          action={
-            <Button onPress={() => setShowForm(true)}>
-              <PlusIcon width={16} height={16} /> 新建组织
-            </Button>
-          }
-        />
-      ) : (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-            gap: "1rem",
-          }}
-        >
-          {items.map((o) => (
-            <Link
-              key={o.id}
-              to={`/orgs/${encodeURIComponent(o.slug)}`}
-              style={{ color: "var(--foreground)", textDecoration: "none" }}
-            >
-              <Card>
-                <Card.Header>
-                  <Card.Title>
-                    {o.display_name || o.slug}
-                    {o.is_personal ? (
-                      <span
-                        style={{
-                          marginLeft: "0.5rem",
-                          fontSize: "0.7rem",
-                          color: "var(--muted)",
-                          background: "var(--surface-secondary)",
-                          padding: "0.05rem 0.4rem",
-                          borderRadius: "999px",
-                        }}
-                      >
-                        个人
-                      </span>
-                    ) : null}
-                  </Card.Title>
-                  <Card.Description>@{o.slug}</Card.Description>
-                </Card.Header>
-                <Card.Content>
-                  <div style={{ color: "var(--muted)", minHeight: "1.2em" }}>
-                    {o.description || "—"}
-                  </div>
-                  <div style={{ fontSize: "0.75rem", color: "var(--muted)", marginTop: "0.5rem" }}>
-                    <RelativeTime iso={o.created_at} /> 创建
-                  </div>
-                </Card.Content>
-              </Card>
-            </Link>
-          ))}
-        </div>
-      )}
-    </div>
+      <Surface>
+        <SurfaceHeader dense>
+          <span className="text-[12px] font-medium text-fg">
+            全部组织{items ? ` · ${items.length}` : ""}
+          </span>
+          {items && items.length > 0 ? (
+            <span className="text-[11.5px] text-muted">点击进入查看项目</span>
+          ) : null}
+        </SurfaceHeader>
+        <SurfaceBody noPad>
+          {items === null ? (
+            <SkeletonRows count={4} />
+          ) : items.length === 0 ? (
+            <EmptyState
+              inset
+              icon={<LayersIcon width={20} height={20} />}
+              title="还没有任何组织"
+              description="新建你的第一个组织来托管项目。"
+              action={
+                <Button onPress={() => setShowForm(true)}>
+                  <PlusIcon width={14} height={14} /> 新建组织
+                </Button>
+              }
+            />
+          ) : (
+            <DataList>
+              {items.map((o) => (
+                <ListRow
+                  key={o.id}
+                  to={`/orgs/${encodeURIComponent(o.slug)}`}
+                  icon={
+                    <span
+                      aria-hidden
+                      className="grid h-8 w-8 place-items-center rounded-md text-[12px] font-semibold uppercase text-[var(--accent-foreground)]"
+                      style={{ background: "var(--accent)" }}
+                    >
+                      {(o.display_name || o.slug).slice(0, 1)}
+                    </span>
+                  }
+                  title={
+                    <span className="inline-flex items-center gap-2">
+                      <span>{o.display_name || o.slug}</span>
+                      {o.is_personal ? <Pill tone="neutral">个人</Pill> : null}
+                    </span>
+                  }
+                  subtitle={
+                    <span>
+                      <code className="font-mono text-[11px] text-muted">@{o.slug}</code>
+                      {o.description ? <span className="ml-2 text-muted">· {o.description}</span> : null}
+                    </span>
+                  }
+                  meta={
+                    <span>
+                      <RelativeTime iso={o.created_at} /> 创建
+                    </span>
+                  }
+                />
+              ))}
+            </DataList>
+          )}
+        </SurfaceBody>
+      </Surface>
+    </PageContainer>
   );
 }

@@ -1,21 +1,30 @@
-import { Button, Card, Description, Input, Label, TextField } from "@heroui/react";
+import { Button, Description, Input, Label, TextField } from "@heroui/react";
 import PlusIcon from "@gravity-ui/icons/Plus";
-import { Link } from "chen-the-dawnstreak";
+import CodeIcon from "@gravity-ui/icons/Code";
 import { useEffect, useState } from "react";
 
 import { repos as reposApi } from "@/api/endpoints";
 import { ApiError } from "@/api/errors";
 import { EmptyState } from "@/components/empty-state";
 import { ErrorBanner } from "@/components/error-banner";
-import { Loading } from "@/components/loading";
+import { SkeletonRows } from "@/components/loading";
+import { DataList, ListRow } from "@/components/page/data-list";
+import {
+  PageContainer,
+  PageHeader,
+  Surface,
+  SurfaceBody,
+  SurfaceHeader,
+} from "@/components/page/primitives";
+import { Pill, VisibilityIcon } from "@/components/page/badges";
 import { RelativeTime } from "@/components/relative-time";
 import { useOrgCtx, useProjectCtx } from "@/auth/org-context";
 import type { Repo, Visibility } from "@/api/types";
 
-const VIS: Array<{ id: Visibility; label: string }> = [
-  { id: "private", label: "私有" },
-  { id: "internal", label: "内部" },
-  { id: "public", label: "公开" },
+const VIS: Array<{ id: Visibility; label: string; hint: string }> = [
+  { id: "private", label: "私有", hint: "仅成员可见" },
+  { id: "internal", label: "内部", hint: "登录用户可见" },
+  { id: "public", label: "公开", hint: "未登录访客也可见" },
 ];
 
 export default function ReposIndex() {
@@ -64,128 +73,140 @@ export default function ReposIndex() {
   const base = `/orgs/${encodeURIComponent(org.slug)}/projects/${encodeURIComponent(project.slug)}/repos`;
 
   return (
-    <div>
-      <header
-        style={{
-          display: "flex",
-          alignItems: "baseline",
-          justifyContent: "space-between",
-          marginBottom: "1rem",
-        }}
-      >
-        <h1 style={{ margin: 0, fontSize: "1.5rem" }}>仓库</h1>
-        <Button onPress={() => setShowForm((v) => !v)}>
-          <PlusIcon width={16} height={16} /> {showForm ? "取消" : "新建仓库"}
-        </Button>
-      </header>
+    <PageContainer>
+      <PageHeader
+        title="仓库"
+        description="项目下的 git 仓库。每个仓库自动开启 smart-HTTP 与 SSH。"
+        actions={
+          <Button onPress={() => setShowForm((v) => !v)}>
+            <PlusIcon width={14} height={14} /> {showForm ? "取消" : "新建仓库"}
+          </Button>
+        }
+      />
 
       {showForm ? (
-        <Card style={{ marginBottom: "1rem" }}>
-          <Card.Content>
-            <form
-              onSubmit={onCreate}
-              style={{ display: "flex", flexDirection: "column", gap: "0.9rem" }}
-            >
+        <Surface className="mb-4">
+          <SurfaceHeader title="新建仓库" />
+          <SurfaceBody>
+            <form onSubmit={onCreate} className="flex flex-col gap-3.5">
               <TextField name="slug" value={slug} onChange={setSlug} isRequired>
                 <Label>Slug</Label>
                 <Input placeholder="my-repo" />
                 <Description>2–64 字符，作为 URL 路径段。</Description>
               </TextField>
-              <TextField name="display_name" value={displayName} onChange={setDisplayName}>
-                <Label>显示名</Label>
-                <Input />
-              </TextField>
-              <TextField name="default_branch" value={defaultBranch} onChange={setDefaultBranch}>
-                <Label>默认分支</Label>
-                <Input placeholder="main" />
-              </TextField>
+              <div className="grid gap-3.5 sm:grid-cols-2">
+                <TextField name="display_name" value={displayName} onChange={setDisplayName}>
+                  <Label>显示名</Label>
+                  <Input />
+                </TextField>
+                <TextField name="default_branch" value={defaultBranch} onChange={setDefaultBranch}>
+                  <Label>默认分支</Label>
+                  <Input placeholder="main" />
+                </TextField>
+              </div>
               <div>
-                <div style={{ fontSize: "0.85rem", marginBottom: "0.4rem" }}>可见性</div>
-                <div style={{ display: "flex", gap: "0.5rem" }}>
+                <div className="mb-1.5 text-[12.5px] font-medium text-fg">可见性</div>
+                <div className="grid gap-2 sm:grid-cols-3">
                   {VIS.map((v) => (
                     <label
                       key={v.id}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: "0.3rem",
-                        padding: "0.25rem 0.6rem",
-                        border: "1px solid var(--border)",
-                        borderRadius: "var(--field-radius)",
-                        cursor: "pointer",
-                        background: visibility === v.id ? "var(--surface-secondary)" : "var(--surface)",
-                      }}
+                      className={[
+                        "cursor-pointer rounded-md border px-3 py-2 transition-colors",
+                        visibility === v.id
+                          ? "border-[var(--accent)] bg-[var(--surface-secondary)]"
+                          : "border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-secondary)]",
+                      ].join(" ")}
                     >
-                      <input
-                        type="radio"
-                        name="visibility"
-                        checked={visibility === v.id}
-                        onChange={() => setVisibility(v.id)}
-                      />
-                      {v.label}
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          name="visibility"
+                          checked={visibility === v.id}
+                          onChange={() => setVisibility(v.id)}
+                          className="accent-[var(--accent)]"
+                        />
+                        <span className="inline-flex items-center gap-1 text-[13px] font-medium text-fg">
+                          <VisibilityIcon v={v.id} size={12} />
+                          {v.label}
+                        </span>
+                      </div>
+                      <div className="mt-1 text-[11.5px] text-muted">{v.hint}</div>
                     </label>
                   ))}
                 </div>
               </div>
               <ErrorBanner error={error} />
-              <div>
+              <div className="flex justify-end">
                 <Button type="submit" isDisabled={creating || !slug}>
-                  {creating ? "创建中…" : "创建"}
+                  {creating ? "创建中…" : "创建仓库"}
                 </Button>
               </div>
             </form>
-          </Card.Content>
-        </Card>
+          </SurfaceBody>
+        </Surface>
       ) : (
         <ErrorBanner error={error} />
       )}
 
-      {items === null ? (
-        <Loading />
-      ) : items.length === 0 ? (
-        <EmptyState
-          title="项目里还没有仓库"
-          description="新建一个 bare 仓库，立刻就能 git push。"
-          action={
-            <Button onPress={() => setShowForm(true)}>
-              <PlusIcon width={16} height={16} /> 新建仓库
-            </Button>
-          }
-        />
-      ) : (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-            gap: "1rem",
-          }}
-        >
-          {items.map((r) => (
-            <Link
-              key={r.id}
-              to={`${base}/${encodeURIComponent(r.slug)}`}
-              style={{ color: "var(--foreground)", textDecoration: "none" }}
-            >
-              <Card>
-                <Card.Header>
-                  <Card.Title>{r.slug}</Card.Title>
-                  <Card.Description>
-                    {r.is_empty ? "空仓库" : `默认分支 ${r.default_branch}`}
-                  </Card.Description>
-                </Card.Header>
-                <Card.Content>
-                  <div style={{ color: "var(--muted)", minHeight: "1.2em" }}>
-                    {r.description || "—"}
-                  </div>
-                  <div style={{ fontSize: "0.75rem", color: "var(--muted)", marginTop: "0.5rem" }}>
-                    {Math.round(r.size_bytes / 1024)} KB · <RelativeTime iso={r.created_at} />
-                  </div>
-                </Card.Content>
-              </Card>
-            </Link>
-          ))}
-        </div>
-      )}
-    </div>
+      <Surface>
+        <SurfaceHeader dense>
+          <span className="text-[12px] font-medium text-fg">
+            仓库{items ? ` · ${items.length}` : ""}
+          </span>
+        </SurfaceHeader>
+        <SurfaceBody noPad>
+          {items === null ? (
+            <SkeletonRows count={3} />
+          ) : items.length === 0 ? (
+            <EmptyState
+              inset
+              icon={<CodeIcon width={20} height={20} />}
+              title="项目里还没有仓库"
+              description="新建一个 bare 仓库，立刻就能 git push。"
+              action={
+                <Button onPress={() => setShowForm(true)}>
+                  <PlusIcon width={14} height={14} /> 新建仓库
+                </Button>
+              }
+            />
+          ) : (
+            <DataList>
+              {items.map((r) => (
+                <ListRow
+                  key={r.id}
+                  to={`${base}/${encodeURIComponent(r.slug)}`}
+                  icon={
+                    <span className="grid h-8 w-8 place-items-center rounded-md border border-[var(--border)] bg-[var(--surface-secondary)] text-fg/70">
+                      <CodeIcon width={14} height={14} />
+                    </span>
+                  }
+                  title={
+                    <span className="inline-flex items-center gap-2">
+                      <span className="font-mono">{r.slug}</span>
+                      {r.is_empty ? <Pill tone="warning">空仓库</Pill> : null}
+                    </span>
+                  }
+                  subtitle={
+                    r.description ? (
+                      <span className="text-muted">{r.description}</span>
+                    ) : (
+                      <span className="text-muted">
+                        默认分支 <code className="font-mono text-[11px]">{r.default_branch}</code>
+                      </span>
+                    )
+                  }
+                  meta={
+                    <span>
+                      {Math.max(1, Math.round(r.size_bytes / 1024))} KB ·{" "}
+                      <RelativeTime iso={r.created_at} />
+                    </span>
+                  }
+                />
+              ))}
+            </DataList>
+          )}
+        </SurfaceBody>
+      </Surface>
+    </PageContainer>
   );
 }

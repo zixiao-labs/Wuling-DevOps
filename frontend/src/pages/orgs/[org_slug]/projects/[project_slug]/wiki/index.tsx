@@ -2,6 +2,7 @@ import { Button } from "@heroui/react";
 import PlusIcon from "@gravity-ui/icons/Plus";
 import HistoryIcon from "@gravity-ui/icons/Clock";
 import FileIcon from "@gravity-ui/icons/File";
+import BookOpen from "@gravity-ui/icons/BookOpen";
 import { Link } from "chen-the-dawnstreak";
 import { useEffect, useState } from "react";
 
@@ -9,7 +10,15 @@ import { wiki as wikiApi } from "@/api/endpoints";
 import { ApiError } from "@/api/errors";
 import { EmptyState } from "@/components/empty-state";
 import { ErrorBanner } from "@/components/error-banner";
-import { Loading } from "@/components/loading";
+import { SkeletonRows } from "@/components/loading";
+import { DataList, ListRow } from "@/components/page/data-list";
+import {
+  PageContainer,
+  PageHeader,
+  Surface,
+  SurfaceBody,
+  SurfaceHeader,
+} from "@/components/page/primitives";
 import { RelativeTime } from "@/components/relative-time";
 import { useOrgCtx, useProjectCtx } from "@/auth/org-context";
 import type { WikiPage } from "@/api/types";
@@ -27,67 +36,70 @@ export default function WikiIndex() {
   const base = `/orgs/${encodeURIComponent(org.slug)}/projects/${encodeURIComponent(project.slug)}/wiki`;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-      <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <h1 style={{ margin: 0, fontSize: "1.5rem" }}>Wiki</h1>
-        <div style={{ display: "flex", gap: "0.5rem" }}>
-          <Link to={`${base}/history`}>
-            <Button variant="secondary">
-              <HistoryIcon width={16} height={16} /> 历史
-            </Button>
-          </Link>
-          <Link to={`${base}/new`}>
-            <Button>
-              <PlusIcon width={16} height={16} /> 新页面
-            </Button>
-          </Link>
-        </div>
-      </header>
+    <PageContainer>
+      <PageHeader
+        title="Wiki"
+        description="Wiki 是一个独立 Git 仓库的 Markdown 集合，可以协同编辑、按提交追溯。"
+        actions={
+          <div className="flex items-center gap-2">
+            <Link to={`${base}/history`}>
+              <Button variant="outline">
+                <HistoryIcon width={14} height={14} /> 历史
+              </Button>
+            </Link>
+            <Link to={`${base}/new`}>
+              <Button>
+                <PlusIcon width={14} height={14} /> 新页面
+              </Button>
+            </Link>
+          </div>
+        }
+      />
 
       <ErrorBanner error={error} />
 
-      {pages === null ? (
-        <Loading />
-      ) : pages.length === 0 ? (
-        <EmptyState
-          title="还没有 Wiki 页面"
-          description="Wiki 是一个独立 Git 仓库的 Markdown 集合。"
-          action={
-            <Link to={`${base}/new`}>
-              <Button>
-                <PlusIcon width={16} height={16} /> 创建首页
-              </Button>
-            </Link>
-          }
-        />
-      ) : (
-        <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-          {pages.map((p) => (
-            <li
-              key={p.path}
-              style={{
-                padding: "0.6rem 0.75rem",
-                background: "var(--surface)",
-                borderBottom: "1px solid var(--separator)",
-                display: "flex",
-                alignItems: "center",
-                gap: "0.5rem",
-              }}
-            >
-              <FileIcon width={16} height={16} />
-              <Link
-                to={`${base}/${encodeURI(p.path)}`}
-                style={{ color: "var(--accent)", textDecoration: "none", flex: 1 }}
-              >
-                {p.path}
-              </Link>
-              <span style={{ color: "var(--muted)", fontSize: "0.8rem" }}>
-                {p.size} 字节 · <RelativeTime iso={p.updated_at} />
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+      <Surface>
+        <SurfaceHeader dense>
+          <span className="text-[12px] font-medium text-fg">
+            页面{pages ? ` · ${pages.length}` : ""}
+          </span>
+        </SurfaceHeader>
+        <SurfaceBody noPad>
+          {pages === null ? (
+            <SkeletonRows count={4} />
+          ) : pages.length === 0 ? (
+            <EmptyState
+              inset
+              icon={<BookOpen width={20} height={20} />}
+              title="还没有 Wiki 页面"
+              description="Wiki 是一个独立 Git 仓库的 Markdown 集合。"
+              action={
+                <Link to={`${base}/new`}>
+                  <Button>
+                    <PlusIcon width={14} height={14} /> 创建首页
+                  </Button>
+                </Link>
+              }
+            />
+          ) : (
+            <DataList>
+              {pages.map((p) => (
+                <ListRow
+                  key={p.path}
+                  to={`${base}/${encodeURI(p.path)}`}
+                  icon={<FileIcon width={14} height={14} />}
+                  title={<span className="font-mono">{p.path}</span>}
+                  meta={
+                    <span>
+                      {p.size} 字节 · <RelativeTime iso={p.updated_at} />
+                    </span>
+                  }
+                />
+              ))}
+            </DataList>
+          )}
+        </SurfaceBody>
+      </Surface>
+    </PageContainer>
   );
 }

@@ -1,10 +1,16 @@
-import { Card, Tabs } from "@heroui/react";
 import { useEffect, useState } from "react";
 
 import { insights as insightsApi, repos as reposApi } from "@/api/endpoints";
 import { ApiError } from "@/api/errors";
 import { ErrorBanner } from "@/components/error-banner";
 import { Loading } from "@/components/loading";
+import {
+  PageContainer,
+  PageHeader,
+  Surface,
+  SurfaceBody,
+} from "@/components/page/primitives";
+import { Stat } from "@/components/page/badges";
 import { useOrgCtx, useProjectCtx } from "@/auth/org-context";
 import type {
   ActivityDay,
@@ -13,10 +19,13 @@ import type {
   Repo,
 } from "@/api/types";
 
+type Tab = "activity" | "contributors" | "languages";
+
 export default function InsightsPage() {
   const org = useOrgCtx();
   const project = useProjectCtx();
 
+  const [tab, setTab] = useState<Tab>("activity");
   const [repos, setRepos] = useState<Repo[] | null>(null);
   const [selectedRepo, setSelectedRepo] = useState<string>("");
 
@@ -26,10 +35,25 @@ export default function InsightsPage() {
   const [error, setError] = useState<ApiError | null>(null);
 
   useEffect(() => {
-    reposApi.list(org.slug, project.slug).then((r) => {
-      setRepos(r);
-      if (r.length > 0 && !selectedRepo) setSelectedRepo(r[0]!.slug);
-    });
+    let stale = false;
+    setRepos(null);
+    setSelectedRepo("");
+    reposApi
+      .list(org.slug, project.slug)
+      .then((r) => {
+        if (stale) return;
+        setRepos(r);
+        setSelectedRepo(r.length > 0 ? r[0]!.slug : "");
+      })
+      .catch((e) => {
+        if (stale) return;
+        setRepos([]);
+        setSelectedRepo("");
+        setError(e as ApiError);
+      });
+    return () => {
+      stale = true;
+    };
   }, [org.slug, project.slug]);
 
   useEffect(() => {
@@ -51,41 +75,69 @@ export default function InsightsPage() {
       .catch((e) => setError(e as ApiError));
   }, [org.slug, project.slug, selectedRepo]);
 
+  const totals = activity
+    ? activity.reduce(
+        (acc, d) => {
+          acc.commits += d.commits;
+          acc.issues_opened += d.issues_opened;
+          acc.issues_closed += d.issues_closed;
+          acc.mrs_opened += d.mrs_opened;
+          acc.mrs_merged += d.mrs_merged;
+          return acc;
+        },
+        { commits: 0, issues_opened: 0, issues_closed: 0, mrs_opened: 0, mrs_merged: 0 },
+      )
+    : null;
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-      <h1 style={{ margin: 0, fontSize: "1.5rem" }}>Insights</h1>
+    <PageContainer>
+      <PageHeader
+        title="Insights"
+        description="过去 30 天的活动概要与按仓库分解的贡献/语言统计。"
+      />
       <ErrorBanner error={error} />
 
-      <Tabs defaultSelectedKey="activity">
-        <Tabs.ListContainer>
-          <Tabs.List aria-label="Insights">
-            <Tabs.Tab id="activity">活动（30 天） <Tabs.Indicator /></Tabs.Tab>
-            <Tabs.Tab id="contributors">贡献者 <Tabs.Indicator /></Tabs.Tab>
-            <Tabs.Tab id="languages">语言 <Tabs.Indicator /></Tabs.Tab>
-          </Tabs.List>
-        </Tabs.ListContainer>
+      {totals ? (
+        <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Stat label="近 30 天提交" value={totals.commits} />
+          <Stat label="新增 Issue" value={totals.issues_opened} hint={`关闭 ${totals.issues_closed}`} />
+          <Stat label="新增 MR" value={totals.mrs_opened} hint={`合入 ${totals.mrs_merged}`} />
+          <Stat label="仓库总数" value={repos?.length ?? "—"} />
+        </div>
+      ) : null}
 
-        <Tabs.Panel id="activity">
-          {activity === null ? <Loading /> : <ActivityChart days={activity} />}
-        </Tabs.Panel>
+      <PageTabsAdHoc tab={tab} onChange={setTab} />
 
-        <Tabs.Panel id="contributors">
-          <RepoSelect repos={repos} value={selectedRepo} onChange={setSelectedRepo} />
-          {contribs === null ? (
-            <Loading />
-          ) : contribs.length === 0 ? (
-            <div style={{ color: "var(--muted)" }}>（无贡献者数据）</div>
-          ) : (
-            <ContributorsList list={contribs} />
-          )}
-        </Tabs.Panel>
-
-        <Tabs.Panel id="languages">
-          <RepoSelect repos={repos} value={selectedRepo} onChange={setSelectedRepo} />
-          {langs === null ? <Loading /> : <Languages stats={langs} />}
-        </Tabs.Panel>
-      </Tabs>
-    </div>
+      {tab === "activity" ? (
+        <Surface>
+          <SurfaceBody>
+            {activity === null ? <Loading /> : <ActivityChart days={activity} />}
+          </SurfaceBody>
+        </Surface>
+      ) : null}
+      {tab === "contributors" ? (
+        <Surface>
+          <SurfaceBody>
+            <RepoSelect repos={repos} value={selectedRepo} onChange={setSelectedRepo} />
+            {contribs === null ? (
+              <Loading />
+            ) : contribs.length === 0 ? (
+              <div className="px-1 py-4 text-[13px] text-muted">（无贡献者数据）</div>
+            ) : (
+              <ContributorsList list={contribs} />
+            )}
+          </SurfaceBody>
+        </Surface>
+      ) : null}
+      {tab === "languages" ? (
+        <Surface>
+          <SurfaceBody>
+            <RepoSelect repos={repos} value={selectedRepo} onChange={setSelectedRepo} />
+            {langs === null ? <Loading /> : <Languages stats={langs} />}
+          </SurfaceBody>
+        </Surface>
+      ) : null}
+    </PageContainer>
   );
 }
 
@@ -99,21 +151,14 @@ function RepoSelect({
   onChange: (s: string) => void;
 }) {
   if (!repos) return <Loading />;
-  if (repos.length === 0)
-    return <div style={{ color: "var(--muted)" }}>项目里还没有仓库。</div>;
+  if (repos.length === 0) return <div className="text-[13px] text-muted">项目里还没有仓库。</div>;
   return (
-    <label style={{ display: "inline-flex", gap: "0.5rem", alignItems: "center", margin: "0.5rem 0" }}>
-      <span style={{ fontSize: "0.85rem" }}>仓库</span>
+    <label className="my-2 inline-flex items-center gap-2 text-[12.5px]">
+      <span className="text-muted">仓库</span>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        style={{
-          padding: "0.25rem 0.5rem",
-          background: "var(--field-background)",
-          color: "var(--field-foreground)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--field-radius)",
-        }}
+        className="h-7 rounded-sm border border-[var(--border)] bg-[var(--field-background)] px-2 text-[var(--field-foreground)]"
       >
         {repos.map((r) => (
           <option key={r.id} value={r.slug}>
@@ -127,63 +172,104 @@ function RepoSelect({
 
 function ActivityChart({ days }: { days: ActivityDay[] }) {
   if (days.length === 0) {
-    return <div style={{ color: "var(--muted)" }}>（无活动）</div>;
+    return <div className="text-[13px] text-muted">（无活动）</div>;
   }
-  // Tiny stacked bars: commits + issues_opened + mrs_merged per day.
   const max = Math.max(
     1,
     ...days.map((d) => d.commits + d.issues_opened + d.mrs_merged),
   );
   return (
-    <Card>
-      <Card.Content>
-        <div style={{ display: "flex", alignItems: "flex-end", height: 120, gap: 2 }}>
-          {days.map((d) => {
-            const total = d.commits + d.issues_opened + d.mrs_merged;
-            const h = Math.max(2, (total / max) * 110);
-            return (
-              <div
-                key={d.date}
-                title={`${d.date}\ncommits: ${d.commits}\nissues_opened: ${d.issues_opened}\nmrs_merged: ${d.mrs_merged}`}
-                style={{
-                  flex: 1,
-                  minWidth: 4,
-                  height: h,
-                  background: "var(--accent)",
-                  opacity: total === 0 ? 0.25 : 1,
-                  borderRadius: 2,
-                }}
-              />
-            );
-          })}
-        </div>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.75rem", color: "var(--muted)", marginTop: 4 }}>
-          <span>{days[0]?.date}</span>
-          <span>{days[days.length - 1]?.date}</span>
-        </div>
-      </Card.Content>
-    </Card>
+    <div>
+      <div className="flex h-32 items-end gap-[2px]">
+        {days.map((d) => {
+          const total = d.commits + d.issues_opened + d.mrs_merged;
+          const h = Math.max(2, (total / max) * 120);
+          return (
+            <div
+              key={d.date}
+              title={`${d.date}\ncommits: ${d.commits}\nissues_opened: ${d.issues_opened}\nmrs_merged: ${d.mrs_merged}`}
+              className="flex-1 min-w-[3px] rounded-[2px] transition-opacity"
+              style={{
+                height: h,
+                background: "var(--accent)",
+                opacity: total === 0 ? 0.18 : 0.85,
+              }}
+            />
+          );
+        })}
+      </div>
+      <div className="mt-1 flex justify-between font-mono text-[10.5px] text-muted">
+        <span>{days[0]?.date}</span>
+        <span>{days[days.length - 1]?.date}</span>
+      </div>
+    </div>
   );
 }
 
 function ContributorsList({ list }: { list: ContributorStat[] }) {
   const max = Math.max(1, ...list.map((c) => c.commits));
   return (
-    <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+    <ul className="list-none divide-y divide-[var(--separator)] p-0 m-0">
       {list.map((c) => (
-        <li key={c.email + c.name} style={{ padding: "0.5rem 0", borderBottom: "1px solid var(--separator)" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4, fontSize: "0.9rem" }}>
-            <span>
-              {c.name} <span style={{ color: "var(--muted)" }}>&lt;{c.email}&gt;</span>
+        <li key={c.email + c.name} className="py-2">
+          <div className="mb-1 flex items-baseline justify-between gap-3 text-[13px]">
+            <span className="min-w-0 truncate">
+              <span className="font-medium text-fg">{c.name}</span>
+              <span className="ml-1 font-mono text-[11.5px] text-muted">&lt;{c.email}&gt;</span>
             </span>
-            <span style={{ color: "var(--muted)" }}>{c.commits} 提交</span>
+            <span className="shrink-0 text-[11.5px] tabular-nums text-muted">
+              {c.commits} 提交
+            </span>
           </div>
-          <div style={{ height: 6, background: "var(--surface-secondary)", borderRadius: 3, overflow: "hidden" }}>
-            <div style={{ width: `${(c.commits / max) * 100}%`, height: "100%", background: "var(--accent)" }} />
+          <div className="h-1.5 overflow-hidden rounded-full bg-[var(--surface-secondary)]">
+            <div
+              className="h-full bg-[var(--accent)]"
+              style={{ width: `${(c.commits / max) * 100}%` }}
+            />
           </div>
         </li>
       ))}
     </ul>
+  );
+}
+
+function PageTabsAdHoc({ tab, onChange }: { tab: Tab; onChange: (t: Tab) => void }) {
+  const items: Array<{ id: Tab; label: string }> = [
+    { id: "activity", label: "活动（30 天）" },
+    { id: "contributors", label: "贡献者" },
+    { id: "languages", label: "语言" },
+  ];
+  return (
+    <nav
+      role="tablist"
+      aria-label="Insights 视图"
+      className="mb-4 flex items-center gap-0 overflow-x-auto border-b border-[var(--separator)]"
+    >
+      {items.map((it) => {
+        const active = tab === it.id;
+        return (
+          <button
+            key={it.id}
+            role="tab"
+            type="button"
+            aria-selected={active}
+            onClick={() => onChange(it.id)}
+            className={[
+              "relative inline-flex items-center whitespace-nowrap px-3 py-2 text-[13px] transition-colors",
+              active ? "text-fg" : "text-fg/65 hover:text-fg",
+            ].join(" ")}
+          >
+            {it.label}
+            {active ? (
+              <span
+                aria-hidden
+                className="absolute inset-x-2 -bottom-px h-[2px] rounded-full bg-accent"
+              />
+            ) : null}
+          </button>
+        );
+      })}
+    </nav>
   );
 }
 
@@ -193,11 +279,11 @@ function Languages({ stats }: { stats: LanguageStats }) {
   return (
     <>
       {stats.truncated ? (
-        <div style={{ color: "var(--warning)", marginBottom: "0.5rem", fontSize: "0.85rem" }}>
+        <div className="mb-2 rounded-md border border-[var(--warning)]/40 bg-[color-mix(in_oklch,var(--warning)_10%,transparent)] px-3 py-2 text-[12.5px] text-[var(--warning)]">
           ⚠ 仓库过大，统计被截断，下面的数字是下界。
         </div>
       ) : null}
-      <div style={{ display: "flex", height: 12, borderRadius: 6, overflow: "hidden" }}>
+      <div className="flex h-3 overflow-hidden rounded-md ring-1 ring-inset ring-[var(--border)]">
         {entries.map(([lang, bytes], i) => (
           <div
             key={lang}
@@ -209,20 +295,16 @@ function Languages({ stats }: { stats: LanguageStats }) {
           />
         ))}
       </div>
-      <ul style={{ listStyle: "none", padding: 0, margin: "0.5rem 0 0", display: "flex", flexWrap: "wrap", gap: "1rem" }}>
+      <ul className="mt-3 flex list-none flex-wrap gap-x-5 gap-y-1.5 p-0 m-0">
         {entries.map(([lang, bytes], i) => (
-          <li key={lang} style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.85rem" }}>
+          <li key={lang} className="inline-flex items-center gap-1.5 text-[12px]">
             <span
-              style={{
-                display: "inline-block",
-                width: 10,
-                height: 10,
-                background: `oklch(70% 0.12 ${(i * 47) % 360})`,
-                borderRadius: 2,
-              }}
+              aria-hidden
+              className="inline-block h-2.5 w-2.5 rounded-sm"
+              style={{ background: `oklch(70% 0.12 ${(i * 47) % 360})` }}
             />
-            <span>{lang}</span>
-            <span style={{ color: "var(--muted)" }}>
+            <span className="font-medium text-fg">{lang}</span>
+            <span className="text-muted">
               {((bytes / total) * 100).toFixed(1)}% · {stats.files[lang] ?? 0} 文件
             </span>
           </li>
