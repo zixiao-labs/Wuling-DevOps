@@ -209,18 +209,20 @@ export default function MRDetailPage() {
             onKeyDown={(e) => {
               const order: Tab[] = ["commits", "files", "comments", "reviews"];
               const idx = order.indexOf(tab);
+              let next: Tab | null = null;
               if (e.key === "ArrowRight") {
-                e.preventDefault();
-                setTab(order[(idx + 1) % order.length]!);
+                next = order[(idx + 1) % order.length]!;
               } else if (e.key === "ArrowLeft") {
-                e.preventDefault();
-                setTab(order[(idx - 1 + order.length) % order.length]!);
+                next = order[(idx - 1 + order.length) % order.length]!;
               } else if (e.key === "Home") {
-                e.preventDefault();
-                setTab(order[0]!);
+                next = order[0]!;
               } else if (e.key === "End") {
+                next = order[order.length - 1]!;
+              }
+              if (next !== null) {
                 e.preventDefault();
-                setTab(order[order.length - 1]!);
+                setTab(next);
+                document.getElementById(`mr-tab-${next}`)?.focus();
               }
             }}
           >

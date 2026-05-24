@@ -110,6 +110,7 @@ export function NavGroup({ icon: Icon, label, match, children }: NavGroupProps) 
     <div className="flex flex-col">
       <button
         type="button"
+        aria-expanded={effectiveOpen}
         onClick={() => {
           setUserToggled(true);
           setOpen((v) => !v);

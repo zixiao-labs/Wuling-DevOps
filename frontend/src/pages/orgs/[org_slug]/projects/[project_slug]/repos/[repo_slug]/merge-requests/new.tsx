@@ -33,9 +33,12 @@ export default function NewMRPage() {
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
+    let stale = false;
+    setError(null);
     reposApi
       .refs(org.slug, project.slug, repoSlug)
       .then((r) => {
+        if (stale) return;
         const branches = r.filter((x) => x.is_branch);
         setRefs(branches);
         if (branches.length > 0) {
@@ -45,9 +48,13 @@ export default function NewMRPage() {
         }
       })
       .catch((e) => {
+        if (stale) return;
         setRefs([]);
         setError(e as ApiError);
       });
+    return () => {
+      stale = true;
+    };
   }, [org.slug, project.slug, repoSlug]);
 
   async function onSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
