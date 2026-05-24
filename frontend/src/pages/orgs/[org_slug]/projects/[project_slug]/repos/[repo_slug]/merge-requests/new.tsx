@@ -45,11 +45,16 @@ export default function NewMRPage() {
           const def = branches[0]!;
           setTargetRef(strip(def.name));
           setSourceRef(branches.length > 1 ? strip(branches[1]!.name) : strip(def.name));
+        } else {
+          setTargetRef("");
+          setSourceRef("");
         }
       })
       .catch((e) => {
         if (stale) return;
         setRefs([]);
+        setTargetRef("");
+        setSourceRef("");
         setError(e as ApiError);
       });
     return () => {

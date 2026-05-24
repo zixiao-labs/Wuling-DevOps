@@ -36,6 +36,8 @@ export default function InsightsPage() {
 
   useEffect(() => {
     let stale = false;
+    setRepos(null);
+    setSelectedRepo("");
     reposApi
       .list(org.slug, project.slug)
       .then((r) => {
@@ -45,6 +47,8 @@ export default function InsightsPage() {
       })
       .catch((e) => {
         if (stale) return;
+        setRepos([]);
+        setSelectedRepo("");
         setError(e as ApiError);
       });
     return () => {
