@@ -180,6 +180,9 @@ func (c *Config) validate() error {
 	if c.Storage.RepoRoot == "" {
 		problems = append(problems, "WULING_REPO_ROOT must not be empty")
 	}
+	if c.Storage.AvatarsDir == "" {
+		problems = append(problems, "WULING_AVATARS_DIR must not be empty")
+	}
 	if c.IsProd() && c.OAuth.ProviderHMACSecret == "" {
 		problems = append(problems, "WULING_OAUTH_HMAC_SECRET must be set in production")
 	}

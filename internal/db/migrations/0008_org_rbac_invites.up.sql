@@ -30,15 +30,17 @@ ALTER TABLE users
 -- ----------------------------------------------------------------------------
 -- 2. expand org_members.role
 --
--- Update existing rows BEFORE relaxing the check so the table is never in a
--- state where it violates its own constraint. The two old non-owner roles
--- map deterministically — see header comment for rationale.
+-- Drop the existing three-value CHECK before remapping rows — otherwise the
+-- UPDATE writes 'maintainer'/'developer' values that violate the still-active
+-- constraint. After the data is migrated we re-add the constraint with the
+-- five-value enumeration.
 -- ----------------------------------------------------------------------------
+ALTER TABLE org_members
+    DROP CONSTRAINT org_members_role_check;
+
 UPDATE org_members SET role = 'maintainer' WHERE role = 'admin';
 UPDATE org_members SET role = 'developer'  WHERE role = 'member';
 
-ALTER TABLE org_members
-    DROP CONSTRAINT org_members_role_check;
 ALTER TABLE org_members
     ADD CONSTRAINT org_members_role_check
         CHECK (role IN ('owner', 'maintainer', 'developer', 'reporter', 'guest'));

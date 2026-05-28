@@ -71,7 +71,9 @@ func TestListMembers_OwnerThenAlpha(t *testing.T) {
 	s, _ := store(t)
 	ctx := context.Background()
 
-	org, _ := makeMembershipFixture(t, s, "developer", "maintainer", "guest")
+	// Use two same-rank rows so the alphabetical-tiebreak assertion below
+	// actually tests the sort it claims to test.
+	org, _ := makeMembershipFixture(t, s, "developer", "maintainer", "developer")
 
 	members, err := s.ListMembers(ctx, org.ID)
 	require.NoError(t, err)
@@ -79,7 +81,9 @@ func TestListMembers_OwnerThenAlpha(t *testing.T) {
 	// First row is the owner; order falls out of the role-rank ORDER BY.
 	assert.Equal(t, "owner", members[0].Role)
 	assert.Equal(t, "maintainer", members[1].Role)
-	// The two member-rank rows come in alphabetical order by username.
+	// The two developer-rank rows come in alphabetical order by username.
+	assert.Equal(t, "developer", members[2].Role)
+	assert.Equal(t, "developer", members[3].Role)
 	assert.True(t, members[2].Username < members[3].Username,
 		"expected alphabetical order within same rank")
 }
@@ -92,11 +96,13 @@ func TestSetMemberRole_PromoteAndDemote(t *testing.T) {
 	dev := members[0]
 
 	require.NoError(t, s.SetMemberRole(ctx, org.ID, dev.UserID, "maintainer"))
-	r, _ := s.MemberRole(ctx, org.ID, dev.UserID)
+	r, err := s.MemberRole(ctx, org.ID, dev.UserID)
+	require.NoError(t, err)
 	assert.Equal(t, "maintainer", r)
 
 	require.NoError(t, s.SetMemberRole(ctx, org.ID, dev.UserID, "guest"))
-	r, _ = s.MemberRole(ctx, org.ID, dev.UserID)
+	r, err = s.MemberRole(ctx, org.ID, dev.UserID)
+	require.NoError(t, err)
 	assert.Equal(t, "guest", r)
 }
 
@@ -143,7 +149,8 @@ func TestRemoveMember_OrdinaryMember_OK(t *testing.T) {
 	org, members := makeMembershipFixture(t, s, "developer")
 	dev := members[0]
 	require.NoError(t, s.RemoveMember(ctx, org.ID, dev.UserID))
-	r, _ := s.MemberRole(ctx, org.ID, dev.UserID)
+	r, err := s.MemberRole(ctx, org.ID, dev.UserID)
+	require.NoError(t, err)
 	assert.Equal(t, "", r)
 }
 

@@ -119,6 +119,10 @@ func (h *Handler) createInvitation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	identifier := strings.TrimSpace(req.Identifier)
+	if identifier == "" {
+		httpapi.RenderError(w, r, apperr.Validation("identifier required", nil))
+		return
+	}
 	params := userstore.CreateInvitationParams{
 		OrgID:         org.ID,
 		InviterUserID: id.UserID,

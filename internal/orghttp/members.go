@@ -122,6 +122,24 @@ func (h *Handler) patchMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Outrank check: a maintainer must not be able to change another
+	// maintainer's role even though CanAssignRole permits granting the new
+	// role. Mirrors the DELETE handler's outrank guard.
+	targetRole, err := h.Store.MemberRole(r.Context(), org.ID, targetID)
+	if err != nil {
+		httpapi.RenderError(w, r, err)
+		return
+	}
+	if targetRole == "" {
+		httpapi.RenderError(w, r, apperr.NotFound("member"))
+		return
+	}
+	if auth.RoleLevel(actorRole) <= auth.RoleLevel(targetRole) {
+		httpapi.RenderError(w, r, apperr.Forbidden(
+			"your role does not outrank the target member"))
+		return
+	}
+
 	if err := h.Store.SetMemberRole(r.Context(), org.ID, targetID, req.Role); err != nil {
 		httpapi.RenderError(w, r, err)
 		return

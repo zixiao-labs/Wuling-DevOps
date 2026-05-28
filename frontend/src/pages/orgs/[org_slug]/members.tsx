@@ -74,8 +74,13 @@ export default function OrgMembersPage() {
     orgMembers.list(org.slug).then(setData).catch((e) => setError(e as ApiError));
   }
   function loadInvites() {
-    orgInvitations.list(org.slug, "pending").then(setInvites).catch(() => {
+    orgInvitations.list(org.slug, "pending").then(setInvites).catch((e) => {
       // Member-rank users will hit 403 here; that's OK, they don't see the panel.
+      if ((e as ApiError)?.status === 403) {
+        setInvites([]);
+        return;
+      }
+      setInviteErr((e as ApiError)?.message ?? "加载邀请失败");
       setInvites([]);
     });
   }

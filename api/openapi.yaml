@@ -397,7 +397,9 @@ paths:
                   invitations:
                     type: array
                     items: { $ref: "#/components/schemas/OrgInvitation" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
         "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
     post:
       summary: Create a magic-link invitation
       parameters:
@@ -422,9 +424,11 @@ paths:
                   url:
                     type: string
                     description: Convenience copy of invitation.url.
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
         "403": { $ref: "#/components/responses/ForbiddenError" }
-        "409":
-          description: Conflict — pending invitation already exists, or user is already a member.
+        "404": { $ref: "#/components/responses/NotFoundError" }
+        "409": { $ref: "#/components/responses/ConflictError" }
 
   /api/v1/orgs/{org_slug}/invitations/{invitation_id}:
     delete:
@@ -440,6 +444,8 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         "204": { description: revoked }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
         "403": { $ref: "#/components/responses/ForbiddenError" }
         "404": { $ref: "#/components/responses/NotFoundError" }
 
@@ -481,10 +487,10 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OrgInvitation" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
         "403": { $ref: "#/components/responses/ForbiddenError" }
         "404": { $ref: "#/components/responses/NotFoundError" }
-        "409":
-          description: Conflict — invitation already accepted, revoked, or expired.
+        "409": { $ref: "#/components/responses/ConflictError" }
 
   /api/v1/auth/ssh-keys:
     get:

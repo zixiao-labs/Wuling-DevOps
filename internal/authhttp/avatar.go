@@ -175,9 +175,15 @@ func (h *AvatarHandler) get(w http.ResponseWriter, r *http.Request) {
 	dst := filepath.Join(h.Dir, userID.String()+".png")
 	f, err := os.Open(dst)
 	if err != nil {
-		// DB says they have one but the file is gone. Treat as 404 — operator
-		// can fix by re-uploading.
-		httpapi.RenderError(w, r, apperr.NotFound("avatar"))
+		if os.IsNotExist(err) {
+			// DB says they have one but the file is gone. Treat as 404 — operator
+			// can fix by re-uploading.
+			httpapi.RenderError(w, r, apperr.NotFound("avatar"))
+			return
+		}
+		// Permission, I/O, or other unexpected failures must not masquerade as
+		// a missing avatar — surface as 500 so operators see it.
+		httpapi.RenderError(w, r, apperr.Internal(err))
 		return
 	}
 	defer f.Close()
@@ -194,25 +200,39 @@ func (h *AvatarHandler) get(w http.ResponseWriter, r *http.Request) {
 // It rejects formats other than PNG/JPEG/GIF (no SVG, no WebP polyglot) and
 // caps decoded image dimensions so a 5×5 1.5MB PNG packed with metadata can't
 // pass content sniffing only to expand to 20000×20000 in RAM.
+//
+// Dimensions are pre-checked via image.DecodeConfig before the full decode so
+// a malicious "small file, huge bitmap" header can't force us to allocate the
+// pixel buffer first.
 func decodeAvatar(file multipart.File) (image.Image, string, *apperr.Error) {
+	const maxSide = 8192
+	cfg, cfgFormat, cerr := image.DecodeConfig(file)
+	if cerr != nil {
+		return nil, "", apperr.Validation("could not decode image (PNG, JPEG, and GIF accepted)", map[string]any{
+			"reason": cerr.Error(),
+		})
+	}
+	switch cfgFormat {
+	case "png", "jpeg", "gif":
+		// ok
+	default:
+		return nil, "", apperr.Validation("unsupported image format: "+cfgFormat, nil)
+	}
+	if cfg.Width > maxSide || cfg.Height > maxSide || cfg.Width < 8 || cfg.Height < 8 {
+		return nil, "", apperr.Validation("image dimensions out of range", map[string]any{
+			"width":  cfg.Width,
+			"height": cfg.Height,
+		})
+	}
+	if _, err := file.Seek(0, 0); err != nil {
+		return nil, "", apperr.Validation("could not rewind upload for decode", map[string]any{
+			"reason": err.Error(),
+		})
+	}
 	img, format, err := image.Decode(file)
 	if err != nil {
 		return nil, "", apperr.Validation("could not decode image (PNG, JPEG, and GIF accepted)", map[string]any{
 			"reason": err.Error(),
-		})
-	}
-	switch format {
-	case "png", "jpeg", "gif":
-		// ok
-	default:
-		return nil, "", apperr.Validation("unsupported image format: "+format, nil)
-	}
-	const maxSide = 8192
-	b := img.Bounds()
-	if b.Dx() > maxSide || b.Dy() > maxSide || b.Dx() < 8 || b.Dy() < 8 {
-		return nil, "", apperr.Validation("image dimensions out of range", map[string]any{
-			"width":  b.Dx(),
-			"height": b.Dy(),
 		})
 	}
 	return img, format, nil

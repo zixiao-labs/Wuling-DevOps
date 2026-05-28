@@ -92,6 +92,11 @@ func (s *Store) ListMembers(ctx context.Context, orgID uuid.UUID) ([]model.OrgMe
 // The actor-permission check (i.e. "is the caller allowed to grant this role
 // at all?") lives at the HTTP layer — the store only enforces structural
 // invariants.
+//
+// Lock order: we always acquire the owner-set FOR UPDATE before reading the
+// individual member row. Without this, two concurrent demotes of different
+// owners deadlock — each holds its target's member row and then waits on the
+// owner-set lock the other already grabbed.
 func (s *Store) SetMemberRole(ctx context.Context, orgID, userID uuid.UUID, newRole string) error {
 	if !isStoredRole(newRole) {
 		return apperr.Validation("invalid role", map[string]any{"role": "must be one of owner/maintainer/developer/reporter/guest"})
@@ -102,6 +107,10 @@ func (s *Store) SetMemberRole(ctx context.Context, orgID, userID uuid.UUID, newR
 		return apperr.Internal(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	if err := lockOwnerSetTx(ctx, tx, orgID); err != nil {
+		return err
+	}
 
 	var curRole string
 	err = tx.QueryRow(ctx, `
@@ -120,8 +129,7 @@ func (s *Store) SetMemberRole(ctx context.Context, orgID, userID uuid.UUID, newR
 	}
 
 	// If we're moving the row out of 'owner', verify there's at least one
-	// remaining owner under row locks so a concurrent demote of a different
-	// owner can't race us into zero.
+	// remaining owner under the owner-set lock acquired above.
 	if curRole == "owner" {
 		if err := assertOtherOwnerExistsTx(ctx, tx, orgID, userID); err != nil {
 			return err
@@ -137,13 +145,17 @@ func (s *Store) SetMemberRole(ctx context.Context, orgID, userID uuid.UUID, newR
 }
 
 // RemoveMember deletes one membership row. Like SetMemberRole it refuses to
-// remove the final owner.
+// remove the final owner. Same lock order: owner set first, then target.
 func (s *Store) RemoveMember(ctx context.Context, orgID, userID uuid.UUID) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return apperr.Internal(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	if err := lockOwnerSetTx(ctx, tx, orgID); err != nil {
+		return err
+	}
 
 	var curRole string
 	err = tx.QueryRow(ctx, `
@@ -187,6 +199,24 @@ func (s *Store) FindUserByUsernameOrEmail(ctx context.Context, input string) (*m
 		return s.GetUserByEmail(ctx, input)
 	}
 	return s.GetUserByUsername(ctx, input)
+}
+
+// lockOwnerSetTx acquires FOR UPDATE on every owner row for the org in a
+// consistent order (by user_id). All mutations that touch member rows in an
+// org must call this first — without a fixed lock order, two concurrent
+// SetMemberRole / RemoveMember calls on different owners deadlock because
+// each holds its own target row while waiting for the other's owner-set
+// lock from assertOtherOwnerExistsTx.
+func lockOwnerSetTx(ctx context.Context, tx pgx.Tx, orgID uuid.UUID) error {
+	if _, err := tx.Exec(ctx, `
+		SELECT 1 FROM org_members
+		 WHERE org_id = $1 AND role = 'owner'
+		 ORDER BY user_id
+		 FOR UPDATE
+	`, orgID); err != nil {
+		return apperr.Internal(err)
+	}
+	return nil
 }
 
 // assertOtherOwnerExistsTx refuses the surrounding transaction if userID is

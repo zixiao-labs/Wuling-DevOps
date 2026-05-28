@@ -769,7 +769,9 @@ export interface paths {
                         };
                     };
                 };
+                401: components["responses"]["UnauthorizedError"];
                 403: components["responses"]["ForbiddenError"];
+                404: components["responses"]["NotFoundError"];
             };
         };
         put?: never;
@@ -802,14 +804,11 @@ export interface paths {
                         };
                     };
                 };
+                400: components["responses"]["ValidationError"];
+                401: components["responses"]["UnauthorizedError"];
                 403: components["responses"]["ForbiddenError"];
-                /** @description Conflict — pending invitation already exists, or user is already a member. */
-                409: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
+                404: components["responses"]["NotFoundError"];
+                409: components["responses"]["ConflictError"];
             };
         };
         delete?: never;
@@ -848,6 +847,8 @@ export interface paths {
                     };
                     content?: never;
                 };
+                400: components["responses"]["ValidationError"];
+                401: components["responses"]["UnauthorizedError"];
                 403: components["responses"]["ForbiddenError"];
                 404: components["responses"]["NotFoundError"];
             };
@@ -936,15 +937,10 @@ export interface paths {
                         "application/json": components["schemas"]["OrgInvitation"];
                     };
                 };
+                401: components["responses"]["UnauthorizedError"];
                 403: components["responses"]["ForbiddenError"];
                 404: components["responses"]["NotFoundError"];
-                /** @description Conflict — invitation already accepted, revoked, or expired. */
-                409: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content?: never;
-                };
+                409: components["responses"]["ConflictError"];
             };
         };
         delete?: never;

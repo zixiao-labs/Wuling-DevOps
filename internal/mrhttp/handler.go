@@ -7,7 +7,7 @@
 //
 //   - Read endpoints: any org member, plus anonymous reads against public repos.
 //   - Open MR / comment / review / merge / close / reopen: org member.
-//   - PATCH (title/body): the MR author or an org owner/admin.
+//   - PATCH (title/body): the MR author or a maintainer-or-above.
 //
 // All libgit2 calls live in this package — mrstore is database-only.
 package mrhttp
@@ -362,7 +362,7 @@ func (h *Handler) patch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !canAdmin(rc.Role) && (current.Author == nil || current.Author.ID != rc.UserID) {
-		httpapi.RenderError(w, r, apperr.Forbidden("only the author or an org owner/admin can edit this merge request"))
+		httpapi.RenderError(w, r, apperr.Forbidden("only the author or a maintainer (or above) can edit this merge request"))
 		return
 	}
 

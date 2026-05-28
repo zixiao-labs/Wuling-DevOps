@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { UserRef, User } from "@/api/types";
 
@@ -35,8 +35,12 @@ export function UserAvatar({
   const url = (user as { avatar_url?: string | null } | null)?.avatar_url ?? "";
   // When the image fails to load (404, network error, or simply no uploaded
   // avatar), fall back to the initials tile. Track failure locally so we don't
-  // retry on every re-render.
+  // retry on every re-render. Reset when the url changes so a fresh upload
+  // gets a chance to load.
   const [imgFailed, setImgFailed] = useState(false);
+  useEffect(() => {
+    setImgFailed(false);
+  }, [url]);
   const showImage = !!url && !imgFailed;
 
   if (showImage) {

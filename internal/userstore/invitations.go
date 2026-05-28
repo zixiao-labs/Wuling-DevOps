@@ -39,6 +39,11 @@ func (s *Store) CreateInvitation(ctx context.Context, p CreateInvitationParams) 
 	if p.InviteeUserID == nil && strings.TrimSpace(p.InviteeEmail) == "" {
 		return nil, apperr.Validation("invitee_user_id or invitee_email is required", nil)
 	}
+	if p.InviteeUserID != nil && strings.TrimSpace(p.InviteeEmail) != "" {
+		return nil, apperr.Validation("only one of invitee_user_id or invitee_email must be provided", map[string]any{
+			"fields": "invitee_user_id, invitee_email",
+		})
+	}
 	if !isInvitableStoredRole(p.Role) {
 		return nil, apperr.Validation("invalid role for invitation", map[string]any{
 			"role": "must be one of maintainer/developer/reporter/guest",
