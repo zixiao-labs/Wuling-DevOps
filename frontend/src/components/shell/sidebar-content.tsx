@@ -123,6 +123,7 @@ function OrgSidebar({ orgSlug }: { orgSlug: string }) {
       <SidebarSection label="导航">
         <NavItem to={base} icon={House} label="概览" exact />
         <NavItem to={`${base}/projects`} icon={Folder} label="项目" />
+        <NavItem to={`${base}/members`} icon={Persons} label="成员" />
       </SidebarSection>
       <SidebarSection label="快捷">
         <NavItem to="/orgs" icon={Layers} label="所有组织" />

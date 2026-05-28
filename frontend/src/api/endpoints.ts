@@ -11,9 +11,12 @@ import type {
   ActivityDay,
   AuthorizationView,
   AuthorizePreview,
+  AvatarUploadResponse,
   BlobResponse,
   Commit,
   ContributorStat,
+  CreateInvitationRequest,
+  CreateInvitationResponse,
   CreateIssueRequest,
   CreateLabelRequest,
   CreateMRReviewRequest,
@@ -26,11 +29,13 @@ import type {
   CreateRepoRequest,
   CreateSSHKeyRequest,
   GitRef,
+  InvitationStatus,
   Issue,
   IssueComment,
   IssueListQuery,
   Label,
   LanguageStats,
+  ListMembersResponse,
   LoginRequest,
   MRComment,
   MRDiffResponse,
@@ -43,7 +48,9 @@ import type {
   OAuthConfirmAction,
   OAuthConfirmResponse,
   Org,
+  OrgInvitation,
   PatchIssueRequest,
+  PatchMemberRequest,
   PatchMergeRequestRequest,
   PatchUserRequest,
   PendingAccountResponse,
@@ -103,6 +110,25 @@ export const auth = {
     apiPost<TokenResponse>("/api/v1/auth/login", body),
   me: (signal?: AbortSignal) =>
     apiGet<User>("/api/v1/auth/me", undefined, signal),
+};
+
+// ---------------- Avatar ----------------
+
+export const avatars = {
+  /** Build the public avatar URL for a username. Optional `v` is a cache-buster. */
+  url: (username: string, v?: string | number): string => {
+    const q = v ? `?v=${enc(String(v))}` : "";
+    return `/api/v1/users/${enc(username)}/avatar${q}`;
+  },
+  upload: (file: File) => {
+    const fd = new FormData();
+    fd.append("avatar", file);
+    return apiFetch<AvatarUploadResponse>("/api/v1/auth/avatar", {
+      method: "PUT",
+      body: fd,
+    });
+  },
+  remove: () => apiDelete("/api/v1/auth/avatar"),
 };
 
 /**
@@ -167,6 +193,40 @@ export const orgs = {
     apiPost<Org>("/api/v1/orgs", body),
   get: (slug: string) =>
     apiGet<Org>(`/api/v1/orgs/${enc(slug)}`),
+};
+
+// ---------------- Org members ----------------
+
+export const orgMembers = {
+  list: (orgSlug: string) =>
+    apiGet<ListMembersResponse>(`/api/v1/orgs/${enc(orgSlug)}/members`),
+  setRole: (orgSlug: string, userID: string, body: PatchMemberRequest) =>
+    apiPatch<void>(`/api/v1/orgs/${enc(orgSlug)}/members/${enc(userID)}`, body),
+  remove: (orgSlug: string, userID: string) =>
+    apiDelete(`/api/v1/orgs/${enc(orgSlug)}/members/${enc(userID)}`),
+};
+
+// ---------------- Org invitations ----------------
+
+export const orgInvitations = {
+  list: (orgSlug: string, status?: InvitationStatus) =>
+    apiGet<{ invitations: OrgInvitation[] }>(
+      `/api/v1/orgs/${enc(orgSlug)}/invitations`,
+      status ? { status } : undefined,
+    ).then((r) => r.invitations),
+  create: (orgSlug: string, body: CreateInvitationRequest) =>
+    apiPost<CreateInvitationResponse>(
+      `/api/v1/orgs/${enc(orgSlug)}/invitations`,
+      body,
+    ),
+  revoke: (orgSlug: string, invitationID: string) =>
+    apiDelete(`/api/v1/orgs/${enc(orgSlug)}/invitations/${enc(invitationID)}`),
+
+  /** Recipient-facing preview by raw token. */
+  preview: (token: string) =>
+    apiGet<OrgInvitation>(`/api/v1/invitations/${enc(token)}`),
+  accept: (token: string) =>
+    apiPost<OrgInvitation>(`/api/v1/invitations/${enc(token)}/accept`),
 };
 
 // ---------------- Projects ----------------

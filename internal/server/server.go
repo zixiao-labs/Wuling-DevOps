@@ -130,6 +130,14 @@ func New(d Deps) http.Handler {
 			Signup: d.Cfg.Signup,
 			JWT:    d.Cfg.JWT,
 		}).Mount(authSub)
+		avatarH := &authhttp.AvatarHandler{
+			Store: d.Store, Verifier: verifier, OAT: oauthH,
+			Dir: d.Cfg.Storage.AvatarsDir,
+		}
+		avatarH.Mount(authSub)
+		// Public avatar GET hangs off /api/v1, not /auth, so the URL matches
+		// what AvatarURL() embeds in model.User.AvatarURL.
+		avatarH.MountPublic(api)
 
 		// /admin subtree carries every admin-only endpoint (user management
 		// from authhttp + OAuth client management from oauthhttp). Mount once,
@@ -157,6 +165,8 @@ func New(d Deps) http.Handler {
 
 		(&orghttp.Handler{
 			Store: d.Store, Verifier: verifier, OAT: oauthH,
+			Hasher:         hasher,
+			InviteLinkBase: deriveInviteLinkBase(d.Cfg),
 		}).Mount(api)
 
 		(&repohttp.Handler{
@@ -273,6 +283,22 @@ func mustRandomHex(nBytes int) string {
 		panic("rand.Read: " + err.Error())
 	}
 	return hex.EncodeToString(buf)
+}
+
+// deriveInviteLinkBase computes the share-URL prefix for invitation tokens.
+// We reuse OAuth.FrontendBaseURL when set (operators have already pointed it
+// at the SPA host) and otherwise fall back to a root-relative path that
+// works fine when the API and SPA are served from the same origin in dev.
+func deriveInviteLinkBase(cfg *config.Config) string {
+	base := cfg.OAuth.FrontendBaseURL
+	if base == "" || base == "/" {
+		return "/invitations"
+	}
+	// trim trailing slash; "/" suffix is added by orghttp.
+	for len(base) > 0 && base[len(base)-1] == '/' {
+		base = base[:len(base)-1]
+	}
+	return base + "/invitations"
 }
 
 // chiSubrouter mounts a sub-router at prefix and returns it. We use this

@@ -119,7 +119,7 @@ func (h *Handler) resolveProject(r *http.Request) (*projectCtx, error) {
 		return nil, err
 	}
 	// Mirror issuehttp: hide org existence from non-members.
-	if role == "" {
+	if !auth.CanReadOrg(role) {
 		return nil, apperr.NotFound("project")
 	}
 	project, err := h.Users.GetProjectBySlug(r.Context(), org.ID, chi.URLParam(r, "project_slug"))

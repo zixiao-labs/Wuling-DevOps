@@ -84,7 +84,7 @@ type projectCtx struct {
 	ProjectID uuid.UUID
 	UserID    uuid.UUID
 	Username  string
-	Role      string // "owner", "admin", "member", or "" (not a member)
+	Role      string // legal values are documented in internal/auth/roles.go
 }
 
 // resolveProject loads the org+project from URL slugs and resolves the
@@ -103,7 +103,7 @@ func (h *Handler) resolveProject(r *http.Request) (*projectCtx, error) {
 	if err != nil {
 		return nil, err
 	}
-	if role == "" {
+	if !auth.CanReadOrg(role) {
 		return nil, apperr.NotFound("project")
 	}
 	project, err := h.Users.GetProjectBySlug(r.Context(), org.ID, chi.URLParam(r, "project_slug"))
@@ -119,8 +119,10 @@ func (h *Handler) resolveProject(r *http.Request) (*projectCtx, error) {
 	}, nil
 }
 
-// canAdmin reports whether role is "owner" or "admin".
-func canAdmin(role string) bool { return role == "owner" || role == "admin" }
+// canAdmin reports whether role grants content-moderation power on this
+// project — editing other people's issues/comments, closing/reopening issues
+// authored by others. Maps to the GitLab "Maintainer+" tier.
+func canAdmin(role string) bool { return auth.CanModerateContent(role) }
 
 // parseNumber pulls the {number} URL parameter as a positive int64.
 func parseNumber(r *http.Request) (int64, error) {

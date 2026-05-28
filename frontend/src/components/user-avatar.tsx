@@ -1,4 +1,13 @@
-import type { UserRef } from "@/api/types";
+import { useState } from "react";
+
+import type { UserRef, User } from "@/api/types";
+
+/** Lightweight superset of UserRef so callers can pass either shape. */
+type AvatarLike =
+  | (Pick<UserRef, "username" | "display_name"> & { avatar_url?: string | null })
+  | (Pick<User, "username" | "display_name" | "avatar_url">)
+  | null
+  | undefined;
 
 function initials(s: string): string {
   if (!s) return "?";
@@ -18,11 +27,32 @@ export function UserAvatar({
   user,
   size = 24,
 }: {
-  user: Pick<UserRef, "username" | "display_name"> | null | undefined;
+  user: AvatarLike;
   size?: number;
 }) {
   const name = user?.display_name || user?.username || "?";
   const h = hueFor(name);
+  const url = (user as { avatar_url?: string | null } | null)?.avatar_url ?? "";
+  // When the image fails to load (404, network error, or simply no uploaded
+  // avatar), fall back to the initials tile. Track failure locally so we don't
+  // retry on every re-render.
+  const [imgFailed, setImgFailed] = useState(false);
+  const showImage = !!url && !imgFailed;
+
+  if (showImage) {
+    return (
+      <img
+        src={url}
+        alt={name}
+        title={user?.username}
+        loading="lazy"
+        onError={() => setImgFailed(true)}
+        className="inline-block shrink-0 rounded-full object-cover ring-1 ring-black/5"
+        style={{ width: size, height: size }}
+      />
+    );
+  }
+
   return (
     <span
       title={user?.username}

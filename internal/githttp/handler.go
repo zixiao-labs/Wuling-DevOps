@@ -140,7 +140,7 @@ func (h *Handler) resolveRepoFromURL(r *http.Request, needWrite bool) (*authedRe
 		if role == "" && repo.Visibility != "public" {
 			return nil, apperr.NotFound("repo")
 		}
-		if needWrite && role == "" {
+		if needWrite && !auth.CanWriteRepo(role) {
 			return nil, apperr.Forbidden("write access required")
 		}
 		// Token scope checks: differ by source.

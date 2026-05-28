@@ -39,6 +39,8 @@ export interface User {
   username: string;
   email: string;
   display_name: string;
+  /** Empty when no custom avatar was uploaded; carries a ?v= cache-buster otherwise. */
+  avatar_url?: string;
   is_admin: boolean;
   is_active: boolean;
   approval_status: UserApprovalStatus;
@@ -172,6 +174,71 @@ export interface CreateProjectRequest {
   display_name?: string;
   description?: string;
   visibility?: Visibility;
+}
+
+// ---------------- Org RBAC: members & invitations ----------------
+
+/** GitLab-style org role tier. owner > maintainer > developer > reporter > guest. */
+export type OrgRole = "owner" | "maintainer" | "developer" | "reporter" | "guest";
+
+/** Roles that can be granted via invitation — owner is excluded by design. */
+export type InvitableRole = Exclude<OrgRole, "owner">;
+
+export interface OrgMember {
+  user_id: string;
+  username: string;
+  display_name: string;
+  email?: string;
+  avatar_url?: string;
+  role: OrgRole;
+  joined_at: string;
+}
+
+export interface ListMembersResponse {
+  members: OrgMember[];
+  /** Caller's own role in the org — UI uses this to gate buttons. */
+  role: OrgRole;
+}
+
+export type InvitationStatus = "pending" | "accepted" | "revoked" | "expired";
+
+export interface OrgInvitation {
+  id: string;
+  org_id: string;
+  org_slug?: string;
+  org_display_name?: string;
+  inviter?: UserRef | null;
+  invitee_user_id?: string | null;
+  invitee_email?: string | null;
+  role: InvitableRole;
+  status: InvitationStatus;
+  expires_at: string;
+  created_at: string;
+  accepted_at?: string | null;
+  /** Raw token; only present on the create-invitation response. */
+  token?: string;
+  /** Share URL; only present on the create-invitation response. */
+  url?: string;
+}
+
+export interface CreateInvitationRequest {
+  identifier: string; // username or email
+  role: InvitableRole;
+  ttl_hours?: number;
+}
+
+export interface CreateInvitationResponse {
+  invitation: OrgInvitation;
+  url: string;
+}
+
+export interface PatchMemberRequest {
+  role: OrgRole;
+}
+
+export interface AvatarUploadResponse {
+  avatar_url: string;
+  avatar_updated_at: string;
 }
 
 // ---------------- Repos ----------------
