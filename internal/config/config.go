@@ -69,8 +69,14 @@ type JWTConfig struct {
 // RepoRoot must be writable by the API process. Repos are stored under
 // "<RepoRoot>/<orgID>/<projectID>/<repoID>.git" — ID rather than name so
 // renames don't move files.
+//
+// AvatarsDir must also be writable. Avatars are stored as
+// "<AvatarsDir>/<user_id>.png" — always PNG, since the upload handler decodes
+// the user-supplied bytes and re-encodes them at 256×256 to defuse any
+// image-format payloads.
 type StorageConfig struct {
-	RepoRoot string `env:"WULING_REPO_ROOT" envDefault:"./var/repos"`
+	RepoRoot   string `env:"WULING_REPO_ROOT"   envDefault:"./var/repos"`
+	AvatarsDir string `env:"WULING_AVATARS_DIR" envDefault:"./var/avatars"`
 }
 
 // SSHConfig controls the embedded SSH server used for Git transport.
@@ -173,6 +179,9 @@ func (c *Config) validate() error {
 	}
 	if c.Storage.RepoRoot == "" {
 		problems = append(problems, "WULING_REPO_ROOT must not be empty")
+	}
+	if c.Storage.AvatarsDir == "" {
+		problems = append(problems, "WULING_AVATARS_DIR must not be empty")
 	}
 	if c.IsProd() && c.OAuth.ProviderHMACSecret == "" {
 		problems = append(problems, "WULING_OAUTH_HMAC_SECRET must be set in production")

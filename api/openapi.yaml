@@ -239,6 +239,259 @@ paths:
         "204": { description: deleted }
         "404": { $ref: "#/components/responses/NotFoundError" }
 
+  # ---------------- avatars ----------------
+
+  /api/v1/auth/avatar:
+    put:
+      summary: Upload or replace the caller's avatar
+      description: |
+        Body is a multipart/form-data with a single `avatar` file field. The
+        server decodes the upload (PNG/JPEG/GIF only), centre-crops to a
+        square, resizes to 256×256, and re-encodes as PNG. Max body size is
+        2 MiB.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [avatar]
+              properties:
+                avatar:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AvatarUploadResponse" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+    delete:
+      summary: Remove the caller's uploaded avatar
+      responses:
+        "204": { description: removed }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+
+  /api/v1/users/{username}/avatar:
+    get:
+      summary: Public PNG of a user's avatar
+      description: |
+        Streams the user's uploaded PNG. Returns 404 when the user has not
+        uploaded one — frontends should fall back to a deterministic initials
+        tile. Response is cacheable for an hour against the query string in
+        User.avatar_url.
+      security: []
+      parameters:
+        - in: path
+          name: username
+          required: true
+          schema: { type: string }
+        - in: query
+          name: v
+          schema: { type: integer }
+          description: Cache-buster (Unix seconds). Ignored by the server.
+      responses:
+        "200":
+          description: ok
+          content:
+            image/png: {}
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  # ---------------- org members ----------------
+
+  /api/v1/orgs/{org_slug}/members:
+    get:
+      summary: List members of an org
+      parameters:
+        - in: path
+          name: org_slug
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  members:
+                    type: array
+                    items: { $ref: "#/components/schemas/OrgMember" }
+                  role:
+                    $ref: "#/components/schemas/OrgRole"
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/orgs/{org_slug}/members/{user_id}:
+    patch:
+      summary: Change a member's role
+      description: |
+        Owners may grant any role including owner. Maintainers may grant
+        developer/reporter/guest but never maintainer/owner. Demoting the
+        last owner is refused (409).
+      parameters:
+        - in: path
+          name: org_slug
+          required: true
+          schema: { type: string }
+        - in: path
+          name: user_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatchMemberRequest" }
+      responses:
+        "204": { description: updated }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+        "409":
+          description: Conflict — for example, refusing to demote the last owner.
+    delete:
+      summary: Remove a member from an org (or self-leave)
+      description: |
+        Self-leave (user_id == caller) is permitted regardless of role,
+        subject to the last-owner guard. Removing another member requires
+        manage-members permission and a strictly higher rank than the target.
+      parameters:
+        - in: path
+          name: org_slug
+          required: true
+          schema: { type: string }
+        - in: path
+          name: user_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: removed }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+        "409":
+          description: Conflict — last owner cannot leave.
+
+  # ---------------- invitations ----------------
+
+  /api/v1/orgs/{org_slug}/invitations:
+    get:
+      summary: List invitations for an org
+      parameters:
+        - in: path
+          name: org_slug
+          required: true
+          schema: { type: string }
+        - in: query
+          name: status
+          schema: { $ref: "#/components/schemas/InvitationStatus" }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  invitations:
+                    type: array
+                    items: { $ref: "#/components/schemas/OrgInvitation" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+    post:
+      summary: Create a magic-link invitation
+      parameters:
+        - in: path
+          name: org_slug
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateInvitationRequest" }
+      responses:
+        "201":
+          description: created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  invitation: { $ref: "#/components/schemas/OrgInvitation" }
+                  url:
+                    type: string
+                    description: Convenience copy of invitation.url.
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+        "409": { $ref: "#/components/responses/ConflictError" }
+
+  /api/v1/orgs/{org_slug}/invitations/{invitation_id}:
+    delete:
+      summary: Revoke a pending invitation
+      parameters:
+        - in: path
+          name: org_slug
+          required: true
+          schema: { type: string }
+        - in: path
+          name: invitation_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: revoked }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/invitations/{token}:
+    get:
+      summary: Preview an invitation by its share token
+      description: |
+        Returns org name, role, expiry, and status. Identity match is NOT
+        enforced on preview so the recipient can see why a link doesn't work
+        for them. Acceptance (POST /accept) does enforce the match.
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrgInvitation" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/invitations/{token}/accept:
+    post:
+      summary: Accept an invitation
+      description: |
+        Adds the caller to the org with the role embedded in the invitation
+        and flips status to 'accepted'. Refuses (403) if the invitation
+        belongs to a different user_id or email address than the caller.
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrgInvitation" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+        "409": { $ref: "#/components/responses/ConflictError" }
+
   /api/v1/auth/ssh-keys:
     get:
       summary: List the caller's registered SSH public keys
@@ -1817,6 +2070,12 @@ components:
         username: { type: string }
         email: { type: string }
         display_name: { type: string }
+        avatar_url:
+          type: string
+          description: |
+            Public URL for the user's uploaded avatar, or empty when they
+            haven't uploaded one. The query string is a cache-busting Unix
+            timestamp — refetch when the value changes.
         is_admin: { type: boolean }
         is_active: { type: boolean }
         approval_status:
@@ -1901,6 +2160,95 @@ components:
         description: { type: string }
         is_personal: { type: boolean }
         created_at: { type: string, format: date-time }
+
+    OrgRole:
+      type: string
+      enum: [owner, maintainer, developer, reporter, guest]
+      description: |
+        Org-level membership role, GitLab-style. owner > maintainer >
+        developer > reporter > guest. Permission helpers in internal/auth
+        (CanReadOrg / CanWriteRepo / CanModerateContent / CanManageMembers /
+        CanAdminOrg) gate every action against this enum.
+
+    InvitableRole:
+      type: string
+      enum: [maintainer, developer, reporter, guest]
+      description: |
+        Subset of OrgRole that can be granted by invitation. Owner promotion
+        goes through PATCH /orgs/{slug}/members/{user_id} and is restricted
+        to existing owners.
+
+    OrgMember:
+      type: object
+      properties:
+        user_id:      { type: string, format: uuid }
+        username:     { type: string }
+        display_name: { type: string }
+        email:        { type: string }
+        avatar_url:   { type: string }
+        role:         { $ref: "#/components/schemas/OrgRole" }
+        joined_at:    { type: string, format: date-time }
+
+    InvitationStatus:
+      type: string
+      enum: [pending, accepted, revoked, expired]
+
+    OrgInvitation:
+      type: object
+      properties:
+        id:                { type: string, format: uuid }
+        org_id:            { type: string, format: uuid }
+        org_slug:          { type: string }
+        org_display_name:  { type: string }
+        inviter:           { $ref: "#/components/schemas/UserRef", nullable: true }
+        invitee_user_id:   { type: string, format: uuid, nullable: true }
+        invitee_email:     { type: string, nullable: true }
+        role:              { $ref: "#/components/schemas/InvitableRole" }
+        status:            { $ref: "#/components/schemas/InvitationStatus" }
+        expires_at:        { type: string, format: date-time }
+        created_at:        { type: string, format: date-time }
+        accepted_at:       { type: string, format: date-time, nullable: true }
+        token:
+          type: string
+          description: |
+            Raw invitation token. Populated only on the create-invitation
+            response — all subsequent reads return the empty string since the
+            server stores only the HMAC.
+        url:
+          type: string
+          description: |
+            Share URL the inviter should send to the recipient. Populated only
+            on the create-invitation response.
+
+    CreateInvitationRequest:
+      type: object
+      required: [identifier, role]
+      properties:
+        identifier:
+          type: string
+          description: |
+            Username or email of the invitee. If it contains "@" we treat it
+            as an email; otherwise as a username. Existing usernames resolve
+            to invitee_user_id; unknown emails are stored as-is and matched
+            at accept time.
+        role: { $ref: "#/components/schemas/InvitableRole" }
+        ttl_hours:
+          type: integer
+          minimum: 1
+          maximum: 720
+          description: How long the invitation stays acceptable. Defaults to 168 (7 days).
+
+    PatchMemberRequest:
+      type: object
+      required: [role]
+      properties:
+        role: { $ref: "#/components/schemas/OrgRole" }
+
+    AvatarUploadResponse:
+      type: object
+      properties:
+        avatar_url:        { type: string }
+        avatar_updated_at: { type: string, format: date-time }
 
     Project:
       type: object

@@ -24,6 +24,15 @@ type Handler struct {
 	// OAuth clients can read/create orgs and projects with a bearer. When
 	// nil, OAT-shaped bearers are rejected with the standard 401.
 	OAT auth.OATResolver
+	// Hasher HMACs invitation tokens before they touch the DB so a leaked
+	// dump can't be replayed against /invitations/{token}/accept. Required
+	// for the invitation routes; can be nil in tests that only exercise the
+	// project/member subset.
+	Hasher *auth.HMACHasher
+	// InviteLinkBase is the absolute (or root-relative) URL prefix used when
+	// building the share URL returned at invitation-create time. Defaults to
+	// "/invitations" when empty so behaviour is sane in dev.
+	InviteLinkBase string
 }
 
 // Mount registers routes. We wrap in Group() so r.Use() doesn't conflict
@@ -43,7 +52,22 @@ func (h *Handler) Mount(r chi.Router) {
 					r.Post("/", h.createProject)
 					r.Get("/{project_slug}", h.getProject)
 				})
+				// Members and invitations live under each org. Auth here is
+				// the same bearer chain; the per-route handler then enforces
+				// role-based permission via auth.CanManageMembers.
+				h.mountMembers(r)
+				h.mountInvitations(r)
 			})
+		})
+
+		// Invitation accept happens outside the /orgs subtree because the
+		// recipient may not (yet) have access to the org slug — they hold
+		// only the token. The route is authenticated; we look the
+		// invitation up by token hash and match it against the caller's
+		// user_id / email.
+		r.Route("/invitations/{token}", func(r chi.Router) {
+			r.Get("/", h.getInvitationByToken)
+			r.Post("/accept", h.acceptInvitation)
 		})
 	})
 }
@@ -183,8 +207,8 @@ func (h *Handler) createProject(w http.ResponseWriter, r *http.Request) {
 		httpapi.RenderError(w, r, apperr.NotFound("org"))
 		return
 	}
-	if role != "owner" && role != "admin" {
-		httpapi.RenderError(w, r, apperr.Forbidden("only org owners/admins can create projects"))
+	if !auth.CanCreateProject(role) {
+		httpapi.RenderError(w, r, apperr.Forbidden("only org owners and maintainers can create projects"))
 		return
 	}
 	var req createProjectReq

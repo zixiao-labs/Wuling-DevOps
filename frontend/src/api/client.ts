@@ -57,8 +57,13 @@ export async function apiFetch<T>(path: string, opts: ApiFetchOptions = {}): Pro
 
   let body: BodyInit | undefined;
   if (opts.body !== undefined) {
-    headers["Content-Type"] = "application/json";
-    body = JSON.stringify(opts.body);
+    if (opts.body instanceof FormData) {
+      // Don't set Content-Type — the browser must pick its own boundary.
+      body = opts.body;
+    } else {
+      headers["Content-Type"] = "application/json";
+      body = JSON.stringify(opts.body);
+    }
   }
 
   let res: Response;

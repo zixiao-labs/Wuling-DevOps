@@ -72,7 +72,7 @@ func (h *Handler) resolveProject(r *http.Request) (*projectCtx, error) {
 	if err != nil {
 		return nil, err
 	}
-	if role == "" {
+	if !auth.CanReadOrg(role) {
 		return nil, apperr.NotFound("project")
 	}
 	project, err := h.Users.GetProjectBySlug(r.Context(), org.ID, chi.URLParam(r, "project_slug"))

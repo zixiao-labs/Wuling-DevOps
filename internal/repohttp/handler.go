@@ -122,6 +122,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		httpapi.RenderError(w, r, apperr.NotFound("org"))
 		return
 	}
+	if !auth.CanCreateProject(role) {
+		httpapi.RenderError(w, r, apperr.Forbidden("only org owners and maintainers can create repos"))
+		return
+	}
 	project, err := h.Store.GetProjectBySlug(r.Context(), org.ID, chi.URLParam(r, "project_slug"))
 	if err != nil {
 		httpapi.RenderError(w, r, err)
@@ -412,12 +416,12 @@ func (h *Handler) resolveAndCheck(r *http.Request, perm Permission) (*model.Repo
 	}
 	switch perm {
 	case PermRead:
-		if role == "" && repo.Visibility != "public" {
+		if !auth.CanReadRepo(role) && repo.Visibility != "public" {
 			return nil, uuid.Nil, uuid.Nil, apperr.NotFound("repo")
 		}
 	case PermWrite:
-		if role == "" {
-			return nil, uuid.Nil, uuid.Nil, apperr.Forbidden("not a member")
+		if !auth.CanWriteRepo(role) {
+			return nil, uuid.Nil, uuid.Nil, apperr.Forbidden("write access required")
 		}
 	}
 	return repo, projectID, orgID, nil

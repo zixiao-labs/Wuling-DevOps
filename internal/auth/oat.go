@@ -31,6 +31,11 @@ import (
 const (
 	OATPrefix     = "wloat_"
 	RefreshPrefix = "wlref_"
+	// InvitePrefix tags magic-link invitation tokens. The token is shown to
+	// the inviter once at creation time and embedded in the share-able URL;
+	// we store only its HMAC. A leaked org_invitations dump therefore can't
+	// be replayed to join the org.
+	InvitePrefix = "wlinv_"
 )
 
 // HMACHasher computes a stable, fast hash for token row-lookup. The secret is
@@ -82,6 +87,12 @@ func NewAuthCode(h *HMACHasher) (raw, hash string, err error) {
 // Device codes are not user-facing so we don't bother with a prefix.
 func NewDeviceCode(h *HMACHasher) (raw, hash string, err error) {
 	return newPrefixedToken(h, "", 32)
+}
+
+// NewInvitationToken mints a magic-link invitation token. Returns (raw, hash).
+// Raw goes into the share URL once; the DB stores only the hash.
+func NewInvitationToken(h *HMACHasher) (raw, hash string, err error) {
+	return newPrefixedToken(h, InvitePrefix, 24)
 }
 
 // userCodeAlphabet is Crockford base32 minus characters that look ambiguous

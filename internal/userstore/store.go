@@ -139,17 +139,18 @@ func (s *Store) GetUserByLogin(ctx context.Context, login string) (*model.User, 
 	var u model.User
 	var hash *string
 	var ghLogin *string
+	var avatarUpdatedAt *time.Time
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, username, email, display_name, is_admin, is_active,
 		       approval_status, approval_note, approved_at,
-		       github_login, created_at, password_hash
+		       github_login, avatar_updated_at, created_at, password_hash
 		FROM users
 		WHERE LOWER(username) = LOWER($1) OR LOWER(email) = LOWER($1)
 		ORDER BY (LOWER(username) = LOWER($1)) DESC
 		LIMIT 1
 	`, login).Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &u.IsAdmin, &u.IsActive,
 		&u.ApprovalStatus, &u.ApprovalNote, &u.ApprovedAt,
-		&ghLogin, &u.CreatedAt, &hash)
+		&ghLogin, &avatarUpdatedAt, &u.CreatedAt, &hash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, "", apperr.NotFound("user")
 	}
@@ -159,6 +160,7 @@ func (s *Store) GetUserByLogin(ctx context.Context, login string) (*model.User, 
 	if ghLogin != nil {
 		u.GithubLogin = *ghLogin
 	}
+	u.AvatarURL = AvatarURL(u.Username, avatarUpdatedAt)
 	if hash == nil {
 		// OAuth-only account — caller must redirect to the GitHub login flow.
 		return &u, "", nil
@@ -170,12 +172,15 @@ func (s *Store) GetUserByLogin(ctx context.Context, login string) (*model.User, 
 func (s *Store) GetUserByID(ctx context.Context, id uuid.UUID) (*model.User, error) {
 	var u model.User
 	var ghLogin *string
+	var avatarUpdatedAt *time.Time
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, username, email, display_name, is_admin, is_active,
-		       approval_status, approval_note, approved_at, github_login, created_at
+		       approval_status, approval_note, approved_at, github_login,
+		       avatar_updated_at, created_at
 		FROM users WHERE id = $1
 	`, id).Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &u.IsAdmin, &u.IsActive,
-		&u.ApprovalStatus, &u.ApprovalNote, &u.ApprovedAt, &ghLogin, &u.CreatedAt)
+		&u.ApprovalStatus, &u.ApprovalNote, &u.ApprovedAt, &ghLogin,
+		&avatarUpdatedAt, &u.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apperr.NotFound("user")
 	}
@@ -185,6 +190,7 @@ func (s *Store) GetUserByID(ctx context.Context, id uuid.UUID) (*model.User, err
 	if ghLogin != nil {
 		u.GithubLogin = *ghLogin
 	}
+	u.AvatarURL = AvatarURL(u.Username, avatarUpdatedAt)
 	return &u, nil
 }
 
@@ -192,12 +198,15 @@ func (s *Store) GetUserByID(ctx context.Context, id uuid.UUID) (*model.User, err
 func (s *Store) GetUserByUsername(ctx context.Context, username string) (*model.User, error) {
 	var u model.User
 	var ghLogin *string
+	var avatarUpdatedAt *time.Time
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, username, email, display_name, is_admin, is_active,
-		       approval_status, approval_note, approved_at, github_login, created_at
+		       approval_status, approval_note, approved_at, github_login,
+		       avatar_updated_at, created_at
 		FROM users WHERE LOWER(username) = LOWER($1)
 	`, username).Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &u.IsAdmin, &u.IsActive,
-		&u.ApprovalStatus, &u.ApprovalNote, &u.ApprovedAt, &ghLogin, &u.CreatedAt)
+		&u.ApprovalStatus, &u.ApprovalNote, &u.ApprovedAt, &ghLogin,
+		&avatarUpdatedAt, &u.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apperr.NotFound("user")
 	}
@@ -207,6 +216,7 @@ func (s *Store) GetUserByUsername(ctx context.Context, username string) (*model.
 	if ghLogin != nil {
 		u.GithubLogin = *ghLogin
 	}
+	u.AvatarURL = AvatarURL(u.Username, avatarUpdatedAt)
 	return &u, nil
 }
 
@@ -215,12 +225,15 @@ func (s *Store) GetUserByUsername(ctx context.Context, username string) (*model.
 func (s *Store) GetUserByEmail(ctx context.Context, email string) (*model.User, error) {
 	var u model.User
 	var ghLogin *string
+	var avatarUpdatedAt *time.Time
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, username, email, display_name, is_admin, is_active,
-		       approval_status, approval_note, approved_at, github_login, created_at
+		       approval_status, approval_note, approved_at, github_login,
+		       avatar_updated_at, created_at
 		FROM users WHERE LOWER(email) = LOWER($1)
 	`, email).Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &u.IsAdmin, &u.IsActive,
-		&u.ApprovalStatus, &u.ApprovalNote, &u.ApprovedAt, &ghLogin, &u.CreatedAt)
+		&u.ApprovalStatus, &u.ApprovalNote, &u.ApprovedAt, &ghLogin,
+		&avatarUpdatedAt, &u.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apperr.NotFound("user")
 	}
@@ -230,6 +243,7 @@ func (s *Store) GetUserByEmail(ctx context.Context, email string) (*model.User, 
 	if ghLogin != nil {
 		u.GithubLogin = *ghLogin
 	}
+	u.AvatarURL = AvatarURL(u.Username, avatarUpdatedAt)
 	return &u, nil
 }
 
@@ -239,12 +253,15 @@ func (s *Store) GetUserByEmail(ctx context.Context, email string) (*model.User, 
 func (s *Store) GetUserByGithubID(ctx context.Context, githubUserID int64) (*model.User, error) {
 	var u model.User
 	var ghLogin *string
+	var avatarUpdatedAt *time.Time
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, username, email, display_name, is_admin, is_active,
-		       approval_status, approval_note, approved_at, github_login, created_at
+		       approval_status, approval_note, approved_at, github_login,
+		       avatar_updated_at, created_at
 		FROM users WHERE github_user_id = $1
 	`, githubUserID).Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &u.IsAdmin, &u.IsActive,
-		&u.ApprovalStatus, &u.ApprovalNote, &u.ApprovedAt, &ghLogin, &u.CreatedAt)
+		&u.ApprovalStatus, &u.ApprovalNote, &u.ApprovedAt, &ghLogin,
+		&avatarUpdatedAt, &u.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apperr.NotFound("user")
 	}
@@ -254,6 +271,7 @@ func (s *Store) GetUserByGithubID(ctx context.Context, githubUserID int64) (*mod
 	if ghLogin != nil {
 		u.GithubLogin = *ghLogin
 	}
+	u.AvatarURL = AvatarURL(u.Username, avatarUpdatedAt)
 	return &u, nil
 }
 
@@ -309,7 +327,8 @@ func (s *Store) ListUsers(ctx context.Context, p ListUsersParams) ([]model.User,
 	var err error
 	q := `
 		SELECT id, username, email, display_name, is_admin, is_active,
-		       approval_status, approval_note, approved_at, github_login, created_at
+		       approval_status, approval_note, approved_at, github_login,
+		       avatar_updated_at, created_at
 		FROM users
 	`
 	order := `
@@ -329,13 +348,16 @@ func (s *Store) ListUsers(ctx context.Context, p ListUsersParams) ([]model.User,
 	for rows.Next() {
 		var u model.User
 		var ghLogin *string
+		var avatarUpdatedAt *time.Time
 		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &u.IsAdmin, &u.IsActive,
-			&u.ApprovalStatus, &u.ApprovalNote, &u.ApprovedAt, &ghLogin, &u.CreatedAt); err != nil {
+			&u.ApprovalStatus, &u.ApprovalNote, &u.ApprovedAt, &ghLogin,
+			&avatarUpdatedAt, &u.CreatedAt); err != nil {
 			return nil, apperr.Internal(err)
 		}
 		if ghLogin != nil {
 			u.GithubLogin = *ghLogin
 		}
+		u.AvatarURL = AvatarURL(u.Username, avatarUpdatedAt)
 		out = append(out, u)
 	}
 	if err := rows.Err(); err != nil {

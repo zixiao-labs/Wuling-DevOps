@@ -74,6 +74,7 @@ func Reset(t *testing.T, pool *db.Pool) {
 			oauth_auth_requests,
 			oauth_authorizations,
 			oauth_clients,
+			org_invitations,
 			org_members,
 			repos,
 			projects,

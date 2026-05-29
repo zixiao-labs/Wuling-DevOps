@@ -7,7 +7,7 @@
 //
 //   - Read endpoints: any org member, plus anonymous reads against public repos.
 //   - Open MR / comment / review / merge / close / reopen: org member.
-//   - PATCH (title/body): the MR author or an org owner/admin.
+//   - PATCH (title/body): the MR author or a maintainer-or-above.
 //
 // All libgit2 calls live in this package — mrstore is database-only.
 package mrhttp
@@ -90,7 +90,7 @@ type repoCtx struct {
 	Username    string
 	UserEmail   string
 	UserDisplay string
-	Role        string // "owner" | "admin" | "member" | "" (not a member)
+	Role        string // legal values are documented in internal/auth/roles.go
 	RepoPath    string
 }
 
@@ -140,23 +140,25 @@ func (h *Handler) resolveRepo(r *http.Request) (*repoCtx, error) {
 // authenticated user; private/internal repos require org membership. Returns
 // a 404 (not 403) on failure to avoid leaking that the repo exists.
 func requireRead(rc *repoCtx) error {
-	if rc.Role == "" && rc.Repo.Visibility != "public" {
+	if !auth.CanReadRepo(rc.Role) && rc.Repo.Visibility != "public" {
 		return apperr.NotFound("repo")
 	}
 	return nil
 }
 
-// requireWrite enforces write access (any org member; finer-grained scopes
-// arrive in Stage 2).
+// requireWrite enforces write access. Developers and above can open MRs,
+// merge, comment, and review; reporters and guests can only read.
 func requireWrite(rc *repoCtx) error {
-	if rc.Role == "" {
-		return apperr.Forbidden("not a member of this org")
+	if !auth.CanWriteRepo(rc.Role) {
+		return apperr.Forbidden("write access required")
 	}
 	return nil
 }
 
-// canAdmin reports whether role is "owner" or "admin".
-func canAdmin(role string) bool { return role == "owner" || role == "admin" }
+// canAdmin reports whether role grants content-moderation power on the repo
+// — editing other people's MRs and comments, force-closing somebody else's
+// MR. Maps to the GitLab "Maintainer+" tier.
+func canAdmin(role string) bool { return auth.CanModerateContent(role) }
 
 // parseNumber pulls the {number} URL parameter as a positive int64.
 func parseNumber(r *http.Request) (int64, error) {
@@ -360,7 +362,7 @@ func (h *Handler) patch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !canAdmin(rc.Role) && (current.Author == nil || current.Author.ID != rc.UserID) {
-		httpapi.RenderError(w, r, apperr.Forbidden("only the author or an org owner/admin can edit this merge request"))
+		httpapi.RenderError(w, r, apperr.Forbidden("only the author or a maintainer (or above) can edit this merge request"))
 		return
 	}
 

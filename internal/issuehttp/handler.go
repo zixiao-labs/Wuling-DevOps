@@ -8,8 +8,8 @@
 //
 //   - Any org member can read.
 //   - Any org member can create.
-//   - The author or an org owner/admin can edit (PATCH).
-//   - Only an org owner/admin can delete an issue or a comment.
+//   - The author or a maintainer-or-above can edit (PATCH).
+//   - Only a maintainer-or-above can delete an issue or a comment.
 //
 // Slug lookups defer to userstore. Bodies are validated against the
 // canonical apperr envelope.
@@ -84,7 +84,7 @@ type projectCtx struct {
 	ProjectID uuid.UUID
 	UserID    uuid.UUID
 	Username  string
-	Role      string // "owner", "admin", "member", or "" (not a member)
+	Role      string // legal values are documented in internal/auth/roles.go
 }
 
 // resolveProject loads the org+project from URL slugs and resolves the
@@ -103,7 +103,7 @@ func (h *Handler) resolveProject(r *http.Request) (*projectCtx, error) {
 	if err != nil {
 		return nil, err
 	}
-	if role == "" {
+	if !auth.CanReadOrg(role) {
 		return nil, apperr.NotFound("project")
 	}
 	project, err := h.Users.GetProjectBySlug(r.Context(), org.ID, chi.URLParam(r, "project_slug"))
@@ -119,8 +119,10 @@ func (h *Handler) resolveProject(r *http.Request) (*projectCtx, error) {
 	}, nil
 }
 
-// canAdmin reports whether role is "owner" or "admin".
-func canAdmin(role string) bool { return role == "owner" || role == "admin" }
+// canAdmin reports whether role grants content-moderation power on this
+// project — editing other people's issues/comments, closing/reopening issues
+// authored by others. Maps to the GitLab "Maintainer+" tier.
+func canAdmin(role string) bool { return auth.CanModerateContent(role) }
 
 // parseNumber pulls the {number} URL parameter as a positive int64.
 func parseNumber(r *http.Request) (int64, error) {
@@ -261,7 +263,7 @@ func (h *Handler) patchIssue(w http.ResponseWriter, r *http.Request) {
 		httpapi.RenderError(w, r, err)
 		return
 	}
-	// Load the current issue to authorize: author or org admin can edit.
+	// Load the current issue to authorize: author or maintainer+ can edit.
 	current, err := h.Issues.GetIssueByNumber(r.Context(), pc.ProjectID, number)
 	if err != nil {
 		httpapi.RenderError(w, r, err)
@@ -269,7 +271,7 @@ func (h *Handler) patchIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	if !canAdmin(pc.Role) && (current.Author == nil || current.Author.ID != pc.UserID) {
 		httpapi.RenderError(w, r,
-			apperr.Forbidden("only the author or an org owner/admin can edit this issue"))
+			apperr.Forbidden("only the author or a maintainer (or above) can edit this issue"))
 		return
 	}
 
@@ -301,7 +303,7 @@ func (h *Handler) deleteIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	if !canAdmin(pc.Role) {
 		httpapi.RenderError(w, r,
-			apperr.Forbidden("only org owners/admins can delete issues"))
+			apperr.Forbidden("only maintainers (or above) can delete issues"))
 		return
 	}
 	number, err := parseNumber(r)
@@ -400,7 +402,7 @@ func (h *Handler) createLabel(w http.ResponseWriter, r *http.Request) {
 	}
 	if !canAdmin(pc.Role) {
 		httpapi.RenderError(w, r,
-			apperr.Forbidden("only org owners/admins can manage labels"))
+			apperr.Forbidden("only maintainers (or above) can manage labels"))
 		return
 	}
 	var req createLabelReq
@@ -435,7 +437,7 @@ func (h *Handler) deleteLabel(w http.ResponseWriter, r *http.Request) {
 	}
 	if !canAdmin(pc.Role) {
 		httpapi.RenderError(w, r,
-			apperr.Forbidden("only org owners/admins can manage labels"))
+			apperr.Forbidden("only maintainers (or above) can manage labels"))
 		return
 	}
 	idStr := chi.URLParam(r, "label_id")

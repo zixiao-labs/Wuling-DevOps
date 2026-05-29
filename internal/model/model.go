@@ -17,11 +17,17 @@ const (
 )
 
 // User is a public-facing user representation.
+//
+// AvatarURL is a derived field: empty when the user has not uploaded a custom
+// avatar (frontends fall back to a deterministic initials tile), and
+// "/api/v1/users/{username}/avatar?v=<unix>" when they have. The query-string
+// version doubles as a cache-buster on every upload.
 type User struct {
 	ID             uuid.UUID  `json:"id"`
 	Username       string     `json:"username"`
 	Email          string     `json:"email,omitempty"`
 	DisplayName    string     `json:"display_name"`
+	AvatarURL      string     `json:"avatar_url,omitempty"`
 	IsAdmin        bool       `json:"is_admin"`
 	IsActive       bool       `json:"is_active"`
 	ApprovalStatus string     `json:"approval_status"`
@@ -39,6 +45,41 @@ type Org struct {
 	Description string    `json:"description"`
 	IsPersonal  bool      `json:"is_personal"`
 	CreatedAt   time.Time `json:"created_at"`
+}
+
+// OrgMember is the public shape of one row in an org's member list. The user's
+// avatar URL is embedded so a member listing can render without a second
+// round-trip per row.
+type OrgMember struct {
+	UserID      uuid.UUID `json:"user_id"`
+	Username    string    `json:"username"`
+	DisplayName string    `json:"display_name"`
+	Email       string    `json:"email,omitempty"`
+	AvatarURL   string    `json:"avatar_url,omitempty"`
+	Role        string    `json:"role"`
+	JoinedAt    time.Time `json:"joined_at"`
+}
+
+// OrgInvitation is the public shape of a magic-link invitation row. Token is
+// only populated on the create-invitation response (the raw token is shown
+// once); subsequent reads omit it.
+type OrgInvitation struct {
+	ID            uuid.UUID  `json:"id"`
+	OrgID         uuid.UUID  `json:"org_id"`
+	OrgSlug       string     `json:"org_slug,omitempty"`
+	OrgDisplayName string    `json:"org_display_name,omitempty"`
+	Inviter       *UserRef   `json:"inviter,omitempty"`
+	InviteeUserID *uuid.UUID `json:"invitee_user_id,omitempty"`
+	InviteeEmail  string     `json:"invitee_email,omitempty"`
+	Role          string     `json:"role"`
+	Status        string     `json:"status"`
+	ExpiresAt     time.Time  `json:"expires_at"`
+	CreatedAt     time.Time  `json:"created_at"`
+	AcceptedAt    *time.Time `json:"accepted_at,omitempty"`
+	// Token is the raw, un-hashed invitation token. Non-empty ONLY on the
+	// create-invitation response — every other endpoint returns the empty
+	// string, since we only store the HMAC of the raw token.
+	Token string `json:"token,omitempty"`
 }
 
 // Project is the public project shape.

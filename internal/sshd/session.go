@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/zixiao-labs/wuling-devops/internal/apperr"
+	"github.com/zixiao-labs/wuling-devops/internal/auth"
 )
 
 // Context keys for values set by publicKeyHandler. Each is its own type to
@@ -139,12 +140,12 @@ func (s *Server) handleSession(sess ssh.Session) {
 		return
 	}
 	if svc.needsWrite() {
-		if role == "" {
+		if !auth.CanWriteRepo(role) {
 			writeErrAndExit(sess, apperr.Forbidden("write access required"))
 			return
 		}
 	} else {
-		if role == "" && repo.Visibility != "public" {
+		if !auth.CanReadRepo(role) && repo.Visibility != "public" {
 			// Hide existence — return NotFound rather than Forbidden to match
 			// the HTTP smart-transport handler's behaviour.
 			writeErrAndExit(sess, apperr.NotFound("repo"))

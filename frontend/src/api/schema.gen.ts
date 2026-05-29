@@ -487,6 +487,468 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/avatar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Upload or replace the caller's avatar
+         * @description Body is a multipart/form-data with a single `avatar` file field. The
+         *     server decodes the upload (PNG/JPEG/GIF only), centre-crops to a
+         *     square, resizes to 256×256, and re-encodes as PNG. Max body size is
+         *     2 MiB.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "multipart/form-data": {
+                        /** Format: binary */
+                        avatar: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description ok */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AvatarUploadResponse"];
+                    };
+                };
+                400: components["responses"]["ValidationError"];
+                401: components["responses"]["UnauthorizedError"];
+            };
+        };
+        post?: never;
+        /** Remove the caller's uploaded avatar */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description removed */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["UnauthorizedError"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/users/{username}/avatar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Public PNG of a user's avatar
+         * @description Streams the user's uploaded PNG. Returns 404 when the user has not
+         *     uploaded one — frontends should fall back to a deterministic initials
+         *     tile. Response is cacheable for an hour against the query string in
+         *     User.avatar_url.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Cache-buster (Unix seconds). Ignored by the server. */
+                    v?: number;
+                };
+                header?: never;
+                path: {
+                    username: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description ok */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "image/png": unknown;
+                    };
+                };
+                404: components["responses"]["NotFoundError"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List members of an org */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description ok */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            members?: components["schemas"]["OrgMember"][];
+                            role?: components["schemas"]["OrgRole"];
+                        };
+                    };
+                };
+                404: components["responses"]["NotFoundError"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/members/{user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove a member from an org (or self-leave)
+         * @description Self-leave (user_id == caller) is permitted regardless of role,
+         *     subject to the last-owner guard. Removing another member requires
+         *     manage-members permission and a strictly higher rank than the target.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: string;
+                    user_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description removed */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                403: components["responses"]["ForbiddenError"];
+                404: components["responses"]["NotFoundError"];
+                /** @description Conflict — last owner cannot leave. */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /**
+         * Change a member's role
+         * @description Owners may grant any role including owner. Maintainers may grant
+         *     developer/reporter/guest but never maintainer/owner. Demoting the
+         *     last owner is refused (409).
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: string;
+                    user_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["PatchMemberRequest"];
+                };
+            };
+            responses: {
+                /** @description updated */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                403: components["responses"]["ForbiddenError"];
+                404: components["responses"]["NotFoundError"];
+                /** @description Conflict — for example, refusing to demote the last owner. */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/invitations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List invitations for an org */
+        get: {
+            parameters: {
+                query?: {
+                    status?: components["schemas"]["InvitationStatus"];
+                };
+                header?: never;
+                path: {
+                    org_slug: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description ok */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            invitations?: components["schemas"]["OrgInvitation"][];
+                        };
+                    };
+                };
+                401: components["responses"]["UnauthorizedError"];
+                403: components["responses"]["ForbiddenError"];
+                404: components["responses"]["NotFoundError"];
+            };
+        };
+        put?: never;
+        /** Create a magic-link invitation */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CreateInvitationRequest"];
+                };
+            };
+            responses: {
+                /** @description created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            invitation?: components["schemas"]["OrgInvitation"];
+                            /** @description Convenience copy of invitation.url. */
+                            url?: string;
+                        };
+                    };
+                };
+                400: components["responses"]["ValidationError"];
+                401: components["responses"]["UnauthorizedError"];
+                403: components["responses"]["ForbiddenError"];
+                404: components["responses"]["NotFoundError"];
+                409: components["responses"]["ConflictError"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/invitations/{invitation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke a pending invitation */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: string;
+                    invitation_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description revoked */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                400: components["responses"]["ValidationError"];
+                401: components["responses"]["UnauthorizedError"];
+                403: components["responses"]["ForbiddenError"];
+                404: components["responses"]["NotFoundError"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/invitations/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Preview an invitation by its share token
+         * @description Returns org name, role, expiry, and status. Identity match is NOT
+         *     enforced on preview so the recipient can see why a link doesn't work
+         *     for them. Acceptance (POST /accept) does enforce the match.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    token: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description ok */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OrgInvitation"];
+                    };
+                };
+                404: components["responses"]["NotFoundError"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/invitations/{token}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept an invitation
+         * @description Adds the caller to the org with the role embedded in the invitation
+         *     and flips status to 'accepted'. Refuses (403) if the invitation
+         *     belongs to a different user_id or email address than the caller.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    token: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description ok */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OrgInvitation"];
+                    };
+                };
+                401: components["responses"]["UnauthorizedError"];
+                403: components["responses"]["ForbiddenError"];
+                404: components["responses"]["NotFoundError"];
+                409: components["responses"]["ConflictError"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/ssh-keys": {
         parameters: {
             query?: never;
@@ -3638,6 +4100,12 @@ export interface components {
             username?: string;
             email?: string;
             display_name?: string;
+            /**
+             * @description Public URL for the user's uploaded avatar, or empty when they
+             *     haven't uploaded one. The query string is a cache-busting Unix
+             *     timestamp — refetch when the value changes.
+             */
+            avatar_url?: string;
             is_admin?: boolean;
             is_active?: boolean;
             /**
@@ -3717,6 +4185,85 @@ export interface components {
             is_personal?: boolean;
             /** Format: date-time */
             created_at?: string;
+        };
+        /**
+         * @description Org-level membership role, GitLab-style. owner > maintainer >
+         *     developer > reporter > guest. Permission helpers in internal/auth
+         *     (CanReadOrg / CanWriteRepo / CanModerateContent / CanManageMembers /
+         *     CanAdminOrg) gate every action against this enum.
+         * @enum {string}
+         */
+        OrgRole: "owner" | "maintainer" | "developer" | "reporter" | "guest";
+        /**
+         * @description Subset of OrgRole that can be granted by invitation. Owner promotion
+         *     goes through PATCH /orgs/{slug}/members/{user_id} and is restricted
+         *     to existing owners.
+         * @enum {string}
+         */
+        InvitableRole: "maintainer" | "developer" | "reporter" | "guest";
+        OrgMember: {
+            /** Format: uuid */
+            user_id?: string;
+            username?: string;
+            display_name?: string;
+            email?: string;
+            avatar_url?: string;
+            role?: components["schemas"]["OrgRole"];
+            /** Format: date-time */
+            joined_at?: string;
+        };
+        /** @enum {string} */
+        InvitationStatus: "pending" | "accepted" | "revoked" | "expired";
+        OrgInvitation: {
+            /** Format: uuid */
+            id?: string;
+            /** Format: uuid */
+            org_id?: string;
+            org_slug?: string;
+            org_display_name?: string;
+            inviter?: components["schemas"]["UserRef"];
+            /** Format: uuid */
+            invitee_user_id?: string | null;
+            invitee_email?: string | null;
+            role?: components["schemas"]["InvitableRole"];
+            status?: components["schemas"]["InvitationStatus"];
+            /** Format: date-time */
+            expires_at?: string;
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            accepted_at?: string | null;
+            /**
+             * @description Raw invitation token. Populated only on the create-invitation
+             *     response — all subsequent reads return the empty string since the
+             *     server stores only the HMAC.
+             */
+            token?: string;
+            /**
+             * @description Share URL the inviter should send to the recipient. Populated only
+             *     on the create-invitation response.
+             */
+            url?: string;
+        };
+        CreateInvitationRequest: {
+            /**
+             * @description Username or email of the invitee. If it contains "@" we treat it
+             *     as an email; otherwise as a username. Existing usernames resolve
+             *     to invitee_user_id; unknown emails are stored as-is and matched
+             *     at accept time.
+             */
+            identifier: string;
+            role: components["schemas"]["InvitableRole"];
+            /** @description How long the invitation stays acceptable. Defaults to 168 (7 days). */
+            ttl_hours?: number;
+        };
+        PatchMemberRequest: {
+            role: components["schemas"]["OrgRole"];
+        };
+        AvatarUploadResponse: {
+            avatar_url?: string;
+            /** Format: date-time */
+            avatar_updated_at?: string;
         };
         Project: {
             /** Format: uuid */
