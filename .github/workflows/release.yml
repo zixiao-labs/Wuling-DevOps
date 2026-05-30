@@ -116,6 +116,7 @@ jobs:
   build-images:
     name: Build & push Docker images
     runs-on: ubuntu-latest
+    environment: production
     needs: [build-frontend]
     steps:
       - uses: actions/checkout@v4
