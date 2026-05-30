@@ -1,0 +1,44 @@
+name: Rust Check
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  Run-Cargo-Check:
+    name: cargo fmt / clippy / build / test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: runners/runner-clients
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: runners/runner-clients
+
+      - name: rustfmt (check)
+        run: cargo fmt --check
+
+      - name: clippy (deny warnings)
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: build
+        run: cargo build --locked
+
+      - name: test
+        run: cargo test --locked

@@ -22,6 +22,10 @@ type Identity struct {
 	// ClientID is set when Source == OAT — the oauth_clients row that minted
 	// the bearer. Empty for PAT/JWT.
 	ClientID uuid.UUID
+	// OrgID is set when Source == Runner — the org the runner belongs to.
+	// Runner identities have no UserID; org-scoped read access is granted on
+	// this field instead. Empty for every other source.
+	OrgID uuid.UUID
 }
 
 // IdentitySource discriminates between the auth methods.
@@ -32,7 +36,16 @@ const (
 	IdentitySourcePAT      IdentitySource = "pat"
 	IdentitySourceOAT      IdentitySource = "oat"
 	IdentitySourcePassword IdentitySource = "password"
+	IdentitySourceRunner   IdentitySource = "runner"
 )
+
+// RunnerTokenPrefix tags runner authentication tokens. Defined here (rather
+// than only in runnerstore) so the git smart-HTTP handler can recognize a
+// runner token in an HTTP Basic password slot without importing runnerstore.
+const RunnerTokenPrefix = "wlrt_"
+
+// IsRunnerShaped reports whether s carries the wlrt_ prefix.
+func IsRunnerShaped(s string) bool { return strings.HasPrefix(s, RunnerTokenPrefix) }
 
 type identityCtxKey struct{}
 

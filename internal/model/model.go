@@ -280,3 +280,97 @@ type LanguageStats struct {
 	Files     map[string]int64 `json:"files"`
 	Truncated bool             `json:"truncated,omitempty"`
 }
+
+// ----------------------------------------------------------------------------
+// Pipelines + Secrets + Runners (Stage 1). See docs/pipelines.md.
+// ----------------------------------------------------------------------------
+
+// Resource tiers — the abstract machine size a job needs and a runner offers.
+// Mapped to concrete CPU/memory/storage per provider in runner-config.yaml.
+const (
+	TierLow    = "low"
+	TierMedium = "medium"
+	TierHigh   = "high"
+)
+
+// Secret is the metadata-only shape of a stored secret. The value is NEVER
+// serialized to JSON — only the name and scope are exposed. ProjectID is nil
+// for org-scoped secrets.
+type Secret struct {
+	ID        uuid.UUID  `json:"id"`
+	OrgID     uuid.UUID  `json:"org_id"`
+	ProjectID *uuid.UUID `json:"project_id,omitempty"`
+	Scope     string     `json:"scope"` // "org" | "project"
+	Name      string     `json:"name"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+}
+
+// Runner is the public shape of a registered execution agent. Token is
+// populated ONLY on the register/create response (shown once, like a PAT).
+type Runner struct {
+	ID           uuid.UUID  `json:"id"`
+	OrgID        uuid.UUID  `json:"org_id"`
+	Name         string     `json:"name"`
+	Labels       []string   `json:"labels"`
+	ResourceTier string     `json:"resource_tier"`
+	Provider     string     `json:"provider"` // static|aliyun|aws|proxmox|vcenter
+	PoolName     string     `json:"pool_name,omitempty"`
+	Ephemeral    bool       `json:"ephemeral"`
+	Status       string     `json:"status"` // offline|idle|busy
+	LastSeenAt   *time.Time `json:"last_seen_at,omitempty"`
+	LastJobAt    *time.Time `json:"last_job_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	Token        string     `json:"token,omitempty"`
+}
+
+// PipelineRun is one execution of one workflow file for a commit/event. Jobs
+// is populated on the detail endpoint, omitted from list responses.
+type PipelineRun struct {
+	ID            uuid.UUID     `json:"id"`
+	OrgID         uuid.UUID     `json:"org_id"`
+	ProjectID     uuid.UUID     `json:"project_id"`
+	RepoID        uuid.UUID     `json:"repo_id"`
+	Number        int64         `json:"number"`
+	WorkflowPath  string        `json:"workflow_path"`
+	WorkflowName  string        `json:"workflow_name"`
+	Event         string        `json:"event"` // push|pull_request|manual
+	GitRef        string        `json:"git_ref"`
+	CommitSHA     string        `json:"commit_sha"`
+	CommitMessage string        `json:"commit_message"`
+	Status        string        `json:"status"` // queued|running|success|failed|canceled
+	TriggeredBy   *UserRef      `json:"triggered_by,omitempty"`
+	CreatedAt     time.Time     `json:"created_at"`
+	StartedAt     *time.Time    `json:"started_at,omitempty"`
+	FinishedAt    *time.Time    `json:"finished_at,omitempty"`
+	Jobs          []PipelineJob `json:"jobs,omitempty"`
+}
+
+// PipelineJob is a job within a run. Steps is populated on the detail endpoint.
+type PipelineJob struct {
+	ID           uuid.UUID      `json:"id"`
+	RunID        uuid.UUID      `json:"run_id"`
+	Name         string         `json:"name"`
+	RunsOn       []string       `json:"runs_on"`
+	ResourceTier string         `json:"resource_tier"`
+	Needs        []string       `json:"needs"`
+	Status       string         `json:"status"`
+	RunnerID     *uuid.UUID     `json:"runner_id,omitempty"`
+	Attempt      int            `json:"attempt"`
+	LogSize      int64          `json:"log_size"`
+	QueuedAt     time.Time      `json:"queued_at"`
+	StartedAt    *time.Time     `json:"started_at,omitempty"`
+	FinishedAt   *time.Time     `json:"finished_at,omitempty"`
+	Steps        []PipelineStep `json:"steps,omitempty"`
+}
+
+// PipelineStep is one ordered step within a job. Logs live on disk, not here.
+type PipelineStep struct {
+	ID         uuid.UUID  `json:"id"`
+	JobID      uuid.UUID  `json:"job_id"`
+	Number     int        `json:"number"`
+	Name       string     `json:"name"`
+	Status     string     `json:"status"`
+	StartedAt  *time.Time `json:"started_at,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+}

@@ -17,15 +17,19 @@ import (
 
 // Config is the top-level application config.
 type Config struct {
-	Env     string `env:"WULING_ENV" envDefault:"dev"`
-	HTTP    HTTPConfig
-	SSH     SSHConfig
-	DB      DBConfig
-	JWT     JWTConfig
-	Storage StorageConfig
-	OAuth   OAuthConfig
-	Signup  SignupConfig
-	Log     LogConfig
+	Env       string `env:"WULING_ENV" envDefault:"dev"`
+	HTTP      HTTPConfig
+	SSH       SSHConfig
+	DB        DBConfig
+	JWT       JWTConfig
+	Storage   StorageConfig
+	OAuth     OAuthConfig
+	Signup    SignupConfig
+	Log       LogConfig
+	Secrets   SecretsConfig
+	Pipeline  PipelineConfig
+	Runner    RunnerConfig
+	Autoscale AutoscaleConfig
 }
 
 // HTTPConfig configures the public HTTP listener.
@@ -144,6 +148,39 @@ type LogConfig struct {
 	Format string `env:"WULING_LOG_FORMAT" envDefault:"text"` // text|json
 }
 
+// SecretsConfig holds the master key for the Secrets subsystem (AES-256-GCM).
+//
+// Key is 32 bytes encoded as hex (64 chars) or base64. In dev an ephemeral
+// key is auto-generated on boot (so a fresh checkout works), which means
+// secrets do not survive a restart — fine locally, fatal in production, so
+// validate() requires it there.
+type SecretsConfig struct {
+	Key string `env:"WULING_SECRETS_KEY"`
+}
+
+// PipelineConfig controls Pipelines (CI) execution-side storage.
+type PipelineConfig struct {
+	// LogDir is where job logs are appended on disk, one file per job.
+	LogDir string `env:"WULING_PIPELINE_LOG_DIR" envDefault:"./var/pipeline-logs"`
+}
+
+// RunnerConfig controls runner registration and the GitOps config repo lookup.
+//
+// ConfigProject/ConfigRepo name the per-org "config" repo whose
+// runner-config.yaml drives the autoscaler (default {org}/config/config).
+type RunnerConfig struct {
+	ConfigProject   string        `env:"WULING_RUNNER_CONFIG_PROJECT" envDefault:"config"`
+	ConfigRepo      string        `env:"WULING_RUNNER_CONFIG_REPO" envDefault:"config"`
+	RegistrationTTL time.Duration `env:"WULING_RUNNER_REGISTRATION_TTL" envDefault:"1h"`
+	ReapAfter       time.Duration `env:"WULING_RUNNER_REAP_AFTER" envDefault:"90s"`
+}
+
+// AutoscaleConfig controls the autoscaler reconcile loop.
+type AutoscaleConfig struct {
+	Enabled  bool          `env:"WULING_AUTOSCALER_ENABLED" envDefault:"true"`
+	Interval time.Duration `env:"WULING_AUTOSCALER_INTERVAL" envDefault:"20s"`
+}
+
 // Load reads config from the environment.
 func Load() (*Config, error) {
 	var c Config
@@ -185,6 +222,9 @@ func (c *Config) validate() error {
 	}
 	if c.IsProd() && c.OAuth.ProviderHMACSecret == "" {
 		problems = append(problems, "WULING_OAUTH_HMAC_SECRET must be set in production")
+	}
+	if c.IsProd() && c.Secrets.Key == "" {
+		problems = append(problems, "WULING_SECRETS_KEY must be set in production")
 	}
 	if c.IsProd() {
 		if c.OAuth.PublicBaseURL == "" {
