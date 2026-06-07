@@ -215,7 +215,17 @@ func (s *Store) GetRun(ctx context.Context, runID uuid.UUID) (*model.PipelineRun
 
 // GetRunByNumber returns a run by its (repo, number) identity, with jobs+steps.
 func (s *Store) GetRunByNumber(ctx context.Context, repoID uuid.UUID, number int64) (*model.PipelineRun, error) {
-	run, err := s.getRunRow(ctx, "r.repo_id = $1 AND r.number = $2", repoID, number)
+	return s.runWithSteps(ctx, "r.repo_id = $1 AND r.number = $2", repoID, number)
+}
+
+// GetRunWithSteps returns a run by id with jobs+steps eagerly attached, for the
+// run-detail view — a single run/jobs/steps load (no redundant get-then-get).
+func (s *Store) GetRunWithSteps(ctx context.Context, runID uuid.UUID) (*model.PipelineRun, error) {
+	return s.runWithSteps(ctx, "r.id = $1", runID)
+}
+
+func (s *Store) runWithSteps(ctx context.Context, where string, args ...any) (*model.PipelineRun, error) {
+	run, err := s.getRunRow(ctx, where, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -272,7 +282,10 @@ func (s *Store) listJobs(ctx context.Context, runID uuid.UUID) ([]model.Pipeline
 		}
 		out = append(out, j)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return out, nil
 }
 
 func (s *Store) listSteps(ctx context.Context, jobID uuid.UUID) ([]model.PipelineStep, error) {
@@ -292,7 +305,10 @@ func (s *Store) listSteps(ctx context.Context, jobID uuid.UUID) ([]model.Pipelin
 		}
 		out = append(out, st)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return out, nil
 }
 
 // JobContext is the authoritative org/project/repo scope of a job, used by the

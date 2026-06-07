@@ -46,6 +46,8 @@ func (s *Service) handle(repoID, projectID, orgID uuid.UUID, repoPath string, up
 			s.log().Warn("ci-trigger: discover failed", "repo_id", repoID, "branch", u.Branch, "err", err)
 			continue
 		}
+		// One git.Log per branch tip, not once per workflow discovered at it.
+		commitMsg := firstLine(commitMessage(repoPath, u.NewOID))
 		for _, dw := range discovered {
 			if dw.ParseErr != nil {
 				// A broken workflow shouldn't fail the push; surface it in logs.
@@ -66,7 +68,7 @@ func (s *Service) handle(repoID, projectID, orgID uuid.UUID, repoPath string, up
 				Event:         "push",
 				GitRef:        "refs/heads/" + u.Branch,
 				CommitSHA:     u.NewOID,
-				CommitMessage: firstLine(commitMessage(repoPath, u.NewOID)),
+				CommitMessage: commitMsg,
 				Workflow:      dw.Workflow,
 				DefaultTier:   s.DefaultTier,
 			})

@@ -52,6 +52,7 @@ export default function RunnersPage() {
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function load() {
+    setItems(null);
     setError(null);
     runnersApi
       .list(org.slug)
@@ -102,7 +103,7 @@ export default function RunnersPage() {
     <PageContainer>
       <PageHeader
         title="Runners"
-        description="本组织的 CI 执行器。手动注册一台静态 runner，或在 config 仓库的 runner-config.yaml 里配置云自动扩缩容。"
+        description="本组织的 CI 执行器。手动注册一台静态 runner，或在 config 仓库的 runner-config.yaml 里配置云自动扩缩容（AWS / 阿里云访问密钥需在「设置 → Secrets」里按 credentials_secret 的名称配置）。"
       />
 
       <Surface className="mb-4">
@@ -237,8 +238,15 @@ export default function RunnersPage() {
                 <Button
                   variant="outline"
                   onPress={async () => {
+                    if (
+                      !navigator.clipboard ||
+                      typeof navigator.clipboard.writeText !== "function"
+                    ) {
+                      alert("复制失败，请手动选中。");
+                      return;
+                    }
                     try {
-                      await navigator.clipboard?.writeText(command);
+                      await navigator.clipboard.writeText(command);
                       setCopied(true);
                       if (copyTimer.current) clearTimeout(copyTimer.current);
                       copyTimer.current = setTimeout(() => setCopied(false), 1500);

@@ -124,7 +124,7 @@ func (h *Handler) getRun(w http.ResponseWriter, r *http.Request) {
 		httpapi.RenderError(w, r, apperr.New(apperr.CodeBadRequest, "invalid run id"))
 		return
 	}
-	run, err := h.Pipelines.GetRun(r.Context(), runID)
+	run, err := h.Pipelines.GetRunWithSteps(r.Context(), runID)
 	if err != nil {
 		httpapi.RenderError(w, r, err)
 		return
@@ -133,13 +133,7 @@ func (h *Handler) getRun(w http.ResponseWriter, r *http.Request) {
 		httpapi.RenderError(w, r, apperr.NotFound("pipeline run"))
 		return
 	}
-	// Attach steps for the detail view.
-	full, err := h.Pipelines.GetRunByNumber(r.Context(), run.RepoID, run.Number)
-	if err != nil {
-		httpapi.RenderError(w, r, err)
-		return
-	}
-	httpapi.WriteJSON(w, http.StatusOK, full)
+	httpapi.WriteJSON(w, http.StatusOK, run)
 }
 
 type triggerRunReq struct {

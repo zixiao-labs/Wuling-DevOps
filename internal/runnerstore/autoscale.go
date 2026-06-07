@@ -88,7 +88,10 @@ func (s *Store) ListForAutoscale(ctx context.Context, orgID uuid.UUID) ([]Autosc
 		}
 		out = append(out, a)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return out, nil
 }
 
 // OrgsWithEphemeralRunners lists orgs that currently have any ephemeral runner
@@ -117,5 +120,8 @@ func scanOrgIDs(rows interface {
 		}
 		out = append(out, id)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return out, nil
 }

@@ -156,7 +156,7 @@ func run() error {
 			ConfigProject:      cfg.Runner.ConfigProject,
 			ConfigRepo:         cfg.Runner.ConfigRepo,
 			ServerURL:          cfg.OAuth.PublicBaseURL,
-			DefaultIdleTimeout: 5 * time.Minute,
+			DefaultIdleTimeout: cfg.Autoscale.DefaultIdleTimeout,
 			Interval:           cfg.Autoscale.Interval,
 		}
 		go reconciler.Run(rootCtx)
@@ -215,7 +215,6 @@ func run() error {
 		}
 	}
 	log.Info("bye")
-	_ = time.Now() // keep import; harmless
 	return nil
 }
 

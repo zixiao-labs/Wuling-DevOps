@@ -38,14 +38,22 @@ func (s *Store) SaveArtifact(jobID uuid.UUID, name string, r io.Reader) (int64, 
 	if err != nil {
 		return 0, apperr.Internal(err)
 	}
-	defer f.Close()
 	n, err := io.Copy(f, io.LimitReader(r, MaxArtifactBytes+1))
 	if err != nil {
+		_ = f.Close()
+		_ = os.Remove(p)
 		return 0, apperr.Internal(err)
 	}
 	if n > MaxArtifactBytes {
+		_ = f.Close()
 		_ = os.Remove(p)
 		return 0, apperr.Validation("artifact exceeds size limit", nil)
+	}
+	// Close can surface a deferred write error (flush/fsync); treat it like any
+	// other write failure rather than leaving a silently-truncated artifact.
+	if err := f.Close(); err != nil {
+		_ = os.Remove(p)
+		return 0, apperr.Internal(err)
 	}
 	return n, nil
 }

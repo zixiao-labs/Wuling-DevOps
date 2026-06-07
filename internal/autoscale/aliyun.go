@@ -90,7 +90,7 @@ func (p *aliyunProvider) Terminate(ctx context.Context, externalID string) error
 }
 
 // call signs and sends an Aliyun ECS RPC request (HMAC-SHA1, signature v1.0).
-func (p *aliyunProvider) call(ctx context.Context, biz map[string]string) ([]byte, error) {
+func (p *aliyunProvider) call(ctx context.Context, biz map[string]string) (respBody []byte, err error) {
 	params := map[string]string{
 		"Format":           "JSON",
 		"Version":          "2014-05-26",
@@ -132,8 +132,15 @@ func (p *aliyunProvider) call(ctx context.Context, biz map[string]string) ([]byt
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
+	respBody, err = io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read aliyun ecs response: %w", err)
+	}
 	if resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("aliyun ecs %s: %s", resp.Status, aliyunErrorText(respBody))
 	}

@@ -300,8 +300,9 @@ func (j Job) EffectiveTier(defaultTier string) string {
 }
 
 // MatchEvent reports whether the workflow should run for (event, branch).
-// branch is the short branch name (e.g. "main"); it is consulted only for the
-// push event's branches filter.
+// branch is the short branch name (e.g. "main"); it is consulted for the push
+// and pull_request branch filters (for pull_request it is the PR target
+// branch).
 func (w *Workflow) MatchEvent(event, branch string) bool {
 	switch event {
 	case "push":
@@ -310,7 +311,10 @@ func (w *Workflow) MatchEvent(event, branch string) bool {
 		}
 		return matchBranches(w.On.Push.Branches, branch)
 	case "pull_request":
-		return w.On.PullRequest != nil
+		if w.On.PullRequest == nil {
+			return false
+		}
+		return matchBranches(w.On.PullRequest.Branches, branch)
 	case "manual":
 		return w.On.WorkflowDispatch
 	}

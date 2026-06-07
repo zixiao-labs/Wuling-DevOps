@@ -15,7 +15,7 @@
 沿用仓库既定的 **“core monolith + pipelines split”** 决策（见
 `cmd/wuling-api/main.go`、`deploy/docker-compose.yml`）：
 
-```
+```text
                  ┌─────────────────────────── wuling-api (Go, 控制面) ───────────────────────────┐
    git push ───▶ │  事件 → 解析 .wuling/workflows/*.yml → 建 run/jobs/steps → 入队（Postgres）   │
                  │  Secrets（AES-GCM）  Runner 注册/心跳  Job 派发  日志落盘  Autoscaler 协调循环   │
@@ -124,6 +124,18 @@ acquire 响应下发——明文绝不进 git，也不写进 run 的解析快照
 - **云凭证即 Secret**：`runner-config.yaml` 里 provider 的 `credentials_secret` 只写**名字**，
   真正的 AK/SK / API token 存在 org Secret 里。这样 GitOps 配置可以放心走 MR 评审。
 
+**配置云访问密钥（入口）**：在 **org 设置 → Secrets** 页（或 `PUT /api/v1/orgs/{org}/secrets/{name}`，
+需 maintainer+）新建一个 **org 级** Secret，名字与池里的 `credentials_secret` 一致，值为对应 provider
+的凭证 JSON：
+
+| Provider | Secret 值（JSON） |
+|----|----|
+| 阿里云 | `{"access_key_id":"…","access_key_secret":"…"}` |
+| AWS | `{"access_key_id":"…","secret_access_key":"…","session_token":"…"（临时凭证可选）}` |
+
+密钥用 AES-256-GCM 加密落库，API 永不回显（写入即只读）。**`credentials_secret` 留空会被 config
+校验直接拒绝**；若引用的 Secret 缺失或 AK/SK 失效，Autoscaler 调云 API 会 401/403，该池拉不起实例。
+
 ---
 
 ## 5. Runner 协议（HTTP）
@@ -200,11 +212,68 @@ type Provider interface {
   snippets 存储（无一等 API），vCenter 需要 govmomi/SOAP + guest 定制——都依赖部署环境且无法
   无凭证联测。建议与自研 K8s provider 一并补齐（见“路线图”）。
 
+> ⚠️ 若 `runner-config.yaml` 配置了 **Proxmox / vCenter** 池：`NewProvider` 在为该池构建 provider
+> 时即返回 “not supported” 错误，Autoscaler 记录告警并**跳过该池**（不影响 aws/aliyun 池），在置备
+> 补齐前不会拉起任何实例。
+
 每个从 `LaunchSpec`（tier→CPU/内存/存储、镜像/模板、网络、注入脚本）创建一台临时机。
 凭证从 org Secret（`credentials_secret`）解密注入，不落盘、不出网。
 
 > 注意：云 provider 的真实调用需各自的账号/镜像模板/网络资源，**无法在本地无凭证集成测试**。
 > 仓库内附带的是契约 + 单元测试（config 解析/校验、调度数学、签名拼装）；真机验证需在目标云上做。
+
+### 7.1 自定义镜像 / 模板（预装 runner）
+
+池里的 `image_id`（阿里云）/ `ami`（AWS）/ `template`（Proxmox/vCenter）必须指向一个**预装好
+runner 运行时**的镜像。Autoscaler 拉起实例后只通过 cloud-init / user-data 注入 token 等少量变量并
+`systemctl enable --now wuling-runner.service`，**不会**在启动时联网安装任何东西（既慢又脆）。
+
+镜像里要备好三样：
+
+1. **容器运行时 + git**：Docker 或 Podman，外加 `git`（checkout 走宿主机 git）。
+2. **`wuling-runner` 二进制**：由 `runners/runner-clients` 构建后放进 `PATH`：
+
+   ```bash
+   cargo build --release          # 产物：target/release/wuling-runner
+   install -m 0755 target/release/wuling-runner /usr/local/bin/wuling-runner
+   ```
+
+3. **systemd 单元 `wuling-runner.service`**，`EnvironmentFile` 指向 cloud-init 写入的
+   `/etc/wuling-runner/runner.env`：
+
+   ```ini
+   # /etc/systemd/system/wuling-runner.service
+   [Unit]
+   Description=Wuling CI runner
+   After=network-online.target docker.service
+   Wants=network-online.target
+
+   [Service]
+   EnvironmentFile=/etc/wuling-runner/runner.env
+   ExecStart=/usr/local/bin/wuling-runner
+   Restart=on-failure
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+   **不要在镜像里 `systemctl enable` 它，也不要把任何 token 烤进镜像** —— 单元由 cloud-init 在每台
+   实例首启时 enable，token 也由它逐机注入。
+
+Autoscaler 注入的 `runner.env`（见 `internal/autoscale/cloudinit.go`；文件 600、root-only）：
+
+| 变量 | 值 |
+|----|----|
+| `WULING_RUNNER_SERVER_URL` | 控制面对外地址（取自 `WULING_OAUTH_PUBLIC_BASE_URL`） |
+| `WULING_RUNNER_TOKEN` | 该实例专属的持久 runner token（`wlrt_…`，Autoscaler 预先建好） |
+| `WULING_RUNNER_NAME` | Autoscaler 生成的 runner 名 |
+| `WULING_RUNNER_LABELS` | 池的 `labels` |
+| `WULING_RUNNER_CONCURRENCY` | 固定 `1`（一机一并发，便于按需伸缩） |
+
+runner 二进制还认 `WULING_RUNNER_DEFAULT_IMAGE`（job 未声明 `container:` 时的默认镜像）、
+`WULING_RUNNER_WORK_DIR`、`WULING_RUNNER_POLL_INTERVAL` 等开关，可写进镜像里的 `runner.env`
+基线或 systemd 单元（`wuling-runner --help` 有全量列表）。**手动注册的 static runner** 同理准备
+机器，只是改用 `--registration-token`（UI 生成）换取 token，而非由 Autoscaler 注入。
 
 ---
 
@@ -230,6 +299,7 @@ type Provider interface {
 | `WULING_RUNNER_REAP_AFTER` | `90s` | runner 失联多久后回收其 running job。 |
 | `WULING_AUTOSCALER_ENABLED` | `true` | 是否启用 Autoscaler 协调循环。 |
 | `WULING_AUTOSCALER_INTERVAL` | `20s` | reconcile 周期。 |
+| `WULING_AUTOSCALER_DEFAULT_IDLE_TIMEOUT` | `5m` | `runner-config.yaml` 未声明 `idle_timeout` 时的回退值。 |
 
 ---
 

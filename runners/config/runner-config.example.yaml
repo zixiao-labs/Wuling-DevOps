@@ -52,7 +52,7 @@ pools:
     aliyun:
       region: cn-hangzhou
       zone_id: cn-hangzhou-i
-      image_id: m-xxxxxxxx              # 预装容器运行时 + 武陵 runner 客户端的镜像
+      image_id: m-xxxxxxxx              # 预装容器运行时 + 武陵 runner 客户端的镜像（构建见 docs/pipelines.md §7.1）
       instance_type: ecs.g7.large       # 应与 tier 规格相称
       vswitch_id: vsw-xxxxxxxx
       security_group_id: sg-xxxxxxxx
@@ -69,7 +69,7 @@ pools:
     max: 3
     aws:
       region: us-west-2
-      ami: ami-xxxxxxxx
+      ami: ami-xxxxxxxx                  # 预装容器运行时 + 武陵 runner 客户端的镜像（构建见 docs/pipelines.md §7.1）
       instance_type: c6i.2xlarge
       subnet_id: subnet-xxxxxxxx
       security_group_ids: [sg-xxxxxxxx]

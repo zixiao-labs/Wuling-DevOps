@@ -106,6 +106,38 @@ export async function apiFetch<T>(path: string, opts: ApiFetchOptions = {}): Pro
   return payload as T;
 }
 
+/**
+ * Authenticated GET that returns the response body as a Blob — for binary
+ * downloads (artifacts, exports) that aren't JSON. Reuses apiFetch's auth and
+ * error handling; never build a bare URL for these or the bearer token is
+ * dropped and the request 401s.
+ */
+export async function apiBlob(path: string, opts: { signal?: AbortSignal } = {}): Promise<Blob> {
+  const headers: Record<string, string> = {};
+  const token = tokenGetter();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  let res: Response;
+  try {
+    res = await fetch(path, { method: "GET", headers, signal: opts.signal });
+  } catch (cause) {
+    throw ApiError.network(cause);
+  }
+  if (!res.ok) {
+    const isJson = (res.headers.get("content-type") ?? "").includes("application/json");
+    let payload: unknown = null;
+    try {
+      payload = isJson ? await res.json() : await res.text();
+    } catch {
+      /* keep payload null; the status code still drives the error */
+    }
+    const err = ApiError.fromBody(res.status, payload);
+    if (err.status === 401) onUnauthorized();
+    throw err;
+  }
+  return res.blob();
+}
+
 /** GET wrapper preserving generic inference. */
 export const apiGet = <T>(path: string, query?: QueryMap, signal?: AbortSignal) =>
   apiFetch<T>(path, { method: "GET", query, signal });

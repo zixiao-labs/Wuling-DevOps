@@ -387,7 +387,10 @@ func (s *Store) QueuedDemand(ctx context.Context, orgID uuid.UUID) ([]QueuedJob,
 		}
 		out = append(out, q)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return out, nil
 }
 
 // OrgsWithQueuedJobs lists orgs that have at least one queued job. The
@@ -408,5 +411,8 @@ func (s *Store) OrgsWithQueuedJobs(ctx context.Context) ([]uuid.UUID, error) {
 		}
 		out = append(out, id)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return out, nil
 }

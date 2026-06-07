@@ -2,9 +2,12 @@ package pipelinehttp
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -133,8 +136,22 @@ func (h *Handler) downloadArtifact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
+	// Build a safe Content-Disposition. The ASCII `filename` is reduced to
+	// printable ASCII minus quote/backslash (defeats header injection via CR/LF
+	// and breakage from quotes); the RFC 5987 `filename*` carries the real,
+	// possibly non-ASCII name. name is a single route path component.
+	ascii := strings.Map(func(r rune) rune {
+		if r < 0x20 || r > 0x7e || r == '"' || r == '\\' {
+			return -1
+		}
+		return r
+	}, name)
+	if ascii == "" {
+		ascii = "artifact"
+	}
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", "attachment; filename=\""+name+"\"")
+	w.Header().Set("Content-Disposition",
+		fmt.Sprintf("attachment; filename=\"%s\"; filename*=UTF-8''%s", ascii, url.PathEscape(name)))
 	_, _ = io.Copy(w, f)
 }
 

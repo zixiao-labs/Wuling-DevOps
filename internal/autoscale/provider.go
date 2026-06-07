@@ -84,18 +84,13 @@ func NewProvider(pool Pool, credsJSON string) (Provider, error) {
 			return nil, err
 		}
 		return newAWSProvider(pool, c)
-	case "proxmox":
-		var c proxmoxCreds
-		if err := decodeCreds(credsJSON, &c); err != nil {
-			return nil, err
-		}
-		return newProxmoxProvider(pool, c)
-	case "vcenter":
-		var c vcenterCreds
-		if err := decodeCreds(credsJSON, &c); err != nil {
-			return nil, err
-		}
-		return newVCenterProvider(pool, c)
+	case "proxmox", "vcenter":
+		// Provisioning for these is a placeholder (see proxmox.go / vcenter.go):
+		// cloud-init/snippet and govmomi/SOAP injection are deployment-specific
+		// and untestable without real infrastructure. Reject at creation time so
+		// a misconfigured pool fails fast in reconcile instead of churning a
+		// runner row on every Launch attempt. Use an aws/aliyun pool meanwhile.
+		return nil, fmt.Errorf("provider %q is not supported in this build (VM provisioning is a placeholder); use aws or aliyun — see docs/pipelines.md §7", pool.Provider)
 	}
 	return nil, fmt.Errorf("unknown provider %q", pool.Provider)
 }

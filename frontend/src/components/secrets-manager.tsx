@@ -7,7 +7,7 @@
 import { Button, Description, Input, Label, TextField } from "@heroui/react";
 import TrashIcon from "@gravity-ui/icons/TrashBin";
 import KeyIcon from "@gravity-ui/icons/Key";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ApiError } from "@/api/errors";
 import { EmptyState } from "@/components/empty-state";
@@ -39,13 +39,21 @@ export function SecretsManager({ title, description, list, set, remove, scopeKey
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
+  const reqIdRef = useRef(0);
 
   function load() {
+    // Guard against out-of-order responses: a slow request for the previous
+    // scope must not overwrite the current one. Only the latest id wins.
+    const reqId = ++reqIdRef.current;
     setItems(null);
     setError(null);
     list()
-      .then(setItems)
-      .catch((e) => setError(e as ApiError));
+      .then((rows) => {
+        if (reqId === reqIdRef.current) setItems(rows);
+      })
+      .catch((e) => {
+        if (reqId === reqIdRef.current) setError(e as ApiError);
+      });
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -33,15 +33,21 @@ func (s *Store) AppendLog(ctx context.Context, jobID uuid.UUID, data []byte) (in
 	if err != nil {
 		return 0, apperr.Internal(err)
 	}
-	defer f.Close()
 	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
 		return 0, apperr.Internal(err)
 	}
 	info, err := f.Stat()
 	if err != nil {
+		_ = f.Close()
 		return 0, apperr.Internal(err)
 	}
 	size := info.Size()
+	// Close before recording the size: a deferred write error surfaces here and
+	// must fail the append rather than persist a log_size we didn't fully write.
+	if err := f.Close(); err != nil {
+		return 0, apperr.Internal(err)
+	}
 	if _, err := s.pool.Exec(ctx,
 		`UPDATE pipeline_jobs SET log_size = $2 WHERE id = $1`, jobID, size); err != nil {
 		return 0, apperr.Internal(err)

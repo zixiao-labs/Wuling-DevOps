@@ -215,8 +215,9 @@ impl ApiClient {
         let resp = self
             .http
             .post(format!(
-                "{}/runner/jobs/{job_id}/artifacts/{name}",
-                self.api_base
+                "{}/runner/jobs/{job_id}/artifacts/{}",
+                self.api_base,
+                encode_path_segment(name)
             ))
             .bearer_auth(&self.token)
             .body(data)
@@ -235,4 +236,20 @@ async fn ensure_ok(resp: reqwest::Response, what: &str) -> Result<()> {
         resp.status(),
         resp.text().await.unwrap_or_default()
     ))
+}
+
+/// encode_path_segment percent-encodes everything outside the RFC 3986
+/// unreserved set so an artifact name containing '/', '?', '%', … stays a
+/// single path segment instead of breaking or escaping the route.
+fn encode_path_segment(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for &b in s.as_bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }

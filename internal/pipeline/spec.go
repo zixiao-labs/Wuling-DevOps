@@ -31,13 +31,26 @@ func (j Job) Spec() JobSpec {
 			Name:           s.Name,
 			Run:            s.Run,
 			Uses:           s.Uses,
-			With:           s.With,
-			Env:            s.Env,
+			With:           copyStringMap(s.With),
+			Env:            copyStringMap(s.Env),
 			If:             s.If,
 			TimeoutMinutes: s.TimeoutMinutes,
 		}
 	}
-	return JobSpec{Container: j.Container.Image, Env: j.Env, Steps: steps}
+	return JobSpec{Container: j.Container.Image, Env: copyStringMap(j.Env), Steps: steps}
+}
+
+// copyStringMap returns a clone of m (nil stays nil) so a built JobSpec shares
+// no map backing store with the parsed Job it was projected from.
+func copyStringMap(m map[string]string) map[string]string {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 // StepDisplayName returns a human label for a step, falling back to the run
@@ -50,11 +63,12 @@ func (s StepSpec) StepDisplayName() string {
 	if s.Uses != "" {
 		return s.Uses
 	}
-	// first non-empty line of the run script, trimmed
+	// first non-empty line of the run script, trimmed (rune-safe truncation so
+	// a multi-byte character is never split in half)
 	for _, line := range splitLines(s.Run) {
 		if line != "" {
-			if len(line) > 60 {
-				return line[:60] + "…"
+			if r := []rune(line); len(r) > 60 {
+				return string(r[:60]) + "…"
 			}
 			return line
 		}

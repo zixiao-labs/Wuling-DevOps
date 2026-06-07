@@ -172,13 +172,37 @@ func (p *Pool) validateProvider() error {
 			count++
 		}
 	}
+	if count != 1 {
+		return fmt.Errorf("pool %q: exactly one provider config block is required", p.Name)
+	}
+	// The provider field must name the one block that is set; otherwise a typo
+	// like `provider: aws` with only an `aliyun:` block would pass the count
+	// check yet pick the wrong backend at launch.
 	switch p.Provider {
-	case "aliyun", "aws", "proxmox", "vcenter":
+	case "aliyun":
+		if p.Aliyun == nil {
+			return fmt.Errorf("pool %q: provider is aliyun but the aliyun: block is missing", p.Name)
+		}
+	case "aws":
+		if p.AWS == nil {
+			return fmt.Errorf("pool %q: provider is aws but the aws: block is missing", p.Name)
+		}
+	case "proxmox":
+		if p.Proxmox == nil {
+			return fmt.Errorf("pool %q: provider is proxmox but the proxmox: block is missing", p.Name)
+		}
+	case "vcenter":
+		if p.VCenter == nil {
+			return fmt.Errorf("pool %q: provider is vcenter but the vcenter: block is missing", p.Name)
+		}
 	default:
 		return fmt.Errorf("pool %q: provider must be aliyun|aws|proxmox|vcenter", p.Name)
 	}
-	if count != 1 {
-		return fmt.Errorf("pool %q: exactly one provider config block is required", p.Name)
+	// Cloud credentials live in an org Secret referenced by name. Without one the
+	// autoscaler cannot authenticate and the provider API answers 401, so fail
+	// GitOps validation up front rather than silently never launching.
+	if p.CredentialSecretName() == "" {
+		return fmt.Errorf("pool %q: credentials_secret is required — set it to the name of the org Secret holding this provider's access keys", p.Name)
 	}
 	return nil
 }

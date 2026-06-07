@@ -177,8 +177,9 @@ type RunnerConfig struct {
 
 // AutoscaleConfig controls the autoscaler reconcile loop.
 type AutoscaleConfig struct {
-	Enabled  bool          `env:"WULING_AUTOSCALER_ENABLED" envDefault:"true"`
-	Interval time.Duration `env:"WULING_AUTOSCALER_INTERVAL" envDefault:"20s"`
+	Enabled            bool          `env:"WULING_AUTOSCALER_ENABLED" envDefault:"true"`
+	Interval           time.Duration `env:"WULING_AUTOSCALER_INTERVAL" envDefault:"20s"`
+	DefaultIdleTimeout time.Duration `env:"WULING_AUTOSCALER_DEFAULT_IDLE_TIMEOUT" envDefault:"5m"`
 }
 
 // Load reads config from the environment.

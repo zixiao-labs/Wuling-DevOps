@@ -94,7 +94,7 @@ func (p *awsProvider) Terminate(ctx context.Context, externalID string) error {
 
 // call signs and POSTs an EC2 query-API request, returning the response body
 // or an error carrying the AWS error text.
-func (p *awsProvider) call(ctx context.Context, params url.Values) ([]byte, error) {
+func (p *awsProvider) call(ctx context.Context, params url.Values) (respBody []byte, err error) {
 	const service = "ec2"
 	host := fmt.Sprintf("ec2.%s.amazonaws.com", p.pool.Region)
 	endpoint := "https://" + host + "/"
@@ -105,8 +105,16 @@ func (p *awsProvider) call(ctx context.Context, params url.Values) ([]byte, erro
 	dateStamp := now.Format("20060102")
 
 	payloadHash := sha256Hex([]byte(payload))
+	// Canonical headers must be sorted by lowercased name. With temporary
+	// credentials we also send X-Amz-Security-Token, which must therefore be
+	// part of the signed set or AWS rejects the signature (403). It sorts after
+	// x-amz-date, so append it.
 	canonicalHeaders := fmt.Sprintf("content-type:application/x-www-form-urlencoded\nhost:%s\nx-amz-date:%s\n", host, amzDate)
 	signedHeaders := "content-type;host;x-amz-date"
+	if p.creds.SessionToken != "" {
+		canonicalHeaders += "x-amz-security-token:" + p.creds.SessionToken + "\n"
+		signedHeaders += ";x-amz-security-token"
+	}
 	canonicalRequest := strings.Join([]string{
 		"POST", "/", "", canonicalHeaders, signedHeaders, payloadHash,
 	}, "\n")
@@ -141,8 +149,15 @@ func (p *awsProvider) call(ctx context.Context, params url.Values) ([]byte, erro
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
+	respBody, err = io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read aws ec2 response: %w", err)
+	}
 	if resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("aws ec2 %s: %s", resp.Status, awsErrorText(respBody))
 	}

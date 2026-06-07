@@ -177,8 +177,9 @@ func (s *Store) Register(ctx context.Context, p RegisterParams) (*model.Runner, 
 	return r, nil
 }
 
-// Resolve loads the identity behind a runner token. Updates last_seen_at as a
-// side effect so every authenticated runner call doubles as a heartbeat.
+// Resolve loads the identity behind a runner token. It is read-only; runner
+// liveness is tracked by the explicit Heartbeat call, not as a side effect of
+// every auth (this path also backs read-only git-over-HTTP for runners).
 func (s *Store) Resolve(ctx context.Context, rawToken string) (*RunnerIdentity, error) {
 	runnerID, ok := parseTokenID(RunnerTokenPrefix, rawToken)
 	if !ok {
@@ -252,7 +253,10 @@ func (s *Store) List(ctx context.Context, orgID uuid.UUID) ([]model.Runner, erro
 		}
 		out = append(out, r)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return out, nil
 }
 
 // Delete removes a runner (used by manual delete and ephemeral teardown).

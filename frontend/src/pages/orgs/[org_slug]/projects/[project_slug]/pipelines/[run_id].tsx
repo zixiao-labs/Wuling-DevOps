@@ -35,18 +35,34 @@ export default function RunDetail() {
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let gotData = false;
+    let stillActive = false;
 
     const poll = () => {
       pipelinesApi
         .getRun(org.slug, project.slug, runId)
         .then((r) => {
           if (cancelled) return;
+          gotData = true;
+          stillActive = ACTIVE.has(r.status);
+          setError(null);
           setRun(r);
           // Default-select the first job once loaded.
           setSelectedJob((cur) => cur ?? (r.jobs && r.jobs.length ? r.jobs[0]!.id : null));
-          if (ACTIVE.has(r.status)) timer = setTimeout(poll, 2500);
+          if (stillActive) timer = setTimeout(poll, 2500);
         })
-        .catch((e) => !cancelled && setError(e as ApiError));
+        .catch((e) => {
+          if (cancelled) return;
+          if (!gotData) {
+            // First load failed with nothing to show — surface the error.
+            setError(e as ApiError);
+          } else if (stillActive) {
+            // Transient blip after we already have data: keep the last good
+            // render and keep polling instead of wedging on the error screen.
+            setError(null);
+            timer = setTimeout(poll, 2500);
+          }
+        });
     };
     poll();
     return () => {

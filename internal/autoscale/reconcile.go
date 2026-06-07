@@ -169,6 +169,12 @@ func (r *Reconciler) reconcilePool(
 		case "busy":
 			busy++
 		default:
+			// An offline runner that never checked in past the boot window is
+			// about to be reaped below; don't count it as live capacity or the
+			// needed-launch math skips a launch we actually need.
+			if rn.LastSeenAt == nil && now.Sub(rn.CreatedAt) > bootTimeout {
+				continue
+			}
 			offline++
 		}
 	}
@@ -256,6 +262,14 @@ func (r *Reconciler) launchOne(ctx context.Context, orgID uuid.UUID, cfg *Config
 		return err
 	}
 	if err := r.Runners.SetExternalID(ctx, runner.ID, inst.ExternalID); err != nil {
+		// We have a live VM but can't persist its id, so the autoscaler could
+		// never terminate it. Roll both back to avoid an orphaned billed
+		// instance and a half-created runner row.
+		if terr := p.Terminate(ctx, inst.ExternalID); terr != nil {
+			r.Log.Warn("rollback terminate failed after set-external-id error",
+				"pool", pool.Name, "external_id", inst.ExternalID, "err", terr)
+		}
+		_ = r.Runners.Delete(ctx, orgID, runner.ID)
 		return err
 	}
 	return nil

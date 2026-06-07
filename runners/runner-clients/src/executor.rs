@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
 use bollard::Docker;
-use bollard::container::{Config, CreateContainerOptions, LogOutput, RemoveContainerOptions};
+use bollard::container::{
+    Config, CreateContainerOptions, KillContainerOptions, LogOutput, RemoveContainerOptions,
+};
 use bollard::exec::{CreateExecOptions, StartExecResults};
 use bollard::image::CreateImageOptions;
 use futures_util::StreamExt;
@@ -154,9 +156,15 @@ impl Executor {
                 }
                 Err(e) => {
                     job_failed = true;
+                    let timed_out = e.downcast_ref::<StepTimeout>().is_some();
                     self.log(job_id, &format!("[runner] step error: {e}\n"))
                         .await;
                     let _ = self.api.patch_step(job_id, number, "failed").await;
+                    if timed_out {
+                        // Container was killed on timeout; running more steps
+                        // (incl. always()) against a dead container is pointless.
+                        break;
+                    }
                 }
             }
         }
@@ -282,8 +290,17 @@ impl Executor {
         let drained = tokio::time::timeout(timeout, self.drain_exec(job_id, &exec.id)).await;
         match drained {
             Err(_) => {
-                self.log(job_id, "[runner] step timed out\n").await;
-                Ok(false)
+                // Docker has no "kill exec" API and the process keeps running in
+                // the container after the timeout future is dropped. Kill the
+                // whole container to stop it now; StepTimeout tells execute() to
+                // abort the remaining steps (a dead container can't run them).
+                self.log(job_id, "[runner] step timed out; killing container\n")
+                    .await;
+                let _ = self
+                    .docker
+                    .kill_container(container_id, None::<KillContainerOptions<String>>)
+                    .await;
+                Err(StepTimeout.into())
             }
             Ok(Err(e)) => Err(e),
             Ok(Ok(())) => {
@@ -378,7 +395,14 @@ impl Executor {
                 return Ok(false);
             }
         };
-        let target = workspace.join(&path);
+        let target = match resolve_in_workspace(workspace, &path) {
+            Ok(t) => t,
+            Err(e) => {
+                self.log(job_id, &format!("[runner] upload-artifact: {e}\n"))
+                    .await;
+                return Ok(false);
+            }
+        };
         let tar = tar_path(&target).await?;
         self.log(
             job_id,
@@ -403,10 +427,24 @@ impl Executor {
                 return Ok(false);
             }
         };
+        let dest = match resolve_in_workspace(workspace, &path) {
+            Ok(d) => d,
+            Err(e) => {
+                self.log(job_id, &format!("[runner] cache: {e}\n")).await;
+                return Ok(false);
+            }
+        };
         let cache_file = self.cache_dir.join(format!("{}.tar", sanitize(&key)));
         if tokio::fs::try_exists(&cache_file).await.unwrap_or(false) {
-            let dest = workspace.join(&path);
-            untar_into(&cache_file, &dest).await?;
+            // tar_path stored the directory under its own basename, so restore
+            // into the PARENT of dest to land contents back at workspace/<path>
+            // (not the old workspace/<path>/<path> double-nest). Clamp to the
+            // workspace so a top-level path never extracts above it.
+            let into = match dest.parent() {
+                Some(p) if p.starts_with(workspace) => p.to_path_buf(),
+                _ => workspace.to_path_buf(),
+            };
+            untar_into(&cache_file, &into).await?;
             self.log(job_id, &format!("[runner] cache restored: {key}\n"))
                 .await;
         } else {
@@ -417,9 +455,9 @@ impl Executor {
     }
 
     async fn save_cache(&self, key: &str, workspace: &Path, path: &str) -> Result<()> {
+        let src = resolve_in_workspace(workspace, path)?;
         tokio::fs::create_dir_all(&self.cache_dir).await?;
         let cache_file = self.cache_dir.join(format!("{}.tar", sanitize(key)));
-        let src = workspace.join(path);
         let tar = tar_path(&src).await?;
         tokio::fs::write(&cache_file, tar).await?;
         Ok(())
@@ -459,6 +497,20 @@ impl Drop for ContainerGuard {
         });
     }
 }
+
+/// StepTimeout marks a step that exceeded its timeout. exec_run kills the
+/// container and returns this so execute() can abort the remaining steps rather
+/// than run them against a dead container.
+#[derive(Debug)]
+struct StepTimeout;
+
+impl std::fmt::Display for StepTimeout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "step timed out")
+    }
+}
+
+impl std::error::Error for StepTimeout {}
 
 fn should_run(if_expr: &str, job_failed: bool) -> bool {
     match if_expr.trim() {
@@ -515,6 +567,30 @@ fn sanitize(key: &str) -> String {
             }
         })
         .collect()
+}
+
+/// resolve_in_workspace joins a user-supplied relative path onto the workspace,
+/// rejecting anything that escapes it (absolute paths or `..` traversal). The
+/// check is lexical so it also works for paths that don't exist yet (e.g. a
+/// cache restore target).
+fn resolve_in_workspace(workspace: &Path, rel: &str) -> Result<PathBuf> {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for comp in Path::new(rel).components() {
+        match comp {
+            Component::CurDir => {}
+            Component::Normal(c) => out.push(c),
+            Component::ParentDir => {
+                if !out.pop() {
+                    return Err(anyhow!("path {rel:?} escapes the workspace"));
+                }
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(anyhow!("path {rel:?} must be relative to the workspace"));
+            }
+        }
+    }
+    Ok(workspace.join(out))
 }
 
 /// tar_path builds an uncompressed tar of a file or directory in memory. Runs

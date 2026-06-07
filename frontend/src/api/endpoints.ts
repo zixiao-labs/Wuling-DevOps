@@ -5,7 +5,7 @@
  * src/api/types.ts which mirrors api/openapi.yaml.
  */
 
-import { apiDelete, apiGet, apiPatch, apiPost, apiPut, apiFetch, type QueryMap } from "./client";
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut, apiFetch, apiBlob, type QueryMap } from "./client";
 import type {
   AccessTokenView,
   ActivityDay,
@@ -577,8 +577,11 @@ export const pipelines = {
       { offset, limit },
       signal,
     ),
-  artifactURL: (org: string, project: string, jobId: string, name: string) =>
-    `${pipelineBase(org, project)}/jobs/${enc(jobId)}/artifacts/${enc(name)}`,
+  // Download an artifact through the authenticated client (never a bare URL —
+  // opening one directly drops the bearer token and 401s). Returns a Blob the
+  // caller can save or preview; sibling of jobLogs above.
+  downloadArtifact: (org: string, project: string, jobId: string, name: string, signal?: AbortSignal) =>
+    apiBlob(`${pipelineBase(org, project)}/jobs/${enc(jobId)}/artifacts/${enc(name)}`, { signal }),
 };
 
 export const secrets = {

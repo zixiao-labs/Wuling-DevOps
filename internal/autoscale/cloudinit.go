@@ -18,7 +18,10 @@ func BuildUserData(serverURL, token string, pool Pool, runnerName string) string
 	var b strings.Builder
 	b.WriteString("#!/bin/bash\n")
 	b.WriteString("set -e\n")
-	b.WriteString("mkdir -p /etc/wuling-runner\n")
+	// The env file holds the runner's bearer token — keep it root-only. umask
+	// guards the here-doc redirect; the explicit modes are belt-and-braces.
+	b.WriteString("umask 077\n")
+	b.WriteString("mkdir -p -m 0700 /etc/wuling-runner\n")
 	b.WriteString("cat >/etc/wuling-runner/runner.env <<'WULING_EOF'\n")
 	fmt.Fprintf(&b, "WULING_RUNNER_SERVER_URL=%s\n", serverURL)
 	fmt.Fprintf(&b, "WULING_RUNNER_TOKEN=%s\n", token)
@@ -26,6 +29,7 @@ func BuildUserData(serverURL, token string, pool Pool, runnerName string) string
 	fmt.Fprintf(&b, "WULING_RUNNER_LABELS=%s\n", labels)
 	b.WriteString("WULING_RUNNER_CONCURRENCY=1\n")
 	b.WriteString("WULING_EOF\n")
+	b.WriteString("chmod 600 /etc/wuling-runner/runner.env\n")
 	b.WriteString("systemctl enable --now wuling-runner.service\n")
 	return b.String()
 }
