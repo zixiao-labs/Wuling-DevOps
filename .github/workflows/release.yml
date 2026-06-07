@@ -76,6 +76,98 @@ jobs:
           retention-days: 7
 
   # ─────────────────────────────────────────────────────────────────────────
+  # 1b. Cross-compile the Rust runner client for each runner platform.
+  #     Linux is static musl, so custom runner images need NO Rust toolchain
+  #     and no libc/openssl at runtime (smallest footprint). Each target builds
+  #     on its native runner to avoid cross-link toolchains.
+  # ─────────────────────────────────────────────────────────────────────────
+  build-runner:
+    name: Build runner ${{ matrix.os }}/${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {
+              os: linux,
+              arch: amd64,
+              target: x86_64-unknown-linux-musl,
+              runner: ubuntu-latest,
+            }
+          - {
+              os: linux,
+              arch: arm64,
+              target: aarch64-unknown-linux-musl,
+              runner: ubuntu-24.04-arm,
+            }
+          - {
+              os: windows,
+              arch: amd64,
+              target: x86_64-pc-windows-msvc,
+              runner: windows-latest,
+            }
+          - {
+              os: darwin,
+              arch: amd64,
+              target: x86_64-apple-darwin,
+              runner: macos-15-intel,
+            }
+          - {
+              os: darwin,
+              arch: arm64,
+              target: aarch64-apple-darwin,
+              runner: macos-14,
+            }
+    runs-on: ${{ matrix.runner }}
+    environment: production
+    defaults:
+      run:
+        working-directory: runners/runner-clients
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # musl-tools provides musl-gcc, which ring's build script needs for the
+      # *-unknown-linux-musl targets.
+      - name: Install musl tools (Linux)
+        if: matrix.os == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: runners/runner-clients
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p out
+          f="wuling-runner-${{ matrix.os }}-${{ matrix.arch }}"
+          tar -czf "out/${f}.tar.gz" -C "target/${{ matrix.target }}/release" wuling-runner
+          ( cd out && { sha256sum "${f}.tar.gz" > "${f}.tar.gz.sha256" || shasum -a 256 "${f}.tar.gz" > "${f}.tar.gz.sha256"; } )
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          $f = "wuling-runner-${{ matrix.os }}-${{ matrix.arch }}"
+          Compress-Archive -Path "target/${{ matrix.target }}/release/wuling-runner.exe" -DestinationPath "out/$f.zip" -Force
+          "$((Get-FileHash "out/$f.zip" -Algorithm SHA256).Hash.ToLower())  $f.zip" | Out-File -Encoding ascii "out/$f.zip.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runner-${{ matrix.os }}-${{ matrix.arch }}
+          path: runners/runner-clients/out/*
+          if-no-files-found: error
+          retention-days: 7
+
+  # ─────────────────────────────────────────────────────────────────────────
   # 2. Frontend bundle.
   # ─────────────────────────────────────────────────────────────────────────
   build-frontend:
@@ -182,7 +274,8 @@ jobs:
   publish-release:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
-    needs: [build-binaries, build-frontend, build-images, nix-check]
+    needs:
+      [build-binaries, build-runner, build-frontend, build-images, nix-check]
     steps:
       - uses: actions/checkout@v4
 
@@ -192,7 +285,7 @@ jobs:
           merge-multiple: true
           # Skip the auto-generated *.dockerbuild build-record artifacts that
           # docker/build-push-action uploads; we only want the release bundles.
-          pattern: "@(binaries-*|frontend-dist)"
+          pattern: "@(binaries-*|runner-*|frontend-dist)"
 
       - name: Verify checksums
         run: |
@@ -223,6 +316,12 @@ jobs:
           sha256sum -c wuling-api-linux-amd64.tar.gz.sha256
           \`\`\`
 
+          ### Runner clients
+
+          \`wuling-runner-<os>-<arch>\` for Linux (static musl), Windows (\`.zip\`),
+          and macOS. Build a custom runner image by dropping the prebuilt binary
+          in with \`runners/images/<os>/setup.*\` — no Rust toolchain required.
+
           ### Frontend
 
           - \`wuling-frontend-dist-${GITHUB_REF_NAME}.tar.gz\` — Nasti build
@@ -244,6 +343,7 @@ jobs:
           body_path: NOTES.md
           files: |
             release/*.tar.gz
+            release/*.zip
             release/*.sha256
           fail_on_unmatched_files: true
           generate_release_notes: true

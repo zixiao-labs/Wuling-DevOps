@@ -50,6 +50,7 @@ type RunnerIdentity struct {
 type RegistrationHints struct {
 	Labels       []string
 	ResourceTier string
+	OS           string
 	Provider     string
 	PoolName     string
 	Ephemeral    bool
@@ -67,6 +68,10 @@ func (s *Store) CreateRegistrationToken(ctx context.Context, orgID, createdBy uu
 	if provider == "" {
 		provider = "static"
 	}
+	os := h.OS
+	if !validOS(os) {
+		os = model.OSLinux
+	}
 	id := uuid.New()
 	raw, hash, err := newToken(RegTokenPrefix, id)
 	if err != nil {
@@ -78,10 +83,10 @@ func (s *Store) CreateRegistrationToken(ctx context.Context, orgID, createdBy uu
 	}
 	_, err = s.pool.Exec(ctx, `
 		INSERT INTO runner_registration_tokens
-		    (id, org_id, token_hash, labels, resource_tier, provider, pool_name, ephemeral, external_id, created_by, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		    (id, org_id, token_hash, labels, resource_tier, provider, pool_name, ephemeral, external_id, os, created_by, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	`, id, orgID, hash, nonNilStrings(h.Labels), tier, provider, h.PoolName, h.Ephemeral, h.ExternalID,
-		createdByArg, time.Now().Add(ttl))
+		os, createdByArg, time.Now().Add(ttl))
 	if err != nil {
 		return "", apperr.Internal(err)
 	}
@@ -92,6 +97,7 @@ func (s *Store) CreateRegistrationToken(ctx context.Context, orgID, createdBy uu
 type RegisterParams struct {
 	RawToken string   // the wlreg_… registration token
 	Name     string   // runner-chosen name; generated if empty
+	OS       string   // linux|windows|macos; the runner self-reports its own OS
 	Labels   []string // extra labels unioned with the token's hint labels
 }
 
@@ -115,14 +121,15 @@ func (s *Store) Register(ctx context.Context, p RegisterParams) (*model.Runner, 
 		hintLabels      []string
 		tier, provider  string
 		poolName, extID string
+		hintOS          string
 		ephemeral       bool
 		expiresAt       time.Time
 		usedAt          *time.Time
 	)
 	err = tx.QueryRow(ctx, `
-		SELECT org_id, token_hash, labels, resource_tier, provider, pool_name, ephemeral, external_id, expires_at, used_at
+		SELECT org_id, token_hash, labels, resource_tier, provider, pool_name, ephemeral, external_id, os, expires_at, used_at
 		FROM runner_registration_tokens WHERE id = $1 FOR UPDATE
-	`, regID).Scan(&orgID, &hash, &hintLabels, &tier, &provider, &poolName, &ephemeral, &extID, &expiresAt, &usedAt)
+	`, regID).Scan(&orgID, &hash, &hintLabels, &tier, &provider, &poolName, &ephemeral, &extID, &hintOS, &expiresAt, &usedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apperr.Unauthorized("invalid registration token")
 	}
@@ -144,6 +151,7 @@ func (s *Store) Register(ctx context.Context, p RegisterParams) (*model.Runner, 
 		name = generatedRunnerName(provider, poolName)
 	}
 	labels := unionLabels(hintLabels, p.Labels)
+	os := resolveOS(p.OS, hintOS)
 
 	runnerID := uuid.New()
 	rawTok, tokHash, err := newToken(RunnerTokenPrefix, runnerID)
@@ -153,15 +161,15 @@ func (s *Store) Register(ctx context.Context, p RegisterParams) (*model.Runner, 
 
 	r := &model.Runner{
 		ID: runnerID, OrgID: orgID, Name: name, Labels: labels,
-		ResourceTier: tier, Provider: provider, PoolName: poolName, Ephemeral: ephemeral,
+		ResourceTier: tier, OS: os, Provider: provider, PoolName: poolName, Ephemeral: ephemeral,
 		Status: "idle",
 	}
 	err = tx.QueryRow(ctx, `
 		INSERT INTO runners
-		    (id, org_id, name, token_hash, labels, resource_tier, provider, pool_name, ephemeral, external_id, status, last_seen_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'idle', now())
+		    (id, org_id, name, token_hash, labels, resource_tier, provider, pool_name, ephemeral, external_id, os, status, last_seen_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'idle', now())
 		RETURNING created_at, last_seen_at
-	`, runnerID, orgID, name, tokHash, nonNilStrings(labels), tier, provider, poolName, ephemeral, extID).
+	`, runnerID, orgID, name, tokHash, nonNilStrings(labels), tier, provider, poolName, ephemeral, extID, os).
 		Scan(&r.CreatedAt, &r.LastSeenAt)
 	if err != nil {
 		return nil, mapInsertErr(err, "runner")
@@ -237,7 +245,7 @@ func (s *Store) Heartbeat(ctx context.Context, runnerID uuid.UUID, status string
 // List returns an org's runners ordered by name.
 func (s *Store) List(ctx context.Context, orgID uuid.UUID) ([]model.Runner, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, org_id, name, labels, resource_tier, provider, pool_name, ephemeral, status, last_seen_at, last_job_at, created_at
+		SELECT id, org_id, name, labels, resource_tier, provider, pool_name, ephemeral, os, status, last_seen_at, last_job_at, created_at
 		FROM runners WHERE org_id = $1 ORDER BY LOWER(name) ASC
 	`, orgID)
 	if err != nil {
@@ -248,7 +256,7 @@ func (s *Store) List(ctx context.Context, orgID uuid.UUID) ([]model.Runner, erro
 	for rows.Next() {
 		var r model.Runner
 		if err := rows.Scan(&r.ID, &r.OrgID, &r.Name, &r.Labels, &r.ResourceTier, &r.Provider,
-			&r.PoolName, &r.Ephemeral, &r.Status, &r.LastSeenAt, &r.LastJobAt, &r.CreatedAt); err != nil {
+			&r.PoolName, &r.Ephemeral, &r.OS, &r.Status, &r.LastSeenAt, &r.LastJobAt, &r.CreatedAt); err != nil {
 			return nil, apperr.Internal(err)
 		}
 		out = append(out, r)
@@ -344,6 +352,23 @@ func nonNilStrings(s []string) []string {
 
 func validTier(t string) bool {
 	return t == model.TierLow || t == model.TierMedium || t == model.TierHigh
+}
+
+func validOS(os string) bool {
+	return os == model.OSLinux || os == model.OSWindows || os == model.OSMacOS
+}
+
+// resolveOS prefers the OS the runner self-reports at registration, falls back
+// to the token's hint, and defaults to linux so a pre-os client or token keeps
+// its Stage-1 behavior.
+func resolveOS(supplied, hint string) string {
+	if validOS(supplied) {
+		return supplied
+	}
+	if validOS(hint) {
+		return hint
+	}
+	return model.OSLinux
 }
 
 func mapInsertErr(err error, kind string) error {

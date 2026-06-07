@@ -38,6 +38,7 @@ type Pool struct {
 	Name     string   `yaml:"name"`
 	Provider string   `yaml:"provider"` // aliyun|aws|proxmox|vcenter
 	Tier     string   `yaml:"tier"`
+	OS       string   `yaml:"os"` // linux (default) | windows; macos is manual-only
 	Labels   []string `yaml:"labels"`
 	Min      int      `yaml:"min"`
 	Max      int      `yaml:"max"`
@@ -203,6 +204,16 @@ func (p *Pool) validateProvider() error {
 	// GitOps validation up front rather than silently never launching.
 	if p.CredentialSecretName() == "" {
 		return fmt.Errorf("pool %q: credentials_secret is required — set it to the name of the org Secret holding this provider's access keys", p.Name)
+	}
+	// OS defaults to linux. Autoscaled pools may be linux or windows; macOS is
+	// manual-registration only (Apple licensing requires Apple hardware), so a
+	// macos pool could never be launched and is rejected here.
+	switch p.OS {
+	case "", "linux", "windows":
+	case "macos":
+		return fmt.Errorf("pool %q: os macos cannot be autoscaled — register macOS runners manually (see docs/pipelines.md §7)", p.Name)
+	default:
+		return fmt.Errorf("pool %q: os must be linux or windows (got %q)", p.Name, p.OS)
 	}
 	return nil
 }

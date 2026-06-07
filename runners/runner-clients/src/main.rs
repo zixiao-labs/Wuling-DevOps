@@ -4,6 +4,7 @@
 //! and lets in-flight jobs finish (graceful drain).
 
 mod api;
+mod backend;
 mod config;
 mod executor;
 
@@ -17,6 +18,7 @@ use clap::Parser;
 use tracing::{info, warn};
 
 use crate::api::ApiClient;
+use crate::backend::RunnerOS;
 use crate::config::Config;
 use crate::executor::Executor;
 
@@ -33,7 +35,14 @@ async fn main() -> Result<()> {
 
     let cfg = Config::parse();
     let api_base = cfg.api_base();
-    let labels = cfg.clean_labels();
+    let os = cfg.resolve_os();
+    // Advertise the OS as a plain label so `runs-on: [windows|macos|linux]`
+    // routes here, matching the existing `linux` label convention. Deduped
+    // against any user-supplied labels.
+    let mut labels = cfg.clean_labels();
+    if !labels.iter().any(|l| l.eq_ignore_ascii_case(&os)) {
+        labels.push(os.clone());
+    }
 
     // Obtain a runner token: use the supplied one, else redeem a registration
     // token (the autoscaler injects one via user-data on ephemeral VMs).
@@ -44,7 +53,7 @@ async fn main() -> Result<()> {
                 .registration_token
                 .clone()
                 .ok_or_else(|| anyhow!("either --token or --registration-token is required"))?;
-            let r = ApiClient::register(&api_base, &reg, &cfg.name, &labels).await?;
+            let r = ApiClient::register(&api_base, &reg, &cfg.name, &os, &labels).await?;
             info!(runner_id = %r.id, name = %r.name, "registered with control plane");
             r.token
         }
@@ -53,7 +62,13 @@ async fn main() -> Result<()> {
     let api = ApiClient::new(api_base, token.clone())?;
     let work_dir = PathBuf::from(&cfg.work_dir);
     tokio::fs::create_dir_all(&work_dir).await?;
-    let executor = Executor::new(api.clone(), work_dir, cfg.default_image.clone(), token)?;
+    let executor = Executor::new(
+        api.clone(),
+        work_dir,
+        cfg.default_image.clone(),
+        token,
+        RunnerOS::parse(&os),
+    );
 
     let shutdown = Arc::new(AtomicBool::new(false));
     spawn_signal_handler(shutdown.clone());

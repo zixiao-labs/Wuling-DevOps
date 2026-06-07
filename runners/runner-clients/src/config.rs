@@ -55,6 +55,24 @@ pub struct Config {
     /// Seconds between acquire polls when the queue is empty.
     #[arg(long, env = "WULING_RUNNER_POLL_INTERVAL", default_value_t = 3)]
     pub poll_interval: u64,
+
+    /// This runner's operating system: linux | windows | macos. Selects the
+    /// execution backend (container vs host shell). Defaults to the build
+    /// target, so it rarely needs setting by hand.
+    #[arg(long, env = "WULING_RUNNER_OS", default_value = "")]
+    pub os: String,
+}
+
+/// default_os reports the OS this binary was compiled for, used when --os is
+/// left unset. A macOS/Windows build therefore self-identifies correctly.
+pub fn default_os() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "windows") {
+        "windows"
+    } else {
+        "linux"
+    }
 }
 
 impl Config {
@@ -70,5 +88,15 @@ impl Config {
     pub fn api_base(&self) -> String {
         let base = self.server_url.trim_end_matches('/');
         format!("{base}/api/v1")
+    }
+
+    /// resolve_os normalizes the --os flag, falling back to the build target.
+    pub fn resolve_os(&self) -> String {
+        match self.os.trim().to_lowercase().as_str() {
+            "linux" => "linux".to_string(),
+            "windows" => "windows".to_string(),
+            "macos" => "macos".to_string(),
+            _ => default_os().to_string(),
+        }
     }
 }

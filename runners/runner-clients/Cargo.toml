@@ -23,5 +23,9 @@ futures-util = "0.3"
 tar = "0.4"
 bytes = "1"
 
+# Unix-only: kill a step's whole process group on timeout (host execution).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [profile.release]
 opt-level = 2

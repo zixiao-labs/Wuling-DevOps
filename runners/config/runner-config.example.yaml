@@ -77,6 +77,23 @@ pools:
       spot: false
       credentials_secret: AWS_CREDS       # JSON: {"access_key_id":"…","secret_access_key":"…","session_token":"…"(可选)}
 
+  # --- AWS EC2（Windows Server 2022；宿主 pwsh + 可选 Windows 容器） ----------
+  - name: aws-windows
+    provider: aws
+    tier: medium
+    os: windows                          # linux（默认）| windows；macOS 不能 autoscale，见文末
+    labels: [windows]                    # 工作流用 runs-on: [windows] 命中（runner 也会自动带 windows 裸标签）
+    min: 0
+    max: 3
+    aws:
+      region: us-west-2
+      ami: ami-xxxxxxxx                  # Windows Server 2022 镜像，预装 wuling-runner.exe + 计划任务（见 docs/pipelines.md §7.1、runners/images/windows）
+      instance_type: c6i.2xlarge
+      subnet_id: subnet-xxxxxxxx
+      security_group_ids: [sg-xxxxxxxx]
+      spot: false
+      credentials_secret: AWS_CREDS
+
   # --- 本地 Proxmox VE（REST API，克隆模板） ---------------------------------
   - name: proxmox-low
     provider: proxmox
@@ -112,3 +129,9 @@ pools:
       network: "VM Network"
       insecure_tls: false
       credentials_secret: VCENTER_CREDS   # JSON: {"username":"ci@vsphere.local","password":"…"}
+
+# --- macOS（不在此配置） ----------------------------------------------------
+# macOS runner 不能 autoscale（Apple 授权要求跑在 Apple 硬件上），因此**不在 pools 里配置**——
+# 把 macos 写进某个池会被 config 校验直接拒绝。手动注册物理 Mac：用 runners/images/macos/setup.sh
+# 装好 runner + launchd 模板，填入 server URL 和 UI 生成的注册令牌即可。工作流用 runs-on: [macos]
+# 命中。详见 docs/pipelines.md §7.1。

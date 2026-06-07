@@ -74,6 +74,7 @@ pub struct AcquiredJob {
 struct RegisterReq<'a> {
     token: &'a str,
     name: &'a str,
+    os: &'a str,
     labels: &'a [String],
 }
 
@@ -118,6 +119,7 @@ impl ApiClient {
         api_base: &str,
         reg_token: &str,
         name: &str,
+        os: &str,
         labels: &[String],
     ) -> Result<RegisteredRunner> {
         let http = reqwest::Client::builder().build()?;
@@ -126,6 +128,7 @@ impl ApiClient {
             .json(&RegisterReq {
                 token: reg_token,
                 name,
+                os,
                 labels,
             })
             .send()

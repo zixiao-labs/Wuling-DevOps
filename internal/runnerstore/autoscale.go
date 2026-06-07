@@ -28,9 +28,12 @@ type AutoscaleRunner struct {
 // and returns it with its raw wlrt_ token. The autoscaler injects the token
 // via user-data so the VM authenticates directly (no register round-trip),
 // which lets the autoscaler own the runner↔instance mapping (SetExternalID).
-func (s *Store) CreateEphemeralRunner(ctx context.Context, orgID uuid.UUID, name string, labels []string, tier, provider, pool string) (*model.Runner, error) {
+func (s *Store) CreateEphemeralRunner(ctx context.Context, orgID uuid.UUID, name string, labels []string, tier, provider, pool, os string) (*model.Runner, error) {
 	if !validTier(tier) {
 		tier = model.TierMedium
+	}
+	if !validOS(os) {
+		os = model.OSLinux
 	}
 	if name == "" {
 		name = generatedRunnerName(provider, pool)
@@ -42,15 +45,15 @@ func (s *Store) CreateEphemeralRunner(ctx context.Context, orgID uuid.UUID, name
 	}
 	r := &model.Runner{
 		ID: runnerID, OrgID: orgID, Name: name, Labels: unionLabels(labels, nil),
-		ResourceTier: tier, Provider: provider, PoolName: pool, Ephemeral: true,
+		ResourceTier: tier, OS: os, Provider: provider, PoolName: pool, Ephemeral: true,
 		Status: "offline",
 	}
 	err = s.pool.QueryRow(ctx, `
 		INSERT INTO runners
-		    (id, org_id, name, token_hash, labels, resource_tier, provider, pool_name, ephemeral, status)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,TRUE,'offline')
+		    (id, org_id, name, token_hash, labels, resource_tier, provider, pool_name, ephemeral, os, status)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,TRUE,$9,'offline')
 		RETURNING created_at
-	`, runnerID, orgID, name, tokHash, nonNilStrings(r.Labels), tier, provider, pool).Scan(&r.CreatedAt)
+	`, runnerID, orgID, name, tokHash, nonNilStrings(r.Labels), tier, provider, pool, os).Scan(&r.CreatedAt)
 	if err != nil {
 		return nil, mapInsertErr(err, "runner")
 	}

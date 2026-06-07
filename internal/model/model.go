@@ -293,6 +293,16 @@ const (
 	TierHigh   = "high"
 )
 
+// Runner operating systems. The OS drives the runner's execution backend
+// (Linux/Windows containers vs a host shell) and the autoscaler's bootstrap
+// (cloud-init vs PowerShell). macOS is manual-registration only — never
+// autoscaled (Apple licensing requires Apple hardware).
+const (
+	OSLinux   = "linux"
+	OSWindows = "windows"
+	OSMacOS   = "macos"
+)
+
 // Secret is the metadata-only shape of a stored secret. The value is NEVER
 // serialized to JSON — only the name and scope are exposed. ProjectID is nil
 // for org-scoped secrets.
@@ -314,6 +324,7 @@ type Runner struct {
 	Name         string     `json:"name"`
 	Labels       []string   `json:"labels"`
 	ResourceTier string     `json:"resource_tier"`
+	OS           string     `json:"os"`       // linux|windows|macos
 	Provider     string     `json:"provider"` // static|aliyun|aws|proxmox|vcenter
 	PoolName     string     `json:"pool_name,omitempty"`
 	Ephemeral    bool       `json:"ephemeral"`
