@@ -50,6 +50,7 @@ import (
 
 	"github.com/zixiao-labs/wuling-devops/internal/apperr"
 	"github.com/zixiao-labs/wuling-devops/internal/auth"
+	"github.com/zixiao-labs/wuling-devops/internal/git"
 	"github.com/zixiao-labs/wuling-devops/internal/model"
 	"github.com/zixiao-labs/wuling-devops/internal/repostore"
 	"github.com/zixiao-labs/wuling-devops/internal/userstore"
@@ -61,6 +62,10 @@ type Handler struct {
 	Layout   *repostore.Layout
 	PATReslv auth.PATResolver
 	OATReslv auth.OATResolver
+	// RunnerReslv, when set, lets a runner `git clone` over HTTP Basic using
+	// its wlrt_ token — read-only and scoped to the runner's org. Nil = runner
+	// tokens are rejected on the git endpoints.
+	RunnerReslv RunnerResolver
 
 	// Logger is used for non-fatal post-RPC bookkeeping (e.g. failure to
 	// mark a repo non-empty after a successful push). May be nil; callers
@@ -75,6 +80,11 @@ type Handler struct {
 	// Insights commit index stays current. The implementation runs in its own
 	// goroutine — callers should never block the push response on indexing.
 	Indexer CommitIndexer
+
+	// PushTrigger, when non-nil, is invoked after a successful receive-pack
+	// with the observed branch updates so Pipelines can start push-triggered
+	// runs. Runs in its own goroutine.
+	PushTrigger PushTrigger
 }
 
 // CommitIndexer is the narrow surface githttp needs from insightstore.
@@ -82,6 +92,12 @@ type Handler struct {
 // and lets tests substitute a no-op.
 type CommitIndexer interface {
 	IndexAsync(repoID uuid.UUID, repoPath string)
+}
+
+// RunnerResolver resolves a runner token (wlrt_…) to a runner-sourced
+// identity carrying the runner's OrgID. Implemented by runnerstore.Store.
+type RunnerResolver interface {
+	ResolveRunnerToken(ctx context.Context, raw string) (*auth.Identity, error)
 }
 
 func (h *Handler) logger() *slog.Logger {
@@ -133,6 +149,24 @@ func (h *Handler) resolveRepoFromURL(r *http.Request, needWrite bool) (*authedRe
 	}
 
 	if identity != nil {
+		// Runner identities authenticate as their org, not a user: grant
+		// read-only access to any repo in that org, deny writes outright.
+		if identity.Source == auth.IdentitySourceRunner {
+			if needWrite {
+				return nil, apperr.Forbidden("runner tokens are read-only")
+			}
+			if identity.OrgID != orgID {
+				return nil, apperr.NotFound("repo")
+			}
+			return &authedRequest{
+				Repo:      repo,
+				RepoPath:  h.Layout.Path(orgID, projectID, repo.ID),
+				OrgID:     orgID,
+				ProjectID: projectID,
+				Identity:  identity,
+			}, nil
+		}
+
 		role, err := h.Store.MemberRole(r.Context(), orgID, identity.UserID)
 		if err != nil {
 			return nil, err
@@ -179,14 +213,33 @@ func (h *Handler) resolveRepoFromURL(r *http.Request, needWrite bool) (*authedRe
 	return &authedRequest{
 		Repo:      repo,
 		RepoPath:  h.Layout.Path(orgID, projectID, repo.ID),
+		OrgID:     orgID,
+		ProjectID: projectID,
 		Identity:  identity,
 	}, nil
 }
 
 type authedRequest struct {
-	Repo     *model.Repo
-	RepoPath string
-	Identity *auth.Identity
+	Repo      *model.Repo
+	RepoPath  string
+	OrgID     uuid.UUID
+	ProjectID uuid.UUID
+	Identity  *auth.Identity
+}
+
+// RefUpdate describes one branch tip change observed across a push.
+type RefUpdate struct {
+	Branch string // short branch name (refs/heads/<branch> stripped)
+	OldOID string // "" when the branch was newly created
+	NewOID string
+}
+
+// PushTrigger, when set, is notified after a successful receive-pack with the
+// branch updates it observed. Pipelines uses this to start push-triggered
+// runs. The implementation must not block the push response — githttp invokes
+// it in its own goroutine.
+type PushTrigger interface {
+	OnPush(repoID, projectID, orgID uuid.UUID, repoPath string, updates []RefUpdate)
 }
 
 func hasScope(scopes []string, want string) bool {
@@ -244,8 +297,16 @@ func (h *Handler) authenticate(r *http.Request) (*auth.Identity, error) {
 			return nil, apperr.Unauthorized("OAuth tokens not accepted by this server")
 		}
 		return h.OATReslv.ResolveOAT(r.Context(), password)
+	case auth.IsRunnerShaped(password):
+		// A CI runner cloning the repo it was dispatched to work on. Username
+		// slot is ignored (conventionally "x-runner"); access is read-only and
+		// org-scoped, enforced in resolveRepoFromURL.
+		if h.RunnerReslv == nil {
+			return nil, apperr.Unauthorized("runner tokens not accepted by this server")
+		}
+		return h.RunnerReslv.ResolveRunnerToken(r.Context(), password)
 	default:
-		return nil, apperr.Unauthorized("password must be a wlpat_ or wloat_ token")
+		return nil, apperr.Unauthorized("password must be a wlpat_, wloat_, or wlrt_ token")
 	}
 }
 
@@ -338,6 +399,13 @@ func (h *Handler) servicePack(w http.ResponseWriter, r *http.Request, sub string
 		body = gz
 	}
 
+	// Snapshot branch tips before the push so we can diff afterwards and tell
+	// Pipelines exactly which branches changed. Only meaningful for pushes.
+	var before map[string]string
+	if needWrite && h.PushTrigger != nil {
+		before = branchTips(ar.RepoPath)
+	}
+
 	cmd := h.gitCommand(r.Context(), sub, "--stateless-rpc", ar.RepoPath)
 	cmd.Stdin = body
 	cmd.Stdout = w
@@ -363,7 +431,42 @@ func (h *Handler) servicePack(w http.ResponseWriter, r *http.Request, sub string
 		if h.Indexer != nil {
 			h.Indexer.IndexAsync(ar.Repo.ID, ar.RepoPath)
 		}
+		// Diff branch tips and notify Pipelines of the changed branches.
+		if h.PushTrigger != nil {
+			if updates := diffBranchTips(before, branchTips(ar.RepoPath)); len(updates) > 0 {
+				h.PushTrigger.OnPush(ar.Repo.ID, ar.ProjectID, ar.OrgID, ar.RepoPath, updates)
+			}
+		}
 	}
+}
+
+// branchTips maps short branch name -> tip OID for every branch ref. Errors
+// yield an empty map (a push that we can't snapshot just won't trigger).
+func branchTips(repoPath string) map[string]string {
+	refs, err := git.ListRefs(repoPath)
+	if err != nil {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(refs))
+	for _, ref := range refs {
+		if !ref.IsBranch {
+			continue
+		}
+		out[strings.TrimPrefix(ref.Name, "refs/heads/")] = ref.OID
+	}
+	return out
+}
+
+// diffBranchTips returns the branches whose tip was created or moved.
+func diffBranchTips(before, after map[string]string) []RefUpdate {
+	var updates []RefUpdate
+	for branch, newOID := range after {
+		oldOID := before[branch]
+		if oldOID != newOID {
+			updates = append(updates, RefUpdate{Branch: branch, OldOID: oldOID, NewOID: newOID})
+		}
+	}
+	return updates
 }
 
 // gitCommand builds an exec.Cmd for a git sub-command, isolating the

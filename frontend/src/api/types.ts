@@ -671,3 +671,118 @@ export interface WellKnownDoc {
   grant_types_supported: string[];
   code_challenge_methods_supported: string[];
 }
+
+// ---------------- Pipelines + Secrets + Runners (Stage 1) ----------------
+
+export type ResourceTier = "low" | "medium" | "high";
+export type RunEvent = "push" | "pull_request" | "manual";
+export type RunStatus = "queued" | "running" | "success" | "failed" | "canceled";
+export type StepStatus = "queued" | "running" | "success" | "failed" | "canceled" | "skipped";
+
+export interface PipelineStep {
+  id: string;
+  job_id: string;
+  number: number;
+  name: string;
+  status: StepStatus;
+  started_at?: string;
+  finished_at?: string;
+}
+
+export interface PipelineJob {
+  id: string;
+  run_id: string;
+  name: string;
+  runs_on: string[];
+  resource_tier: ResourceTier;
+  needs: string[];
+  status: RunStatus;
+  runner_id?: string;
+  attempt: number;
+  log_size: number;
+  queued_at: string;
+  started_at?: string;
+  finished_at?: string;
+  steps?: PipelineStep[];
+}
+
+export interface PipelineRun {
+  id: string;
+  org_id: string;
+  project_id: string;
+  repo_id: string;
+  number: number;
+  workflow_path: string;
+  workflow_name: string;
+  event: RunEvent;
+  git_ref: string;
+  commit_sha: string;
+  commit_message: string;
+  status: RunStatus;
+  triggered_by?: UserRef;
+  created_at: string;
+  started_at?: string;
+  finished_at?: string;
+  jobs?: PipelineJob[];
+}
+
+export interface TriggerRunRequest {
+  repo: string;
+  ref?: string;
+  workflow: string;
+}
+
+export interface RunListQuery {
+  repo?: string;
+  status?: RunStatus;
+  limit?: number;
+}
+
+/** A page of a job's log, returned by the range endpoint. */
+export interface JobLogChunk {
+  data: string;
+  offset: number;
+  status: string;
+  is_done: boolean;
+}
+
+export interface Secret {
+  id: string;
+  org_id: string;
+  project_id?: string;
+  scope: "org" | "project";
+  name: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SetSecretRequest {
+  value: string;
+}
+
+export interface Runner {
+  id: string;
+  org_id: string;
+  name: string;
+  labels: string[];
+  resource_tier: ResourceTier;
+  provider: string;
+  pool_name?: string;
+  ephemeral: boolean;
+  status: "offline" | "idle" | "busy";
+  last_seen_at?: string;
+  last_job_at?: string;
+  created_at: string;
+  /** Raw wlrt_ token — present only on the register response. */
+  token?: string;
+}
+
+export interface CreateRegistrationTokenRequest {
+  labels?: string[];
+  resource_tier?: ResourceTier;
+}
+
+export interface RegistrationTokenResponse {
+  token: string;
+  expires_in: number;
+}

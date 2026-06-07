@@ -29,6 +29,9 @@ import Pin from "@gravity-ui/icons/Pin";
 import ShieldCheck from "@gravity-ui/icons/ShieldCheck";
 import Lock from "@gravity-ui/icons/Lock";
 import At from "@gravity-ui/icons/At";
+import Rocket from "@gravity-ui/icons/Rocket";
+import Key from "@gravity-ui/icons/Key";
+import Cpu from "@gravity-ui/icons/Cpu";
 
 import { authStore } from "@/auth/store";
 import { NavItem, SidebarSection } from "./nav-primitives";
@@ -125,6 +128,10 @@ function OrgSidebar({ orgSlug }: { orgSlug: string }) {
         <NavItem to={`${base}/projects`} icon={Folder} label="项目" />
         <NavItem to={`${base}/members`} icon={Persons} label="成员" />
       </SidebarSection>
+      <SidebarSection label="持续集成">
+        <NavItem to={`${base}/runners`} icon={Cpu} label="Runners" />
+        <NavItem to={`${base}/secrets`} icon={Key} label="机密" />
+      </SidebarSection>
       <SidebarSection label="快捷">
         <NavItem to="/orgs" icon={Layers} label="所有组织" />
       </SidebarSection>
@@ -170,6 +177,10 @@ function ProjectSidebar({ orgSlug, projectSlug }: { orgSlug: string; projectSlug
       </SidebarSection>
       <SidebarSection label="代码">
         <NavItem to={`${base}/repos`} icon={Code} label="仓库" />
+      </SidebarSection>
+      <SidebarSection label="持续集成">
+        <NavItem to={`${base}/pipelines`} icon={Rocket} label="Pipelines" />
+        <NavItem to={`${base}/secrets`} icon={Key} label="机密" />
       </SidebarSection>
       <SidebarSection label="协作">
         <NavItem to={`${base}/wiki`} icon={BookOpen} label="Wiki" />

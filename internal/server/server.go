@@ -30,8 +30,15 @@ import (
 	"github.com/zixiao-labs/wuling-devops/internal/oauthhttp"
 	"github.com/zixiao-labs/wuling-devops/internal/oauthstore"
 	"github.com/zixiao-labs/wuling-devops/internal/orghttp"
+	"github.com/zixiao-labs/wuling-devops/internal/pipelinehttp"
+	"github.com/zixiao-labs/wuling-devops/internal/pipelinestore"
+	"github.com/zixiao-labs/wuling-devops/internal/pipelinetrigger"
 	"github.com/zixiao-labs/wuling-devops/internal/repohttp"
 	"github.com/zixiao-labs/wuling-devops/internal/repostore"
+	"github.com/zixiao-labs/wuling-devops/internal/runnerhttp"
+	"github.com/zixiao-labs/wuling-devops/internal/runnerstore"
+	"github.com/zixiao-labs/wuling-devops/internal/secrethttp"
+	"github.com/zixiao-labs/wuling-devops/internal/secretstore"
 	"github.com/zixiao-labs/wuling-devops/internal/userstore"
 	"github.com/zixiao-labs/wuling-devops/internal/wikihttp"
 	"github.com/zixiao-labs/wuling-devops/internal/wikistore"
@@ -39,15 +46,18 @@ import (
 
 // Deps bundles everything the HTTP server needs.
 type Deps struct {
-	Cfg      *config.Config
-	Log      *slog.Logger
-	Pool     *db.Pool
-	Store    *userstore.Store
-	Issues   *issuestore.Store
-	MRs      *mrstore.Store
-	Wikis    *wikistore.Store
-	Insights *insightstore.Store
-	Layout   *repostore.Layout
+	Cfg       *config.Config
+	Log       *slog.Logger
+	Pool      *db.Pool
+	Store     *userstore.Store
+	Issues    *issuestore.Store
+	MRs       *mrstore.Store
+	Wikis     *wikistore.Store
+	Insights  *insightstore.Store
+	Layout    *repostore.Layout
+	Secrets   *secretstore.Store
+	Runners   *runnerstore.Store
+	Pipelines *pipelinestore.Store
 }
 
 // New returns a router fully wired with all current Stage-1 domains.
@@ -193,6 +203,28 @@ func New(d Deps) http.Handler {
 				Layout: d.Layout, Verifier: verifier, OAT: oauthH,
 			}).Mount(api)
 		}
+
+		// Pipelines + Secrets + Runners (Stage 1). All org-scoped.
+		if d.Secrets != nil {
+			(&secrethttp.Handler{
+				Users: d.Store, Secrets: d.Secrets, Verifier: verifier, OAT: oauthH,
+			}).Mount(api)
+		}
+		if d.Pipelines != nil {
+			(&pipelinehttp.Handler{
+				Users: d.Store, Pipelines: d.Pipelines, Layout: d.Layout,
+				Verifier: verifier, OAT: oauthH, DefaultTier: model.TierMedium,
+			}).Mount(api)
+		}
+		if d.Runners != nil && d.Pipelines != nil && d.Secrets != nil {
+			(&runnerhttp.Handler{
+				Users: d.Store, Runners: d.Runners, Pipelines: d.Pipelines, Secrets: d.Secrets,
+				Verifier: verifier, OAT: oauthH,
+				RegistrationTTL: d.Cfg.Runner.RegistrationTTL,
+				CloneBaseURL:    d.Cfg.OAuth.PublicBaseURL,
+				DefaultTier:     model.TierMedium,
+			}).Mount(api)
+		}
 	})
 
 	// Git smart HTTP at the root, GitHub-style:
@@ -203,6 +235,18 @@ func New(d Deps) http.Handler {
 		Logger:   d.Log,
 		PATReslv: &authhttp.PATResolver{Store: d.Store},
 		OATReslv: oauthH,
+	}
+	// Let CI runners clone repos with their wlrt_ token (read-only, org-scoped).
+	if d.Runners != nil {
+		gh.RunnerReslv = d.Runners
+	}
+	// Start push-triggered pipeline runs after a successful receive-pack.
+	if d.Pipelines != nil {
+		gh.PushTrigger = &pipelinetrigger.Service{
+			Pipelines:   d.Pipelines,
+			Log:         d.Log.With("component", "ci-trigger"),
+			DefaultTier: model.TierMedium,
+		}
 	}
 	// Assigning `d.Insights` (a *insightstore.Store) directly to an interface
 	// field would produce a typed-nil even when d.Insights is nil, and the

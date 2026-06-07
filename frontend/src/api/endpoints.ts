@@ -5,7 +5,7 @@
  * src/api/types.ts which mirrors api/openapi.yaml.
  */
 
-import { apiDelete, apiGet, apiPatch, apiPost, apiPut, apiFetch, type QueryMap } from "./client";
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut, apiFetch, apiBlob, type QueryMap } from "./client";
 import type {
   AccessTokenView,
   ActivityDay,
@@ -68,6 +68,15 @@ import type {
   WikiHistoryCommit,
   WikiPage,
   WikiPageContent,
+  PipelineRun,
+  RunListQuery,
+  TriggerRunRequest,
+  JobLogChunk,
+  Secret,
+  SetSecretRequest,
+  Runner,
+  CreateRegistrationTokenRequest,
+  RegistrationTokenResponse,
 } from "./types";
 
 const enc = encodeURIComponent;
@@ -542,4 +551,59 @@ export const oauthProvider = {
     deleteApp: (id: string) =>
       apiDelete(`/api/v1/admin/oauth/apps/${enc(id)}`),
   },
+};
+
+// ---------------- Pipelines + Secrets + Runners ----------------
+
+const orgBase = (org: string) => `/api/v1/orgs/${enc(org)}`;
+const pipelineBase = (org: string, project: string) => `${projectBase(org, project)}/pipelines`;
+
+export const pipelines = {
+  listRuns: (org: string, project: string, query: RunListQuery = {}) =>
+    apiGet<{ runs: PipelineRun[] }>(`${pipelineBase(org, project)}/runs`, query as QueryMap).then(
+      (r) => r.runs,
+    ),
+  trigger: (org: string, project: string, body: TriggerRunRequest) =>
+    apiPost<PipelineRun>(`${pipelineBase(org, project)}/runs`, body),
+  getRun: (org: string, project: string, runId: string) =>
+    apiGet<PipelineRun>(`${pipelineBase(org, project)}/runs/${enc(runId)}`),
+  cancelRun: (org: string, project: string, runId: string) =>
+    apiPost<void>(`${pipelineBase(org, project)}/runs/${enc(runId)}/cancel`),
+  // Range-poll a job's log. The frontend polls this (rather than the SSE
+  // endpoint) because EventSource can't carry the bearer token.
+  jobLogs: (org: string, project: string, jobId: string, offset = 0, limit = 0, signal?: AbortSignal) =>
+    apiGet<JobLogChunk>(
+      `${pipelineBase(org, project)}/jobs/${enc(jobId)}/logs`,
+      { offset, limit },
+      signal,
+    ),
+  // Download an artifact through the authenticated client (never a bare URL —
+  // opening one directly drops the bearer token and 401s). Returns a Blob the
+  // caller can save or preview; sibling of jobLogs above.
+  downloadArtifact: (org: string, project: string, jobId: string, name: string, signal?: AbortSignal) =>
+    apiBlob(`${pipelineBase(org, project)}/jobs/${enc(jobId)}/artifacts/${enc(name)}`, { signal }),
+};
+
+export const secrets = {
+  listOrg: (org: string) =>
+    apiGet<{ secrets: Secret[] }>(`${orgBase(org)}/secrets`).then((r) => r.secrets),
+  setOrg: (org: string, name: string, body: SetSecretRequest) =>
+    apiPut<Secret>(`${orgBase(org)}/secrets/${enc(name)}`, body),
+  deleteOrg: (org: string, name: string) =>
+    apiDelete(`${orgBase(org)}/secrets/${enc(name)}`),
+  listProject: (org: string, project: string) =>
+    apiGet<{ secrets: Secret[] }>(`${projectBase(org, project)}/secrets`).then((r) => r.secrets),
+  setProject: (org: string, project: string, name: string, body: SetSecretRequest) =>
+    apiPut<Secret>(`${projectBase(org, project)}/secrets/${enc(name)}`, body),
+  deleteProject: (org: string, project: string, name: string) =>
+    apiDelete(`${projectBase(org, project)}/secrets/${enc(name)}`),
+};
+
+export const runners = {
+  list: (org: string) =>
+    apiGet<{ runners: Runner[] }>(`${orgBase(org)}/runners`).then((r) => r.runners),
+  createRegistrationToken: (org: string, body: CreateRegistrationTokenRequest) =>
+    apiPost<RegistrationTokenResponse>(`${orgBase(org)}/runners/registration-tokens`, body),
+  delete: (org: string, id: string) =>
+    apiDelete(`${orgBase(org)}/runners/${enc(id)}`),
 };

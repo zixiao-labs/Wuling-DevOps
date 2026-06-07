@@ -70,6 +70,7 @@ services:
     volumes:
       - wuling-repos:/var/lib/wuling/repos
       - wuling-ssh:/var/lib/wuling/ssh
+      - wuling-pipelines:/var/lib/wuling/pipelines
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
       interval: 10s
@@ -116,6 +117,7 @@ volumes:
   wuling-pg:
   wuling-repos:
   wuling-ssh:
+  wuling-pipelines:
   wuling-frontend:
   wuling-caddy-data:
   wuling-caddy-config:

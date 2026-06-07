@@ -1,0 +1,114 @@
+# runner-config.yaml — 组织级 Runner / Autoscaler 配置（GitOps）
+# =============================================================================
+# 放置位置：本 org 的 config 仓库默认分支根目录，即 `{org}/config/config`
+#           （project/repo slug 均可用 WULING_RUNNER_CONFIG_PROJECT /
+#            WULING_RUNNER_CONFIG_REPO 改名）。
+#
+# 设计要点：
+#   * 组织级、不能全局——每个 org 各自一份，互不影响。
+#   * 走 git → 可经 Merge Request 评审、可审计、可回滚。
+#   * 云凭证不写明文！用 `credentials_secret` 引用 org Secret 的名字，真正的
+#     AK/SK / API token 存在加密 Secret 里（见 docs/pipelines.md §4）。
+#
+# 本文件是带注释的“示例”。复制到你 org 的 config 仓库后按需删改。
+# =============================================================================
+
+version: 1
+
+# job 未声明 `resource:` 且 runs-on 不含 `tier:*` 标签时的默认档位。
+default_tier: medium
+
+# 临时（autoscaled）runner 在「最近一次任务结束后」空闲超过此时长才释放。
+# 故意保留宽限：按量计费 ECS/EC2 频繁起停既贵又慢（开机→注入 runner→注销很耗时）。
+# 支持 Go duration 写法：30s / 5m / 1h。
+idle_timeout: 5m
+
+# 抽象档位 → 具体机器规格。Autoscaler 据此向各 provider 申请相应 CPU/内存/存储。
+# storage 是根盘容量；cpu 为 vCPU；memory 支持 Mi/Gi。
+tiers:
+  low:
+    cpu: 2
+    memory: 4Gi
+    storage: 40Gi
+  medium:
+    cpu: 4
+    memory: 8Gi
+    storage: 80Gi
+  high:
+    cpu: 8
+    memory: 16Gi
+    storage: 160Gi
+
+# 自动扩缩容池。每个池 = 一个 provider + 一个 tier，向被它拉起的 runner 注入 `labels`。
+# min: 始终维持的热备数（0 = 全按需）；max: 该池实例上限。
+pools:
+  # --- 阿里云 ECS（按量付费实例） -------------------------------------------
+  - name: aliyun-medium
+    provider: aliyun
+    tier: medium
+    labels: [linux, docker]
+    min: 0
+    max: 5
+    aliyun:
+      region: cn-hangzhou
+      zone_id: cn-hangzhou-i
+      image_id: m-xxxxxxxx              # 预装容器运行时 + 武陵 runner 客户端的镜像（构建见 docs/pipelines.md §7.1）
+      instance_type: ecs.g7.large       # 应与 tier 规格相称
+      vswitch_id: vsw-xxxxxxxx
+      security_group_id: sg-xxxxxxxx
+      internet_max_bandwidth_out: 5      # Mbps；0 = 不分配公网
+      spot: true                         # 竞价实例进一步降本（可选）
+      credentials_secret: ALIYUN_CREDS   # org Secret，JSON: {"access_key_id":"…","access_key_secret":"…"}
+
+  # --- AWS EC2 ---------------------------------------------------------------
+  - name: aws-high
+    provider: aws
+    tier: high
+    labels: [linux, docker]
+    min: 0
+    max: 3
+    aws:
+      region: us-west-2
+      ami: ami-xxxxxxxx                  # 预装容器运行时 + 武陵 runner 客户端的镜像（构建见 docs/pipelines.md §7.1）
+      instance_type: c6i.2xlarge
+      subnet_id: subnet-xxxxxxxx
+      security_group_ids: [sg-xxxxxxxx]
+      iam_instance_profile: ""           # 可选
+      spot: false
+      credentials_secret: AWS_CREDS       # JSON: {"access_key_id":"…","secret_access_key":"…","session_token":"…"(可选)}
+
+  # --- 本地 Proxmox VE（REST API，克隆模板） ---------------------------------
+  - name: proxmox-low
+    provider: proxmox
+    tier: low
+    labels: [linux, docker]
+    min: 1                               # 留一台常驻热备
+    max: 4
+    proxmox:
+      api_url: https://pve.example.com:8006/api2/json
+      node: pve
+      template_vmid: 9000                # 预装 runner 的模板，克隆出新机
+      storage: local-lvm
+      bridge: vmbr0
+      full_clone: true
+      insecure_tls: false
+      credentials_secret: PROXMOX_CREDS   # JSON: {"token_id":"user@pam!ci","token_secret":"…"}
+
+  # --- 本地 VMware vCenter（govmomi，克隆模板） ------------------------------
+  - name: vcenter-medium
+    provider: vcenter
+    tier: medium
+    labels: [linux, docker]
+    min: 0
+    max: 3
+    vcenter:
+      url: https://vcenter.example.com/sdk
+      datacenter: DC1
+      cluster: Cluster1
+      datastore: ds-ssd-01
+      resource_pool: ""                  # 空 = 集群默认
+      folder: /DC1/vm/runners
+      template: ubuntu-2204-runner       # 预装 runner 的虚机模板
+      network: "VM Network"
+      insecure_tls: false
+      credentials_secret: VCENTER_CREDS   # JSON: {"username":"ci@vsphere.local","password":"…"}
