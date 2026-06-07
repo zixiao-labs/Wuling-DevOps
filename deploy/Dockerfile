@@ -39,13 +39,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /out/wuling-api     /usr/local/bin/wuling-api
 COPY --from=builder /out/wuling-migrate /usr/local/bin/wuling-migrate
 
-# Create the repo root + ssh host-key dir as root so the non-root runtime
-# user can read/write them. The ssh dir matters because docker-compose mounts
-# a named volume there — if the path doesn't exist in the image, Docker
-# initializes the volume as root:root and the wuling user can't write the
-# host key on first boot.
+# Create the repo root, ssh host-key dir, and pipelines (logs/artifacts) dir as
+# root so the non-root runtime user can read/write them. These matter because
+# docker-compose mounts named volumes there — if a path doesn't exist in the
+# image, Docker initializes the volume as root:root and the wuling user can't
+# write to it on first boot.
 ENV WULING_REPO_ROOT=/var/lib/wuling/repos
-RUN mkdir -p "$WULING_REPO_ROOT" /var/lib/wuling/ssh \
+RUN mkdir -p "$WULING_REPO_ROOT" /var/lib/wuling/ssh /var/lib/wuling/pipelines \
  && chown -R wuling:wuling /var/lib/wuling \
  && chmod 0700 /var/lib/wuling/ssh
 
