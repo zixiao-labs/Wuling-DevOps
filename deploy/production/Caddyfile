@@ -78,11 +78,13 @@ http://{$WULING_DOMAIN} {
             precompressed gzip
         }
 
-        # Cache hashed assets aggressively, never cache index.html
-        @assets path /assets/* /icon-*.png /favicon.svg /manifest.webmanifest /sw.js
+        # Cache hashed assets aggressively, never cache index.html / SW /
+        # manifest (those must revalidate or PWA updates stall). Icons and the
+        # favicon are stable enough to cache long.
+        @assets path /assets/* /icon-*.png /apple-touch-icon.png /favicon.svg
         header @assets Cache-Control "public, max-age=31536000, immutable"
 
-        @noCache path /index.html / /
+        @noCache path /index.html / / /sw.js /manifest.json
         header @noCache Cache-Control "no-cache"
     }
 

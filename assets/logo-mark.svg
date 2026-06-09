@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100" role="img" aria-label="武陵 DevOps">
-<style>@media (prefers-color-scheme:dark){.ring{stroke:#7fb4d0;stroke-opacity:.55}}</style><defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="100%"><stop offset="0" stop-color="#6ea7c9"/><stop offset="1" stop-color="#3d6e8a"/></linearGradient>
+<defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="100%"><stop offset="0" stop-color="#6ea7c9"/><stop offset="1" stop-color="#3d6e8a"/></linearGradient>
 <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".18"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/></linearGradient></defs>
 <path d="M 16,0 H 66 L 100,34 V 84 A 16 16 0 0 1 84,100 H 16 A 16 16 0 0 1 0,84 V 16 A 16 16 0 0 1 16,0 Z" fill="url(#bg)"/>
 <path d="M 16,0 H 66 L 100,34 V 84 A 16 16 0 0 1 84,100 H 16 A 16 16 0 0 1 0,84 V 16 A 16 16 0 0 1 16,0 Z" fill="url(#sheen)"/>

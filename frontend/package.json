@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "nasti dev",
-    "build": "nasti build",
+    "build": "nasti build && node scripts/copy-public.mjs",
     "preview": "nasti preview",
     "api:types": "openapi-typescript ../api/openapi.yaml -o src/api/schema.gen.ts",
     "typecheck": "tsc --noEmit",
