@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100" role="img" aria-label="武陵 DevOps">
-<defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="100%"><stop offset="0" stop-color="#6ea7c9"/><stop offset="1" stop-color="#3d6e8a"/></linearGradient>
-<linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".18"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/></linearGradient></defs>
-<path d="M 16,0 H 66 L 100,34 V 84 A 16 16 0 0 1 84,100 H 16 A 16 16 0 0 1 0,84 V 16 A 16 16 0 0 1 16,0 Z" fill="url(#bg)"/>
-<path d="M 16,0 H 66 L 100,34 V 84 A 16 16 0 0 1 84,100 H 16 A 16 16 0 0 1 0,84 V 16 A 16 16 0 0 1 16,0 Z" fill="url(#sheen)"/>
-<g transform="translate(18.019,76.089) scale(0.06390,-0.06390)"><path d="M720 776 803 837Q829 818 855.5 793.5Q882 769 905.0 745.0Q928 721 941 700L853 632Q841 653 819.0 678.0Q797 703 771.5 729.0Q746 755 720 776ZM50 617H950V507H50ZM359 366H559V261H359ZM127 804H507V698H127ZM31 40Q101 50 192.0 65.0Q283 80 384.0 97.5Q485 115 583 133L592 21Q499 3 404.5 -14.5Q310 -32 221.5 -48.0Q133 -64 61 -77ZM299 479H414V24H299ZM114 414H224V11H114ZM573 845H695Q692 719 697.5 599.5Q703 480 716.0 376.5Q729 273 747.5 194.5Q766 116 788.5 72.0Q811 28 837 28Q852 28 860.0 71.5Q868 115 871 210Q891 190 919.0 171.0Q947 152 970 143Q963 50 946.0 -1.0Q929 -52 900.0 -71.5Q871 -91 826 -91Q775 -91 737.0 -54.0Q699 -17 671.0 48.5Q643 114 624.5 202.5Q606 291 595.0 395.5Q584 500 578.5 614.5Q573 729 573 845Z" fill="#ffffff"/></g>
-<line x1="64.78" y1="9.38" x2="90.62" y2="35.22" stroke="#a9dcef" stroke-width="2.6" stroke-linecap="round" opacity=".9"/>
-<path class="ring" d="M 16,0 H 66 L 100,34 V 84 A 16 16 0 0 1 84,100 H 16 A 16 16 0 0 1 0,84 V 16 A 16 16 0 0 1 16,0 Z" fill="none" stroke="#1f3d52" stroke-opacity=".25" stroke-width="1.5"/>
-</svg>
