@@ -128,8 +128,8 @@ func TestOSValidation(t *testing.T) {
 	pool := func(os string) string {
 		return "tiers: {low: {cpu: 1}}\npools:\n  - name: p\n    provider: aws\n    tier: low\n    os: " + os + "\n    aws: {region: r, credentials_secret: C}\n"
 	}
-	// linux + windows are valid autoscaled OSes.
-	for _, ok := range []string{"linux", "windows"} {
+	// An empty os defaults to linux; linux + windows are valid autoscaled OSes.
+	for _, ok := range []string{"", "linux", "windows"} {
 		if _, err := Parse([]byte(pool(ok))); err != nil {
 			t.Errorf("os %q: unexpected validation error: %v", ok, err)
 		}

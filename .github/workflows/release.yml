@@ -124,6 +124,10 @@ jobs:
         working-directory: runners/runner-clients
     steps:
       - uses: actions/checkout@v4
+        with:
+          # This job only builds and uploads artifacts; it never pushes to git,
+          # so don't leave the contents:write token in the local git config.
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

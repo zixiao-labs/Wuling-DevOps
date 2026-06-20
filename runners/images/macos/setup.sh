@@ -21,14 +21,17 @@ case "$(uname -m)" in
 esac
 
 url="https://github.com/${REPO}/releases/download/${VERSION}/wuling-runner-darwin-${ARCH}.tar.gz"
+artifact="$(basename "$url")"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 echo "Downloading $url"
-curl -fsSL "$url" -o "$tmp/runner.tar.gz"
-curl -fsSL "${url}.sha256" -o "$tmp/runner.tar.gz.sha256"
-(cd "$tmp" && shasum -a 256 -c runner.tar.gz.sha256)
-tar -xzf "$tmp/runner.tar.gz" -C "$tmp"
+# Keep the release filename: the .sha256 manifest lists the original artifact
+# name, so `shasum -c` must find a file by that same name.
+curl -fsSL "$url" -o "$tmp/$artifact"
+curl -fsSL "${url}.sha256" -o "$tmp/$artifact.sha256"
+(cd "$tmp" && shasum -a 256 -c "$artifact.sha256")
+tar -xzf "$tmp/$artifact" -C "$tmp"
 sudo install -m 0755 "$tmp/wuling-runner" /usr/local/bin/wuling-runner
 
 # Write a LaunchDaemon template the operator fills in (server URL + token).

@@ -29,6 +29,10 @@ use crate::api::{ApiClient, StepSpec};
 
 const STEP_TIMEOUT_DEFAULT_MINS: u64 = 60;
 
+/// Upper bound on a container image pull. `start` runs before any per-step
+/// timeout, so without this a wedged registry would hang the job forever.
+const IMAGE_PULL_TIMEOUT: Duration = Duration::from_secs(1800);
+
 /// RunnerOS is the operating system this runner executes jobs on. It selects
 /// the execution backend and the shell/paths each backend uses.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -104,10 +108,19 @@ impl ContainerBackend {
             from_image: image.to_string(),
             ..Default::default()
         };
-        let mut stream = docker.create_image(Some(opts), None, None);
-        while let Some(item) = stream.next().await {
-            item.context("pull image layer")?;
-        }
+        // Bound the pull: create_image streams layers and would otherwise block
+        // start() forever on a wedged registry — and start() runs before any
+        // per-step timeout, so nothing else would interrupt it.
+        let pull = async {
+            let mut stream = docker.create_image(Some(opts), None, None);
+            while let Some(item) = stream.next().await {
+                item.context("pull image layer")?;
+            }
+            Ok::<(), anyhow::Error>(())
+        };
+        tokio::time::timeout(IMAGE_PULL_TIMEOUT, pull)
+            .await
+            .context("timed out pulling container image")??;
 
         let mount = container_mount(os);
         let bind = format!("{}:{mount}", workspace_abs.display());
@@ -451,7 +464,15 @@ fn idle_cmd(os: RunnerOS) -> Vec<String> {
 /// container_exec_argv is the argv that runs `script` inside the container.
 fn container_exec_argv(os: RunnerOS, script: &str) -> Vec<String> {
     match os {
-        RunnerOS::Windows => vec!["cmd".into(), "/S".into(), "/C".into(), script.to_string()],
+        // PowerShell (present in the servercore base images, like idle_cmd's
+        // cmd) with the same stop-on-error preamble the host backend uses, so a
+        // failing command aborts the step instead of running on like `cmd /C`.
+        RunnerOS::Windows => {
+            let mut argv = vec!["powershell".to_string()];
+            argv.extend(shell_args(os).iter().map(|s| s.to_string()));
+            argv.push(wrap_script(os, script));
+            argv
+        }
         _ => vec!["sh".into(), "-ec".into(), script.to_string()],
     }
 }

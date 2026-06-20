@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zixiao-labs/wuling-devops/internal/model"
 	"gopkg.in/yaml.v3"
 )
 
@@ -209,11 +210,11 @@ func (p *Pool) validateProvider() error {
 	// manual-registration only (Apple licensing requires Apple hardware), so a
 	// macos pool could never be launched and is rejected here.
 	switch p.OS {
-	case "", "linux", "windows":
-	case "macos":
-		return fmt.Errorf("pool %q: os macos cannot be autoscaled — register macOS runners manually (see docs/pipelines.md §7)", p.Name)
+	case "", model.OSLinux, model.OSWindows:
+	case model.OSMacOS:
+		return fmt.Errorf("pool %q: os %s cannot be autoscaled — register macOS runners manually (see docs/pipelines.md §7)", p.Name, model.OSMacOS)
 	default:
-		return fmt.Errorf("pool %q: os must be linux or windows (got %q)", p.Name, p.OS)
+		return fmt.Errorf("pool %q: os must be %s or %s (got %q)", p.Name, model.OSLinux, model.OSWindows, p.OS)
 	}
 	return nil
 }

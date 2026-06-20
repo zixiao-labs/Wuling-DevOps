@@ -42,7 +42,7 @@ export default function AuthorizedAppsPage() {
   useEffect(() => {
     load();
     return () => loadController.current?.abort();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
 
   async function onRevoke(id: string, name: string) {

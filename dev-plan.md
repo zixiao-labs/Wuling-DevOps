@@ -14,9 +14,7 @@ Repo Setup（类似GitHub操作逻辑）
 
 Test Plan（类似于Azure DevOps的Test Plan）
 
-Package Registry（npm/PyPI/Cargo）
-
-Artifacts（Release，Docker Registry）
+Artifacts（Package Registry（npm/PyPI/Cargo），Release，Docker Registry，Logos Editor Extension Registry，拆一个微服务，可以配置blob storage在本地磁盘/AWS S3/Cloudflare R2/阿里云OSS）
 
 ## Stage 3 互联和真正的一站式工作台
 
