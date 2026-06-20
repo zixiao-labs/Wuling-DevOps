@@ -33,7 +33,7 @@
   "devDependencies": {
     "@eslint/js": "^9.7.0",
     "@gravity-ui/icons": "^2.18.0",
-    "@nasti-toolchain/nasti": "^1.6.2",
+    "@nasti-toolchain/nasti": "^2.0.0",
     "@tailwindcss/node": "^4.3.0",
     "@tailwindcss/oxide": "^4.3.0",
     "@types/react": "^19.0.0",

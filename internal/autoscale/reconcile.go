@@ -246,11 +246,11 @@ func (r *Reconciler) reconcilePool(
 // the provider to start a VM. On provider failure the half-created row is
 // removed so it doesn't linger as phantom capacity.
 func (r *Reconciler) launchOne(ctx context.Context, orgID uuid.UUID, cfg *Config, pool Pool, p Provider) error {
-	runner, err := r.Runners.CreateEphemeralRunner(ctx, orgID, "", pool.Labels, pool.Tier, pool.Provider, pool.Name)
+	runner, err := r.Runners.CreateEphemeralRunner(ctx, orgID, "", pool.Labels, pool.Tier, pool.Provider, pool.Name, pool.OS)
 	if err != nil {
 		return err
 	}
-	userData := BuildUserData(r.ServerURL, runner.Token, pool, runner.Name)
+	userData := BuildUserDataForPool(r.ServerURL, runner.Token, pool, runner.Name)
 	inst, err := p.Launch(ctx, LaunchSpec{
 		Pool:       pool,
 		TierSpec:   cfg.TierSpecFor(pool.Tier),

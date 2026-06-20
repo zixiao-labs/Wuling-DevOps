@@ -1,6 +1,7 @@
 package autoscale
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -120,5 +121,51 @@ func TestLabelsSatisfied(t *testing.T) {
 	}
 	if !labelsSatisfied([]string{"linux"}, nil) {
 		t.Error("empty requirement should always satisfy")
+	}
+}
+
+func TestOSValidation(t *testing.T) {
+	pool := func(os string) string {
+		return "tiers: {low: {cpu: 1}}\npools:\n  - name: p\n    provider: aws\n    tier: low\n    os: " + os + "\n    aws: {region: r, credentials_secret: C}\n"
+	}
+	// An empty os defaults to linux; linux + windows are valid autoscaled OSes.
+	for _, ok := range []string{"", "linux", "windows"} {
+		if _, err := Parse([]byte(pool(ok))); err != nil {
+			t.Errorf("os %q: unexpected validation error: %v", ok, err)
+		}
+	}
+	// macos is manual-only; solaris is unknown — both must be rejected.
+	for _, bad := range []string{"macos", "solaris"} {
+		if _, err := Parse([]byte(pool(bad))); err == nil {
+			t.Errorf("os %q: expected a validation error, got nil", bad)
+		}
+	}
+}
+
+func TestWindowsUserData(t *testing.T) {
+	pool := Pool{Name: "win", OS: "windows", Labels: []string{"windows", "msvc"}}
+	ud := BuildWindowsUserData("https://wuling.example.com", "wlrt_deadbeef_secret", pool, "win-01")
+	for _, want := range []string{
+		"<powershell>",
+		"</powershell>",
+		"WULING_RUNNER_SERVER_URL=https://wuling.example.com",
+		"WULING_RUNNER_TOKEN=wlrt_deadbeef_secret",
+		"WULING_RUNNER_LABELS=windows,msvc",
+		"WULING_RUNNER_CONCURRENCY=1",
+		"schtasks /Run /TN 'wuling-runner'",
+	} {
+		if !strings.Contains(ud, want) {
+			t.Errorf("windows user-data missing %q\n---\n%s", want, ud)
+		}
+	}
+
+	// The dispatcher picks the Windows script for a windows pool and the Linux
+	// (systemd/bash) one for anything else.
+	if !strings.Contains(BuildUserDataForPool("s", "t", pool, "n"), "<powershell>") {
+		t.Error("dispatcher should pick Windows user-data for a windows pool")
+	}
+	linux := BuildUserDataForPool("s", "t", Pool{Name: "lin", Labels: []string{"linux"}}, "n")
+	if !strings.Contains(linux, "systemctl") || strings.Contains(linux, "<powershell>") {
+		t.Errorf("dispatcher should pick Linux user-data for a non-windows pool:\n%s", linux)
 	}
 }

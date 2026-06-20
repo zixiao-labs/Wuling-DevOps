@@ -1,33 +1,30 @@
-//! Job execution: check out the repo, spin up a container, run each step in
-//! it while streaming logs, then report step/job status to the control plane.
+//! Job execution: check out the repo, run each step via the selected backend
+//! (container or host shell) while streaming logs, then report step/job status
+//! to the control plane.
+//!
+//! checkout / upload-artifact / cache are host-side filesystem operations and
+//! run the same regardless of backend; only `run:` steps are dispatched to the
+//! container or the host shell (see backend.rs).
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
-use bollard::Docker;
-use bollard::container::{
-    Config, CreateContainerOptions, KillContainerOptions, LogOutput, RemoveContainerOptions,
-};
-use bollard::exec::{CreateExecOptions, StartExecResults};
-use bollard::image::CreateImageOptions;
-use futures_util::StreamExt;
 use tokio::process::Command;
 use tracing::{info, warn};
 
 use crate::api::{AcquiredJob, ApiClient, StepSpec};
+use crate::backend::{Backend, ContainerBackend, HostBackend, RunnerOS, StepTimeout};
 
-const WORKSPACE_MOUNT: &str = "/workspace";
-const STEP_TIMEOUT_DEFAULT_MINS: u64 = 60;
-
-/// Executes jobs in a local container runtime.
+/// Executes jobs in a container or on the host shell, chosen per job from the
+/// runner's OS and whether the job requests a `container:`.
 #[derive(Clone)]
 pub struct Executor {
     api: ApiClient,
-    docker: Docker,
     work_dir: PathBuf,
     cache_dir: PathBuf,
     default_image: String,
     token: String,
+    os: RunnerOS,
 }
 
 impl Executor {
@@ -36,17 +33,17 @@ impl Executor {
         work_dir: PathBuf,
         default_image: String,
         token: String,
-    ) -> Result<Self> {
-        let docker = Docker::connect_with_local_defaults().context("connect to docker")?;
+        os: RunnerOS,
+    ) -> Self {
         let cache_dir = work_dir.join("_cache");
-        Ok(Self {
+        Self {
             api,
-            docker,
             work_dir,
             cache_dir,
             default_image,
             token,
-        })
+            os,
+        }
     }
 
     /// run_job executes a job end to end and always reports a terminal
@@ -83,7 +80,7 @@ impl Executor {
     }
 
     /// execute returns Ok(job_failed). A returned Err is an infrastructure
-    /// failure (docker down, etc.) which run_job maps to a failed job.
+    /// failure (docker down, shell missing, etc.) which run_job maps to failed.
     async fn execute(&self, job: &AcquiredJob) -> Result<bool> {
         let job_id = &job.job_id;
         let workspace = self.job_dir(job_id).join("workspace");
@@ -92,35 +89,53 @@ impl Executor {
             .context("create workspace")?;
         let workspace_abs = tokio::fs::canonicalize(&workspace).await?;
 
-        let image = if job.spec.container.is_empty() {
-            self.default_image.clone()
-        } else {
-            job.spec.container.clone()
-        };
-        self.log(
-            job_id,
-            &format!("[runner] preparing container image {image}\n"),
-        )
-        .await;
-        self.pull_image(&image).await.context("pull image")?;
-
-        // Base container env = job env + secrets. Step env overrides per-exec.
-        let mut base_env: Vec<String> = Vec::new();
+        // Base env = job env + secrets. Step env overrides per-step (applied by
+        // the backend). Carried as pairs so the host backend can set them on the
+        // child process and the container backend can format them as KEY=VALUE.
+        let mut base_env: Vec<(String, String)> = Vec::new();
         for (k, v) in &job.spec.env {
-            base_env.push(format!("{k}={v}"));
+            base_env.push((k.clone(), v.clone()));
         }
         for (k, v) in &job.secrets {
-            base_env.push(format!("{k}={v}"));
+            base_env.push((k.clone(), v.clone()));
         }
 
-        let container_id = self
-            .create_container(&image, &workspace_abs, &base_env)
-            .await
-            .context("create container")?;
-        // Ensure the container is torn down whatever happens below.
-        let cleanup = ContainerGuard {
-            docker: self.docker.clone(),
-            id: container_id.clone(),
+        // Backend choice: Linux always containerizes; Windows containerizes only
+        // when the job sets `container:`; macOS always runs on the host (no
+        // containers exist there).
+        let use_container = match self.os {
+            RunnerOS::Linux => true,
+            RunnerOS::Windows => !job.spec.container.is_empty(),
+            RunnerOS::MacOS => false,
+        };
+        if self.os == RunnerOS::MacOS && !job.spec.container.is_empty() {
+            self.log(
+                job_id,
+                "[runner] note: container: is ignored on macOS; running steps on the host\n",
+            )
+            .await;
+        }
+
+        let backend = if use_container {
+            let image = if job.spec.container.is_empty() {
+                self.default_image.clone()
+            } else {
+                job.spec.container.clone()
+            };
+            Backend::Container(
+                ContainerBackend::start(
+                    &self.api,
+                    job_id,
+                    &image,
+                    &workspace_abs,
+                    &base_env,
+                    self.os,
+                )
+                .await
+                .context("start container")?,
+            )
+        } else {
+            Backend::Host(HostBackend::new(workspace_abs.clone(), base_env, self.os))
         };
 
         let mut job_failed = false;
@@ -143,7 +158,7 @@ impl Executor {
             .await;
 
             let step_result = self
-                .run_step(job, &container_id, step, &workspace, &mut cache_saves)
+                .run_step(job, &backend, step, &workspace, &mut cache_saves)
                 .await;
 
             match step_result {
@@ -161,8 +176,8 @@ impl Executor {
                         .await;
                     let _ = self.api.patch_step(job_id, number, "failed").await;
                     if timed_out {
-                        // Container was killed on timeout; running more steps
-                        // (incl. always()) against a dead container is pointless.
+                        // The step's container/process tree was killed; running
+                        // more steps (incl. always()) against it is pointless.
                         break;
                     }
                 }
@@ -176,15 +191,18 @@ impl Executor {
             }
         }
 
-        drop(cleanup);
+        // Dropping the backend force-removes a container (if any); the host
+        // backend has nothing to release.
+        drop(backend);
         Ok(job_failed)
     }
 
-    /// run_step dispatches by step kind. Returns Ok(success_bool).
+    /// run_step dispatches by step kind. Returns Ok(success_bool). The built-in
+    /// actions are host-side; a plain `run:` goes to the execution backend.
     async fn run_step(
         &self,
         job: &AcquiredJob,
-        container_id: &str,
+        backend: &Backend,
         step: &StepSpec,
         workspace: &Path,
         cache_saves: &mut Vec<(String, String)>,
@@ -207,135 +225,11 @@ impl Executor {
                 other => Err(anyhow!("unsupported action {other}")),
             };
         }
-        // A `run` step: execute the script in the container.
-        self.exec_run(&job.job_id, container_id, step).await
+        // A `run` step: execute the script via the selected backend.
+        backend.run_script(&self.api, &job.job_id, step).await
     }
 
-    // ---- container plumbing -------------------------------------------------
-
-    async fn pull_image(&self, image: &str) -> Result<()> {
-        let opts = CreateImageOptions::<String> {
-            from_image: image.to_string(),
-            ..Default::default()
-        };
-        let mut stream = self.docker.create_image(Some(opts), None, None);
-        while let Some(item) = stream.next().await {
-            item.context("pull image layer")?;
-        }
-        Ok(())
-    }
-
-    async fn create_container(
-        &self,
-        image: &str,
-        workspace_abs: &Path,
-        env: &[String],
-    ) -> Result<String> {
-        let bind = format!("{}:{WORKSPACE_MOUNT}", workspace_abs.display());
-        let host_config = bollard::models::HostConfig {
-            binds: Some(vec![bind]),
-            ..Default::default()
-        };
-        let config = Config {
-            image: Some(image.to_string()),
-            cmd: Some(vec!["sleep".to_string(), "infinity".to_string()]),
-            env: Some(env.to_vec()),
-            working_dir: Some(WORKSPACE_MOUNT.to_string()),
-            host_config: Some(host_config),
-            tty: Some(false),
-            ..Default::default()
-        };
-        let created = self
-            .docker
-            .create_container(None::<CreateContainerOptions<String>>, config)
-            .await?;
-        self.docker
-            .start_container(
-                &created.id,
-                None::<bollard::container::StartContainerOptions<String>>,
-            )
-            .await?;
-        Ok(created.id)
-    }
-
-    /// exec_run runs a shell script inside the container, streaming combined
-    /// stdout/stderr to the job log, and returns Ok(true) on exit code 0.
-    async fn exec_run(&self, job_id: &str, container_id: &str, step: &StepSpec) -> Result<bool> {
-        let mut env: Vec<String> = Vec::new();
-        for (k, v) in &step.env {
-            env.push(format!("{k}={v}"));
-        }
-        let exec = self
-            .docker
-            .create_exec(
-                container_id,
-                CreateExecOptions::<String> {
-                    cmd: Some(vec!["sh".into(), "-ec".into(), step.run.clone()]),
-                    env: Some(env),
-                    working_dir: Some(WORKSPACE_MOUNT.into()),
-                    attach_stdout: Some(true),
-                    attach_stderr: Some(true),
-                    ..Default::default()
-                },
-            )
-            .await?;
-
-        let timeout = std::time::Duration::from_secs(
-            60 * if step.timeout_minutes > 0 {
-                step.timeout_minutes
-            } else {
-                STEP_TIMEOUT_DEFAULT_MINS
-            },
-        );
-        let drained = tokio::time::timeout(timeout, self.drain_exec(job_id, &exec.id)).await;
-        match drained {
-            Err(_) => {
-                // Docker has no "kill exec" API and the process keeps running in
-                // the container after the timeout future is dropped. Kill the
-                // whole container to stop it now; StepTimeout tells execute() to
-                // abort the remaining steps (a dead container can't run them).
-                self.log(job_id, "[runner] step timed out; killing container\n")
-                    .await;
-                let _ = self
-                    .docker
-                    .kill_container(container_id, None::<KillContainerOptions<String>>)
-                    .await;
-                Err(StepTimeout.into())
-            }
-            Ok(Err(e)) => Err(e),
-            Ok(Ok(())) => {
-                let inspect = self.docker.inspect_exec(&exec.id).await?;
-                Ok(inspect.exit_code.unwrap_or(0) == 0)
-            }
-        }
-    }
-
-    async fn drain_exec(&self, job_id: &str, exec_id: &str) -> Result<()> {
-        let start = self.docker.start_exec(exec_id, None).await?;
-        if let StartExecResults::Attached { mut output, .. } = start {
-            let mut buf: Vec<u8> = Vec::with_capacity(8192);
-            while let Some(item) = output.next().await {
-                let msg = item?;
-                let bytes = match msg {
-                    LogOutput::StdOut { message }
-                    | LogOutput::StdErr { message }
-                    | LogOutput::Console { message } => message,
-                    LogOutput::StdIn { .. } => continue,
-                };
-                buf.extend_from_slice(&bytes);
-                if buf.len() >= 8192 {
-                    let chunk = std::mem::take(&mut buf);
-                    let _ = self.api.append_log(job_id, chunk).await;
-                }
-            }
-            if !buf.is_empty() {
-                let _ = self.api.append_log(job_id, buf).await;
-            }
-        }
-        Ok(())
-    }
-
-    // ---- built-in actions ---------------------------------------------------
+    // ---- built-in actions (host-side, backend-independent) ------------------
 
     /// do_checkout clones the repo at the dispatched SHA into the workspace,
     /// authenticating with this runner's own token (read-only, org-scoped).
@@ -473,44 +367,6 @@ impl Executor {
         let _ = self.api.append_log(job_id, msg.as_bytes().to_vec()).await;
     }
 }
-
-/// Drops force-remove the container so a panic or early return never leaks it.
-struct ContainerGuard {
-    docker: Docker,
-    id: String,
-}
-
-impl Drop for ContainerGuard {
-    fn drop(&mut self) {
-        let docker = self.docker.clone();
-        let id = self.id.clone();
-        tokio::spawn(async move {
-            let _ = docker
-                .remove_container(
-                    &id,
-                    Some(RemoveContainerOptions {
-                        force: true,
-                        ..Default::default()
-                    }),
-                )
-                .await;
-        });
-    }
-}
-
-/// StepTimeout marks a step that exceeded its timeout. exec_run kills the
-/// container and returns this so execute() can abort the remaining steps rather
-/// than run them against a dead container.
-#[derive(Debug)]
-struct StepTimeout;
-
-impl std::fmt::Display for StepTimeout {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "step timed out")
-    }
-}
-
-impl std::error::Error for StepTimeout {}
 
 fn should_run(if_expr: &str, job_failed: bool) -> bool {
     match if_expr.trim() {

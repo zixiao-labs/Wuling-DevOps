@@ -26,6 +26,7 @@ const MaxLogChunkBytes = 1 << 20 // 1 MiB
 type registerReq struct {
 	Token  string   `json:"token"  validate:"required"`
 	Name   string   `json:"name"   validate:"omitempty,max=128"`
+	OS     string   `json:"os"     validate:"omitempty,oneof=linux windows macos"`
 	Labels []string `json:"labels" validate:"omitempty,dive,max=64"`
 }
 
@@ -36,7 +37,7 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	runner, err := h.Runners.Register(r.Context(), runnerstore.RegisterParams{
-		RawToken: req.Token, Name: req.Name, Labels: req.Labels,
+		RawToken: req.Token, Name: req.Name, OS: req.OS, Labels: req.Labels,
 	})
 	if err != nil {
 		httpapi.RenderError(w, r, err)
