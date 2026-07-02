@@ -672,9 +672,11 @@ export interface WellKnownDoc {
   code_challenge_methods_supported: string[];
 }
 
-// ---------------- Pipelines + Secrets + Runners (Stage 1) ----------------
+// ---------------- Pipelines + Secrets + Runners (Stage 1 baseline / Stage 2.0 contract) ----------------
 
 export type ResourceTier = "low" | "medium" | "high";
+export type RunnerOS = "linux" | "windows" | "macos";
+export type RunnerProvider = "static" | "aliyun" | "aws" | "proxmox" | "vcenter";
 export type RunEvent = "push" | "pull_request" | "manual";
 export type RunStatus = "queued" | "running" | "success" | "failed" | "canceled";
 export type StepStatus = "queued" | "running" | "success" | "failed" | "canceled" | "skipped";
@@ -766,7 +768,8 @@ export interface Runner {
   name: string;
   labels: string[];
   resource_tier: ResourceTier;
-  provider: string;
+  os: RunnerOS;
+  provider: RunnerProvider;
   pool_name?: string;
   ephemeral: boolean;
   status: "offline" | "idle" | "busy";

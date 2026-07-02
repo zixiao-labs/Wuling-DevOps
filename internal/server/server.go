@@ -116,7 +116,7 @@ func New(d Deps) http.Handler {
 		httpapi.WriteJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 	})
 	r.Get("/version", func(w http.ResponseWriter, r *http.Request) {
-		httpapi.WriteJSON(w, http.StatusOK, map[string]any{"name": "wuling-api", "stage": 1})
+		httpapi.WriteJSON(w, http.StatusOK, map[string]any{"name": "wuling-api", "stage": 2, "phase": "stage2.0"})
 	})
 
 	// /.well-known/wuling-clients is the IdP discovery doc. Lives at the
