@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: Wuling DevOps API
-  version: 0.1.0-stage1
+  version: 0.2.0-stage2.0
   description: |
-    Stage 1 of the Wuling DevOps platform.
+    Stage 1 baseline plus Stage 2.0 API-contract cleanup for the Wuling DevOps platform.
 
     What's implemented:
       - Auth (register, login, /me, personal access tokens, SSH public keys)
@@ -14,9 +14,7 @@ info:
       - Merge Requests (open/diff/merge with FF/merge-commit/squash, comments, reviews)
       - Wiki (per-project Markdown pages backed by a separate Git repo)
       - Insights (per-project activity, contributors, language stats)
-
-    Planned for later stages (URLs reserved, not yet served):
-      - Pipelines
+      - Pipelines, Secrets, and org-scoped Runners (control plane + runner protocol)
 
     All errors use the JSON envelope:
       { "error": { "code": "<stable_code>", "message": "<human msg>", "details": {} } }
@@ -1968,18 +1966,474 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/LanguageStats" }
 
+  # ---------------- pipelines ----------------
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/pipelines/runs:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+    get:
+      summary: List pipeline runs in a project
+      parameters:
+        - in: query
+          name: repo
+          schema: { type: string }
+          description: Optional repo slug filter.
+        - in: query
+          name: status
+          schema: { $ref: "#/components/schemas/RunStatus" }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100 }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  runs:
+                    type: array
+                    items: { $ref: "#/components/schemas/PipelineRun" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+    post:
+      summary: Manually trigger a workflow_dispatch pipeline run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TriggerRunRequest" }
+      responses:
+        "201":
+          description: run created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PipelineRun" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/pipelines/runs/{run_id}:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - $ref: "#/components/parameters/RunID"
+    get:
+      summary: Get a pipeline run with jobs and steps
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PipelineRun" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/pipelines/runs/{run_id}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - $ref: "#/components/parameters/RunID"
+    post:
+      summary: Cancel a queued or running pipeline run
+      responses:
+        "204": { description: canceled }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+        "409": { $ref: "#/components/responses/ConflictError" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/pipelines/jobs/{job_id}/logs:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - $ref: "#/components/parameters/JobID"
+    get:
+      summary: Read a range of a job's log
+      parameters:
+        - in: query
+          name: offset
+          schema: { type: integer, format: int64, minimum: 0 }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 262144 }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobLogChunk" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/pipelines/jobs/{job_id}/logs/stream:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - $ref: "#/components/parameters/JobID"
+    get:
+      summary: Tail a job's log via Server-Sent Events
+      parameters:
+        - in: query
+          name: offset
+          schema: { type: integer, format: int64, minimum: 0 }
+      responses:
+        "200":
+          description: SSE stream; each event is a JSON object with data/offset or done/status.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/pipelines/jobs/{job_id}/artifacts/{name}:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - $ref: "#/components/parameters/JobID"
+      - $ref: "#/components/parameters/ArtifactName"
+    get:
+      summary: Download a job artifact
+      responses:
+        "200":
+          description: artifact bytes
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  # ---------------- secrets ----------------
+
+  /api/v1/orgs/{org_slug}/secrets:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+    get:
+      summary: List org-scoped secrets
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  secrets:
+                    type: array
+                    items: { $ref: "#/components/schemas/Secret" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/orgs/{org_slug}/secrets/{name}:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/SecretName"
+    put:
+      summary: Create or replace an org-scoped secret
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SetSecretRequest" }
+      responses:
+        "200":
+          description: secret metadata
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Secret" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+    delete:
+      summary: Delete an org-scoped secret
+      responses:
+        "204": { description: deleted }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/secrets:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+    get:
+      summary: List project-scoped secrets
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  secrets:
+                    type: array
+                    items: { $ref: "#/components/schemas/Secret" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/secrets/{name}:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - $ref: "#/components/parameters/SecretName"
+    put:
+      summary: Create or replace a project-scoped secret
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SetSecretRequest" }
+      responses:
+        "200":
+          description: secret metadata
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Secret" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+    delete:
+      summary: Delete a project-scoped secret
+      responses:
+        "204": { description: deleted }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  # ---------------- runners ----------------
+
+  /api/v1/orgs/{org_slug}/runners:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+    get:
+      summary: List org-scoped runners
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  runners:
+                    type: array
+                    items: { $ref: "#/components/schemas/Runner" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/orgs/{org_slug}/runners/registration-tokens:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+    post:
+      summary: Mint a single-use runner registration token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateRegistrationTokenRequest" }
+      responses:
+        "201":
+          description: token minted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RegistrationTokenResponse" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/orgs/{org_slug}/runners/{runner_id}:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/RunnerID"
+    delete:
+      summary: Delete an org runner
+      responses:
+        "204": { description: deleted }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/runner/register:
+    post:
+      summary: Redeem a registration token and create a runner
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterRunnerRequest" }
+      responses:
+        "201":
+          description: runner registered; response includes the raw wlrt_ token once
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Runner" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "409": { $ref: "#/components/responses/ConflictError" }
+
+  /api/v1/runner/heartbeat:
+    post:
+      summary: Update runner liveness and current status
+      security:
+        - runnerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HeartbeatRequest" }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OKResponse" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+
+  /api/v1/runner/jobs/acquire:
+    post:
+      summary: Acquire one queued job matching the runner's org, labels, and tier
+      security:
+        - runnerAuth: []
+      responses:
+        "200":
+          description: job acquired
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AcquireJobResponse" }
+        "204": { description: no matching job is currently queued }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+
+  /api/v1/runner/jobs/{job_id}/logs:
+    parameters:
+      - $ref: "#/components/parameters/JobID"
+    post:
+      summary: Append a raw log chunk for the assigned job
+      security:
+        - runnerAuth: []
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema: { type: string, maxLength: 1048576 }
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "200":
+          description: log size after append
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LogAppendResponse" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "409": { $ref: "#/components/responses/ConflictError" }
+
+  /api/v1/runner/jobs/{job_id}/steps/{number}:
+    parameters:
+      - $ref: "#/components/parameters/JobID"
+      - $ref: "#/components/parameters/StepNumber"
+    patch:
+      summary: Report a pipeline step status transition
+      security:
+        - runnerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatchStepRequest" }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OKResponse" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+        "409": { $ref: "#/components/responses/ConflictError" }
+
+  /api/v1/runner/jobs/{job_id}/complete:
+    parameters:
+      - $ref: "#/components/parameters/JobID"
+    post:
+      summary: Complete the assigned job and aggregate downstream run state
+      security:
+        - runnerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CompleteJobRequest" }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OKResponse" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "409": { $ref: "#/components/responses/ConflictError" }
+
+  /api/v1/runner/jobs/{job_id}/artifacts/{name}:
+    parameters:
+      - $ref: "#/components/parameters/JobID"
+      - $ref: "#/components/parameters/ArtifactName"
+    post:
+      summary: Upload a tarred artifact for the assigned job
+      security:
+        - runnerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "201":
+          description: artifact stored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ArtifactUploadResponse" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "409": { $ref: "#/components/responses/ConflictError" }
+
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
-      bearerFormat: JWT
+      bearerFormat: JWT/OAuth access token
+      description: |
+        Used by user-facing JSON APIs. The web UI sends JWTs; third-party API
+        clients may send Wuling OAuth access tokens when the endpoint accepts
+        OAuth bearer resolution.
+    runnerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: wlrt
+      description: |
+        Used only by /api/v1/runner protocol endpoints. The token is the
+        persistent runner token returned once by POST /api/v1/runner/register.
     basicAuth:
       type: http
       scheme: basic
       description: |
         Used by Git CLI only. The "password" is either a personal access token
-        (preferred — recognised by the `wlpat_` prefix) or the user's account
+        (preferred — recognised by the `wlpat_` prefix), a runner token
+        (`wlrt_…`, read-only clone for CI checkout), or the user's account
         password.
 
         **Security:** credentials are sent on every request, so basic auth
@@ -2019,6 +2473,40 @@ components:
       required: true
       schema: { type: integer, format: int64, minimum: 1 }
       description: Per-project monotonically increasing merge-request number.
+    RunID:
+      in: path
+      name: run_id
+      required: true
+      schema: { type: string, format: uuid }
+    JobID:
+      in: path
+      name: job_id
+      required: true
+      schema: { type: string, format: uuid }
+    RunnerID:
+      in: path
+      name: runner_id
+      required: true
+      schema: { type: string, format: uuid }
+    StepNumber:
+      in: path
+      name: number
+      required: true
+      schema: { type: integer, minimum: 1 }
+    SecretName:
+      in: path
+      name: name
+      required: true
+      schema:
+        type: string
+        pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+      description: Env-var-safe secret name.
+    ArtifactName:
+      in: path
+      name: name
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 255 }
+      description: Single artifact filename. The server sanitizes this to one path component.
 
   responses:
     UnauthorizedError:
@@ -2610,6 +3098,275 @@ components:
             file. In that case the byte and file counts are a lower bound,
             not an exact total. Omitted (treated as false) when the walk
             completed in full.
+
+    # ---------------- Pipelines ----------------
+
+    ResourceTier:
+      type: string
+      enum: [low, medium, high]
+
+    RunEvent:
+      type: string
+      enum: [push, pull_request, manual]
+
+    RunStatus:
+      type: string
+      enum: [queued, running, success, failed, canceled]
+
+    StepStatus:
+      type: string
+      enum: [queued, running, success, failed, canceled, skipped]
+
+    PipelineStep:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        job_id: { type: string, format: uuid }
+        number: { type: integer, minimum: 1 }
+        name: { type: string }
+        status: { $ref: "#/components/schemas/StepStatus" }
+        started_at: { type: string, format: date-time, nullable: true }
+        finished_at: { type: string, format: date-time, nullable: true }
+
+    PipelineJob:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        run_id: { type: string, format: uuid }
+        name: { type: string }
+        runs_on:
+          type: array
+          items: { type: string }
+        resource_tier: { $ref: "#/components/schemas/ResourceTier" }
+        needs:
+          type: array
+          items: { type: string }
+        status: { $ref: "#/components/schemas/RunStatus" }
+        runner_id: { type: string, format: uuid, nullable: true }
+        attempt: { type: integer, minimum: 1 }
+        log_size: { type: integer, format: int64, minimum: 0 }
+        queued_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time, nullable: true }
+        finished_at: { type: string, format: date-time, nullable: true }
+        steps:
+          type: array
+          items: { $ref: "#/components/schemas/PipelineStep" }
+
+    PipelineRun:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        org_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        repo_id: { type: string, format: uuid }
+        number: { type: integer, format: int64, minimum: 1 }
+        workflow_path: { type: string }
+        workflow_name: { type: string }
+        event: { $ref: "#/components/schemas/RunEvent" }
+        git_ref: { type: string }
+        commit_sha: { type: string }
+        commit_message: { type: string }
+        status: { $ref: "#/components/schemas/RunStatus" }
+        triggered_by: { $ref: "#/components/schemas/UserRef", nullable: true }
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time, nullable: true }
+        finished_at: { type: string, format: date-time, nullable: true }
+        jobs:
+          type: array
+          items: { $ref: "#/components/schemas/PipelineJob" }
+
+    TriggerRunRequest:
+      type: object
+      required: [repo, workflow]
+      properties:
+        repo:
+          type: string
+          description: Slug of the repo under this project.
+        ref:
+          type: string
+          maxLength: 255
+          description: Branch, tag, or revspec. Defaults to the repo's default branch.
+        workflow:
+          type: string
+          description: Workflow path, e.g. .wuling/workflows/ci.yml.
+
+    JobLogChunk:
+      type: object
+      properties:
+        data: { type: string }
+        offset: { type: integer, format: int64, minimum: 0 }
+        status: { $ref: "#/components/schemas/RunStatus" }
+        is_done: { type: boolean }
+
+    StepSpec:
+      type: object
+      description: One executable step in the immutable job spec sent to a runner.
+      properties:
+        name: { type: string }
+        run: { type: string }
+        uses: { type: string }
+        with:
+          type: object
+          additionalProperties: { type: string }
+        env:
+          type: object
+          additionalProperties: { type: string }
+        if: { type: string }
+        timeout_minutes: { type: integer, minimum: 1 }
+
+    JobSpec:
+      type: object
+      description: Immutable execution spec persisted at run creation and handed to runners.
+      properties:
+        container: { type: string }
+        env:
+          type: object
+          additionalProperties: { type: string }
+        steps:
+          type: array
+          items: { $ref: "#/components/schemas/StepSpec" }
+
+    CheckoutInfo:
+      type: object
+      properties:
+        clone_url: { type: string, format: uri }
+        ref: { type: string }
+        sha: { type: string }
+
+    AcquireJobResponse:
+      type: object
+      description: Runner acquire response; secrets are decrypted only in this runner-authenticated response.
+      properties:
+        job_id: { type: string, format: uuid }
+        run_id: { type: string, format: uuid }
+        run_number: { type: integer, format: int64 }
+        org_slug: { type: string }
+        project_slug: { type: string }
+        repo_slug: { type: string }
+        job_name: { type: string }
+        commit_sha: { type: string }
+        git_ref: { type: string }
+        event: { $ref: "#/components/schemas/RunEvent" }
+        spec: { $ref: "#/components/schemas/JobSpec" }
+        steps:
+          type: array
+          items: { $ref: "#/components/schemas/PipelineStep" }
+        secrets:
+          type: object
+          additionalProperties: { type: string }
+        checkout: { $ref: "#/components/schemas/CheckoutInfo" }
+
+    # ---------------- Secrets and Runners ----------------
+
+    Secret:
+      type: object
+      description: Metadata-only view. Secret values are write-only and never returned by the API.
+      properties:
+        id: { type: string, format: uuid }
+        org_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid, nullable: true }
+        scope: { type: string, enum: [org, project] }
+        name: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    SetSecretRequest:
+      type: object
+      required: [value]
+      properties:
+        value: { type: string, minLength: 1, maxLength: 65536 }
+
+    RunnerOS:
+      type: string
+      enum: [linux, windows, macos]
+
+    RunnerProvider:
+      type: string
+      enum: [static, aliyun, aws, proxmox, vcenter]
+
+    RunnerStatus:
+      type: string
+      enum: [offline, idle, busy]
+
+    Runner:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        org_id: { type: string, format: uuid }
+        name: { type: string }
+        labels:
+          type: array
+          items: { type: string }
+        resource_tier: { $ref: "#/components/schemas/ResourceTier" }
+        os: { $ref: "#/components/schemas/RunnerOS" }
+        provider: { $ref: "#/components/schemas/RunnerProvider" }
+        pool_name: { type: string }
+        ephemeral: { type: boolean }
+        status: { $ref: "#/components/schemas/RunnerStatus" }
+        last_seen_at: { type: string, format: date-time, nullable: true }
+        last_job_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        token:
+          type: string
+          description: Raw wlrt_ token, populated only by POST /api/v1/runner/register.
+
+    CreateRegistrationTokenRequest:
+      type: object
+      properties:
+        labels:
+          type: array
+          items: { type: string, maxLength: 64 }
+        resource_tier: { $ref: "#/components/schemas/ResourceTier" }
+
+    RegistrationTokenResponse:
+      type: object
+      properties:
+        token: { type: string }
+        expires_in: { type: integer, minimum: 1 }
+
+    RegisterRunnerRequest:
+      type: object
+      required: [token]
+      properties:
+        token: { type: string }
+        name: { type: string, maxLength: 128 }
+        os: { $ref: "#/components/schemas/RunnerOS" }
+        labels:
+          type: array
+          items: { type: string, maxLength: 64 }
+
+    HeartbeatRequest:
+      type: object
+      properties:
+        status: { type: string, enum: [idle, busy] }
+
+    PatchStepRequest:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [running, success, failed, canceled, skipped] }
+
+    CompleteJobRequest:
+      type: object
+      required: [conclusion]
+      properties:
+        conclusion: { type: string, enum: [success, failed, canceled] }
+
+    OKResponse:
+      type: object
+      properties:
+        ok: { type: boolean }
+
+    LogAppendResponse:
+      type: object
+      properties:
+        size: { type: integer, format: int64, minimum: 0 }
+
+    ArtifactUploadResponse:
+      type: object
+      properties:
+        name: { type: string }
+        size: { type: integer, format: int64, minimum: 0 }
 
     # ---------------- SSH ----------------
 

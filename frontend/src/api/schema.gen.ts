@@ -4080,6 +4080,1039 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org_slug}/projects/{project_slug}/pipelines/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+                project_slug: components["parameters"]["ProjectSlug"];
+            };
+            cookie?: never;
+        };
+        /** List pipeline runs in a project */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Optional repo slug filter. */
+                    repo?: string;
+                    status?: components["schemas"]["RunStatus"];
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description ok */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            runs?: components["schemas"]["PipelineRun"][];
+                        };
+                    };
+                };
+                401: components["responses"]["UnauthorizedError"];
+                404: components["responses"]["NotFoundError"];
+            };
+        };
+        put?: never;
+        /** Manually trigger a workflow_dispatch pipeline run */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TriggerRunRequest"];
+                };
+            };
+            responses: {
+                /** @description run created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PipelineRun"];
+                    };
+                };
+                400: components["responses"]["ValidationError"];
+                401: components["responses"]["UnauthorizedError"];
+                403: components["responses"]["ForbiddenError"];
+                404: components["responses"]["NotFoundError"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/projects/{project_slug}/pipelines/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+                project_slug: components["parameters"]["ProjectSlug"];
+                run_id: components["parameters"]["RunID"];
+            };
+            cookie?: never;
+        };
+        /** Get a pipeline run with jobs and steps */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                    run_id: components["parameters"]["RunID"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description ok */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PipelineRun"];
+                    };
+                };
+                401: components["responses"]["UnauthorizedError"];
+                404: components["responses"]["NotFoundError"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/projects/{project_slug}/pipelines/runs/{run_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+                project_slug: components["parameters"]["ProjectSlug"];
+                run_id: components["parameters"]["RunID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel a queued or running pipeline run */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                    run_id: components["parameters"]["RunID"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description canceled */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["UnauthorizedError"];
+                403: components["responses"]["ForbiddenError"];
+                404: components["responses"]["NotFoundError"];
+                409: components["responses"]["ConflictError"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/projects/{project_slug}/pipelines/jobs/{job_id}/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+                project_slug: components["parameters"]["ProjectSlug"];
+                job_id: components["parameters"]["JobID"];
+            };
+            cookie?: never;
+        };
+        /** Read a range of a job's log */
+        get: {
+            parameters: {
+                query?: {
+                    offset?: number;
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                    job_id: components["parameters"]["JobID"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description ok */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["JobLogChunk"];
+                    };
+                };
+                401: components["responses"]["UnauthorizedError"];
+                404: components["responses"]["NotFoundError"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/projects/{project_slug}/pipelines/jobs/{job_id}/logs/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+                project_slug: components["parameters"]["ProjectSlug"];
+                job_id: components["parameters"]["JobID"];
+            };
+            cookie?: never;
+        };
+        /** Tail a job's log via Server-Sent Events */
+        get: {
+            parameters: {
+                query?: {
+                    offset?: number;
+                };
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                    job_id: components["parameters"]["JobID"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description SSE stream; each event is a JSON object with data/offset or done/status. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/event-stream": string;
+                    };
+                };
+                401: components["responses"]["UnauthorizedError"];
+                404: components["responses"]["NotFoundError"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/projects/{project_slug}/pipelines/jobs/{job_id}/artifacts/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+                project_slug: components["parameters"]["ProjectSlug"];
+                job_id: components["parameters"]["JobID"];
+                /** @description Single artifact filename. The server sanitizes this to one path component. */
+                name: components["parameters"]["ArtifactName"];
+            };
+            cookie?: never;
+        };
+        /** Download a job artifact */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                    job_id: components["parameters"]["JobID"];
+                    /** @description Single artifact filename. The server sanitizes this to one path component. */
+                    name: components["parameters"]["ArtifactName"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description artifact bytes */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/octet-stream": string;
+                    };
+                };
+                401: components["responses"]["UnauthorizedError"];
+                404: components["responses"]["NotFoundError"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/secrets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+            };
+            cookie?: never;
+        };
+        /** List org-scoped secrets */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description ok */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            secrets?: components["schemas"]["Secret"][];
+                        };
+                    };
+                };
+                401: components["responses"]["UnauthorizedError"];
+                403: components["responses"]["ForbiddenError"];
+                404: components["responses"]["NotFoundError"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/secrets/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+                /** @description Env-var-safe secret name. */
+                name: components["parameters"]["SecretName"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Create or replace an org-scoped secret */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    /** @description Env-var-safe secret name. */
+                    name: components["parameters"]["SecretName"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SetSecretRequest"];
+                };
+            };
+            responses: {
+                /** @description secret metadata */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Secret"];
+                    };
+                };
+                400: components["responses"]["ValidationError"];
+                401: components["responses"]["UnauthorizedError"];
+                403: components["responses"]["ForbiddenError"];
+                404: components["responses"]["NotFoundError"];
+            };
+        };
+        post?: never;
+        /** Delete an org-scoped secret */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    /** @description Env-var-safe secret name. */
+                    name: components["parameters"]["SecretName"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description deleted */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["UnauthorizedError"];
+                403: components["responses"]["ForbiddenError"];
+                404: components["responses"]["NotFoundError"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/projects/{project_slug}/secrets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+                project_slug: components["parameters"]["ProjectSlug"];
+            };
+            cookie?: never;
+        };
+        /** List project-scoped secrets */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description ok */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            secrets?: components["schemas"]["Secret"][];
+                        };
+                    };
+                };
+                401: components["responses"]["UnauthorizedError"];
+                403: components["responses"]["ForbiddenError"];
+                404: components["responses"]["NotFoundError"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/projects/{project_slug}/secrets/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+                project_slug: components["parameters"]["ProjectSlug"];
+                /** @description Env-var-safe secret name. */
+                name: components["parameters"]["SecretName"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Create or replace a project-scoped secret */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                    /** @description Env-var-safe secret name. */
+                    name: components["parameters"]["SecretName"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SetSecretRequest"];
+                };
+            };
+            responses: {
+                /** @description secret metadata */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Secret"];
+                    };
+                };
+                400: components["responses"]["ValidationError"];
+                401: components["responses"]["UnauthorizedError"];
+                403: components["responses"]["ForbiddenError"];
+                404: components["responses"]["NotFoundError"];
+            };
+        };
+        post?: never;
+        /** Delete a project-scoped secret */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                    /** @description Env-var-safe secret name. */
+                    name: components["parameters"]["SecretName"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description deleted */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["UnauthorizedError"];
+                403: components["responses"]["ForbiddenError"];
+                404: components["responses"]["NotFoundError"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/runners": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+            };
+            cookie?: never;
+        };
+        /** List org-scoped runners */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description ok */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            runners?: components["schemas"]["Runner"][];
+                        };
+                    };
+                };
+                401: components["responses"]["UnauthorizedError"];
+                404: components["responses"]["NotFoundError"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/runners/registration-tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mint a single-use runner registration token */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CreateRegistrationTokenRequest"];
+                };
+            };
+            responses: {
+                /** @description token minted */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RegistrationTokenResponse"];
+                    };
+                };
+                400: components["responses"]["ValidationError"];
+                401: components["responses"]["UnauthorizedError"];
+                403: components["responses"]["ForbiddenError"];
+                404: components["responses"]["NotFoundError"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/runners/{runner_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+                runner_id: components["parameters"]["RunnerID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete an org runner */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    runner_id: components["parameters"]["RunnerID"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description deleted */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["UnauthorizedError"];
+                403: components["responses"]["ForbiddenError"];
+                404: components["responses"]["NotFoundError"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runner/register": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Redeem a registration token and create a runner */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["RegisterRunnerRequest"];
+                };
+            };
+            responses: {
+                /** @description runner registered; response includes the raw wlrt_ token once */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Runner"];
+                    };
+                };
+                400: components["responses"]["ValidationError"];
+                401: components["responses"]["UnauthorizedError"];
+                409: components["responses"]["ConflictError"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runner/heartbeat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Update runner liveness and current status */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["HeartbeatRequest"];
+                };
+            };
+            responses: {
+                /** @description ok */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OKResponse"];
+                    };
+                };
+                401: components["responses"]["UnauthorizedError"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runner/jobs/acquire": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Acquire one queued job matching the runner's org, labels, and tier */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description job acquired */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AcquireJobResponse"];
+                    };
+                };
+                /** @description no matching job is currently queued */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["UnauthorizedError"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runner/jobs/{job_id}/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: components["parameters"]["JobID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Append a raw log chunk for the assigned job */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    job_id: components["parameters"]["JobID"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "text/plain": string;
+                    "application/octet-stream": string;
+                };
+            };
+            responses: {
+                /** @description log size after append */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["LogAppendResponse"];
+                    };
+                };
+                400: components["responses"]["ValidationError"];
+                401: components["responses"]["UnauthorizedError"];
+                403: components["responses"]["ForbiddenError"];
+                409: components["responses"]["ConflictError"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runner/jobs/{job_id}/steps/{number}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: components["parameters"]["JobID"];
+                number: components["parameters"]["StepNumber"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Report a pipeline step status transition */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    job_id: components["parameters"]["JobID"];
+                    number: components["parameters"]["StepNumber"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["PatchStepRequest"];
+                };
+            };
+            responses: {
+                /** @description ok */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OKResponse"];
+                    };
+                };
+                400: components["responses"]["ValidationError"];
+                401: components["responses"]["UnauthorizedError"];
+                403: components["responses"]["ForbiddenError"];
+                404: components["responses"]["NotFoundError"];
+                409: components["responses"]["ConflictError"];
+            };
+        };
+        trace?: never;
+    };
+    "/api/v1/runner/jobs/{job_id}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: components["parameters"]["JobID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Complete the assigned job and aggregate downstream run state */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    job_id: components["parameters"]["JobID"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CompleteJobRequest"];
+                };
+            };
+            responses: {
+                /** @description ok */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["OKResponse"];
+                    };
+                };
+                400: components["responses"]["ValidationError"];
+                401: components["responses"]["UnauthorizedError"];
+                403: components["responses"]["ForbiddenError"];
+                409: components["responses"]["ConflictError"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runner/jobs/{job_id}/artifacts/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: components["parameters"]["JobID"];
+                /** @description Single artifact filename. The server sanitizes this to one path component. */
+                name: components["parameters"]["ArtifactName"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Upload a tarred artifact for the assigned job */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    job_id: components["parameters"]["JobID"];
+                    /** @description Single artifact filename. The server sanitizes this to one path component. */
+                    name: components["parameters"]["ArtifactName"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            responses: {
+                /** @description artifact stored */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ArtifactUploadResponse"];
+                    };
+                };
+                400: components["responses"]["ValidationError"];
+                401: components["responses"]["UnauthorizedError"];
+                403: components["responses"]["ForbiddenError"];
+                409: components["responses"]["ConflictError"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -4583,6 +5616,227 @@ export interface components {
              */
             truncated?: boolean;
         };
+        /** @enum {string} */
+        ResourceTier: "low" | "medium" | "high";
+        /** @enum {string} */
+        RunEvent: "push" | "pull_request" | "manual";
+        /** @enum {string} */
+        RunStatus: "queued" | "running" | "success" | "failed" | "canceled";
+        /** @enum {string} */
+        StepStatus: "queued" | "running" | "success" | "failed" | "canceled" | "skipped";
+        PipelineStep: {
+            /** Format: uuid */
+            id?: string;
+            /** Format: uuid */
+            job_id?: string;
+            number?: number;
+            name?: string;
+            status?: components["schemas"]["StepStatus"];
+            /** Format: date-time */
+            started_at?: string | null;
+            /** Format: date-time */
+            finished_at?: string | null;
+        };
+        PipelineJob: {
+            /** Format: uuid */
+            id?: string;
+            /** Format: uuid */
+            run_id?: string;
+            name?: string;
+            runs_on?: string[];
+            resource_tier?: components["schemas"]["ResourceTier"];
+            needs?: string[];
+            status?: components["schemas"]["RunStatus"];
+            /** Format: uuid */
+            runner_id?: string | null;
+            attempt?: number;
+            /** Format: int64 */
+            log_size?: number;
+            /** Format: date-time */
+            queued_at?: string;
+            /** Format: date-time */
+            started_at?: string | null;
+            /** Format: date-time */
+            finished_at?: string | null;
+            steps?: components["schemas"]["PipelineStep"][];
+        };
+        PipelineRun: {
+            /** Format: uuid */
+            id?: string;
+            /** Format: uuid */
+            org_id?: string;
+            /** Format: uuid */
+            project_id?: string;
+            /** Format: uuid */
+            repo_id?: string;
+            /** Format: int64 */
+            number?: number;
+            workflow_path?: string;
+            workflow_name?: string;
+            event?: components["schemas"]["RunEvent"];
+            git_ref?: string;
+            commit_sha?: string;
+            commit_message?: string;
+            status?: components["schemas"]["RunStatus"];
+            triggered_by?: components["schemas"]["UserRef"];
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            started_at?: string | null;
+            /** Format: date-time */
+            finished_at?: string | null;
+            jobs?: components["schemas"]["PipelineJob"][];
+        };
+        TriggerRunRequest: {
+            /** @description Slug of the repo under this project. */
+            repo: string;
+            /** @description Branch, tag, or revspec. Defaults to the repo's default branch. */
+            ref?: string;
+            /** @description Workflow path, e.g. .wuling/workflows/ci.yml. */
+            workflow: string;
+        };
+        JobLogChunk: {
+            data?: string;
+            /** Format: int64 */
+            offset?: number;
+            status?: components["schemas"]["RunStatus"];
+            is_done?: boolean;
+        };
+        /** @description One executable step in the immutable job spec sent to a runner. */
+        StepSpec: {
+            name?: string;
+            run?: string;
+            uses?: string;
+            with?: {
+                [key: string]: string;
+            };
+            env?: {
+                [key: string]: string;
+            };
+            if?: string;
+            timeout_minutes?: number;
+        };
+        /** @description Immutable execution spec persisted at run creation and handed to runners. */
+        JobSpec: {
+            container?: string;
+            env?: {
+                [key: string]: string;
+            };
+            steps?: components["schemas"]["StepSpec"][];
+        };
+        CheckoutInfo: {
+            /** Format: uri */
+            clone_url?: string;
+            ref?: string;
+            sha?: string;
+        };
+        /** @description Runner acquire response; secrets are decrypted only in this runner-authenticated response. */
+        AcquireJobResponse: {
+            /** Format: uuid */
+            job_id?: string;
+            /** Format: uuid */
+            run_id?: string;
+            /** Format: int64 */
+            run_number?: number;
+            org_slug?: string;
+            project_slug?: string;
+            repo_slug?: string;
+            job_name?: string;
+            commit_sha?: string;
+            git_ref?: string;
+            event?: components["schemas"]["RunEvent"];
+            spec?: components["schemas"]["JobSpec"];
+            steps?: components["schemas"]["PipelineStep"][];
+            secrets?: {
+                [key: string]: string;
+            };
+            checkout?: components["schemas"]["CheckoutInfo"];
+        };
+        /** @description Metadata-only view. Secret values are write-only and never returned by the API. */
+        Secret: {
+            /** Format: uuid */
+            id?: string;
+            /** Format: uuid */
+            org_id?: string;
+            /** Format: uuid */
+            project_id?: string | null;
+            /** @enum {string} */
+            scope?: "org" | "project";
+            name?: string;
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
+        };
+        SetSecretRequest: {
+            value: string;
+        };
+        /** @enum {string} */
+        RunnerOS: "linux" | "windows" | "macos";
+        /** @enum {string} */
+        RunnerProvider: "static" | "aliyun" | "aws" | "proxmox" | "vcenter";
+        /** @enum {string} */
+        RunnerStatus: "offline" | "idle" | "busy";
+        Runner: {
+            /** Format: uuid */
+            id?: string;
+            /** Format: uuid */
+            org_id?: string;
+            name?: string;
+            labels?: string[];
+            resource_tier?: components["schemas"]["ResourceTier"];
+            os?: components["schemas"]["RunnerOS"];
+            provider?: components["schemas"]["RunnerProvider"];
+            pool_name?: string;
+            ephemeral?: boolean;
+            status?: components["schemas"]["RunnerStatus"];
+            /** Format: date-time */
+            last_seen_at?: string | null;
+            /** Format: date-time */
+            last_job_at?: string | null;
+            /** Format: date-time */
+            created_at?: string;
+            /** @description Raw wlrt_ token, populated only by POST /api/v1/runner/register. */
+            token?: string;
+        };
+        CreateRegistrationTokenRequest: {
+            labels?: string[];
+            resource_tier?: components["schemas"]["ResourceTier"];
+        };
+        RegistrationTokenResponse: {
+            token?: string;
+            expires_in?: number;
+        };
+        RegisterRunnerRequest: {
+            token: string;
+            name?: string;
+            os?: components["schemas"]["RunnerOS"];
+            labels?: string[];
+        };
+        HeartbeatRequest: {
+            /** @enum {string} */
+            status?: "idle" | "busy";
+        };
+        PatchStepRequest: {
+            /** @enum {string} */
+            status: "running" | "success" | "failed" | "canceled" | "skipped";
+        };
+        CompleteJobRequest: {
+            /** @enum {string} */
+            conclusion: "success" | "failed" | "canceled";
+        };
+        OKResponse: {
+            ok?: boolean;
+        };
+        LogAppendResponse: {
+            /** Format: int64 */
+            size?: number;
+        };
+        ArtifactUploadResponse: {
+            name?: string;
+            /** Format: int64 */
+            size?: number;
+        };
         SSHKey: {
             /** Format: uuid */
             id?: string;
@@ -4821,6 +6075,14 @@ export interface components {
         IssueNumber: number;
         /** @description Per-project monotonically increasing merge-request number. */
         MRNumber: number;
+        RunID: string;
+        JobID: string;
+        RunnerID: string;
+        StepNumber: number;
+        /** @description Env-var-safe secret name. */
+        SecretName: string;
+        /** @description Single artifact filename. The server sanitizes this to one path component. */
+        ArtifactName: string;
     };
     requestBodies: never;
     headers: never;

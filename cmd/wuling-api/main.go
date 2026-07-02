@@ -1,10 +1,11 @@
-// Command wuling-api is the core API server for Stage 1.
+// Command wuling-api is the core API server.
 //
 // It runs migrations on boot (idempotent), opens the Postgres pool, brings up
 // libgit2, and serves HTTP — both the JSON API at /api/v1 and Git smart HTTP
 // at the root. The embedded SSH listener (Git transport over SSH) runs on a
-// separate port alongside the HTTP listener. Pipelines run as a separate
-// process and aren't part of this binary.
+// separate port alongside the HTTP listener. Pipelines control-plane APIs,
+// runner management, and autoscaler loops live in this binary; actual job
+// execution stays in external runner clients.
 package main
 
 import (
