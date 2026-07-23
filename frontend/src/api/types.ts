@@ -174,6 +174,203 @@ export interface CreateProjectRequest {
   display_name?: string;
   description?: string;
   visibility?: Visibility;
+  process_template?: ProcessTemplate;
+  work_item_prefix?: string;
+  iteration_length_days?: number;
+}
+
+// ---------------- Stage 2 project suite ----------------
+
+export type ProcessTemplate = "scrum" | "kanban" | "basic";
+
+export interface ProjectSettings {
+  project_id: string;
+  process_template: ProcessTemplate;
+  work_item_prefix: string;
+  iteration_length_days: number;
+  archived: boolean;
+}
+
+export interface UpdateProjectSettingsRequest {
+  process_template?: ProcessTemplate;
+  work_item_prefix?: string;
+  iteration_length_days?: number;
+  archived?: boolean;
+}
+
+export interface ProjectDashboard {
+  repos: number;
+  open_issues: number;
+  open_work_items: number;
+  pipeline_runs: number;
+  test_cases: number;
+  packages: number;
+  releases: number;
+  backlog_by_state: Record<string, number>;
+  backlog_by_type: Record<string, number>;
+}
+
+export type IterationState = "planned" | "current" | "closed";
+
+export interface ProjectIteration {
+  id: string;
+  project_id: string;
+  name: string;
+  goal: string;
+  state: IterationState;
+  starts_at: string;
+  ends_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateIterationRequest {
+  name: string;
+  goal?: string;
+  state?: IterationState;
+  starts_at: string;
+  ends_at: string;
+}
+
+export type UpdateIterationRequest = Omit<Partial<CreateIterationRequest>, "state"> & {
+  state?: IterationState;
+};
+
+export type WorkItemType = "epic" | "feature" | "user_story" | "task" | "bug";
+export type WorkItemState = "new" | "active" | "resolved" | "closed";
+
+export interface WorkItem {
+  id: string;
+  project_id: string;
+  number: number;
+  parent_id?: string;
+  iteration_id?: string;
+  assignee_id?: string;
+  author_id?: string;
+  type: WorkItemType;
+  title: string;
+  description: string;
+  state: WorkItemState;
+  priority: number;
+  story_points?: number;
+  area_path: string;
+  backlog_order: number;
+  created_at: string;
+  updated_at: string;
+  closed_at?: string;
+}
+
+export interface CreateWorkItemRequest {
+  parent_id?: string;
+  iteration_id?: string;
+  assignee_id?: string;
+  type?: WorkItemType;
+  title: string;
+  description?: string;
+  priority?: number;
+  story_points?: number;
+  area_path?: string;
+}
+
+export interface UpdateWorkItemRequest {
+  iteration_id?: string;
+  type?: WorkItemType;
+  title?: string;
+  description?: string;
+  state?: WorkItemState;
+  priority?: number;
+  story_points?: number;
+  area_path?: string;
+  backlog_order?: number;
+}
+
+export type TestPlanState = "active" | "completed" | "archived";
+
+export interface TestPlan {
+  id: string;
+  project_id: string;
+  iteration_id?: string;
+  name: string;
+  description: string;
+  state: TestPlanState;
+  created_by?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TestSuite {
+  id: string;
+  plan_id: string;
+  parent_id?: string;
+  name: string;
+  description: string;
+  created_at: string;
+}
+
+export type TestAutomation = "manual" | "lightning";
+export type TestRunStatus = "passed" | "failed" | "blocked" | "skipped";
+
+export interface TestRun {
+  id: string;
+  test_case_id: string;
+  status: TestRunStatus;
+  duration_ms?: number;
+  notes: string;
+  run_by?: string;
+  run_at: string;
+}
+
+export interface TestCase {
+  id: string;
+  suite_id: string;
+  title: string;
+  steps: unknown[];
+  expected: string;
+  automation: TestAutomation;
+  automation_ref: string;
+  priority: number;
+  created_by?: string;
+  created_at: string;
+  updated_at: string;
+  last_run?: TestRun;
+}
+
+export type PackageKind = "npm" | "pypi" | "cargo" | "docker" | "logos";
+
+export interface ArtifactPackage {
+  id: string;
+  project_id: string;
+  kind: PackageKind;
+  name: string;
+  description: string;
+  created_at: string;
+  updated_at: string;
+  versions: number;
+}
+
+export interface PackageVersion {
+  id: string;
+  package_id: string;
+  version: string;
+  blob_key: string;
+  size_bytes: number;
+  sha256: string;
+  content_type: string;
+  metadata: Record<string, unknown>;
+  published_by?: string;
+  published_at: string;
+}
+
+export interface ProjectRelease {
+  id: string;
+  project_id: string;
+  tag_name: string;
+  name: string;
+  notes: string;
+  prerelease: boolean;
+  created_by?: string;
+  created_at: string;
+  published_at?: string;
 }
 
 // ---------------- Org RBAC: members & invitations ----------------
@@ -255,6 +452,18 @@ export interface Repo {
   size_bytes: number;
   created_at: string;
 }
+
+export interface RepoSettings {
+  repo_id: string;
+  default_branch: string;
+  topics: string[];
+  issues_enabled: boolean;
+  wiki_enabled: boolean;
+  merge_strategies: Array<"merge" | "squash" | "rebase">;
+  delete_branch_on_merge: boolean;
+}
+
+export type UpdateRepoSettingsRequest = Omit<Partial<RepoSettings>, "repo_id">;
 
 export interface CreateRepoRequest {
   slug: string;

@@ -1,4 +1,4 @@
-import { Button, Description, Input, Label, TextField } from "@heroui/react";
+import { Button, Description, Input, Label, ListBox, Select, TextField } from "@heroui/react";
 import PlusIcon from "@gravity-ui/icons/Plus";
 import FolderIcon from "@gravity-ui/icons/Folder";
 import { Link } from "chen-the-dawnstreak";
@@ -20,7 +20,7 @@ import {
 import { VisibilityIcon } from "@/components/page/badges";
 import { RelativeTime } from "@/components/relative-time";
 import { useOrgCtx } from "@/auth/org-context";
-import type { Project, Visibility } from "@/api/types";
+import type { ProcessTemplate, Project, Visibility } from "@/api/types";
 
 const VIS: Array<{ id: Visibility; label: string; hint: string }> = [
   { id: "private", label: "私有", hint: "仅成员可见，默认选项" },
@@ -37,6 +37,7 @@ export default function OrgProjectsPage() {
   const [displayName, setDisplayName] = useState("");
   const [description, setDescription] = useState("");
   const [visibility, setVisibility] = useState<Visibility>("private");
+  const [processTemplate, setProcessTemplate] = useState<ProcessTemplate>("scrum");
   const [showForm, setShowForm] = useState(false);
   const [creating, setCreating] = useState(false);
 
@@ -56,11 +57,13 @@ export default function OrgProjectsPage() {
         display_name: displayName || undefined,
         description: description || undefined,
         visibility,
+        process_template: processTemplate,
       });
       setSlug("");
       setDisplayName("");
       setDescription("");
       setVisibility("private");
+      setProcessTemplate("scrum");
       setShowForm(false);
       load();
     } catch (err) {
@@ -116,6 +119,18 @@ export default function OrgProjectsPage() {
                 <Label>简介</Label>
                 <Input />
               </TextField>
+              <Select value={processTemplate} onChange={(value) => value && setProcessTemplate(String(value) as ProcessTemplate)}>
+                <Label>Process</Label>
+                <Select.Trigger><Select.Value /><Select.Indicator /></Select.Trigger>
+                <Select.Popover>
+                  <ListBox>
+                    <ListBox.Item id="scrum" textValue="Scrum">Scrum · Backlog + Sprint<ListBox.ItemIndicator /></ListBox.Item>
+                    <ListBox.Item id="kanban" textValue="Kanban">Kanban · 持续流看板<ListBox.ItemIndicator /></ListBox.Item>
+                    <ListBox.Item id="basic" textValue="Basic">Basic · 简单任务跟踪<ListBox.ItemIndicator /></ListBox.Item>
+                  </ListBox>
+                </Select.Popover>
+                <Description>类似 Azure DevOps，Process 决定项目的默认规划工作流。</Description>
+              </Select>
               <div>
                 <div className="mb-1.5 text-[12.5px] font-medium text-fg">可见性</div>
                 <div className="grid gap-2 sm:grid-cols-3">

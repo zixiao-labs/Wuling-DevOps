@@ -3,9 +3,11 @@ import { useEffect, useState } from "react";
 
 import CodeIcon from "@gravity-ui/icons/Code";
 import CircleQuestionIcon from "@gravity-ui/icons/CircleQuestion";
-import BookOpenIcon from "@gravity-ui/icons/BookOpen";
+import LayoutColumns3 from "@gravity-ui/icons/LayoutColumns3";
+import Flask from "@gravity-ui/icons/Flask";
+import Boxes3 from "@gravity-ui/icons/Boxes3";
 
-import { repos as reposApi } from "@/api/endpoints";
+import { projectSuite, repos as reposApi } from "@/api/endpoints";
 import { ApiError } from "@/api/errors";
 import { ErrorBanner } from "@/components/error-banner";
 import { SkeletonRows } from "@/components/loading";
@@ -17,19 +19,21 @@ import {
   Surface,
   SurfaceBody,
 } from "@/components/page/primitives";
-import { VisibilityBadge, VisibilityIcon, Pill } from "@/components/page/badges";
+import { VisibilityBadge, VisibilityIcon, Pill, Stat } from "@/components/page/badges";
 import { RelativeTime } from "@/components/relative-time";
 import { useOrgCtx, useProjectCtx } from "@/auth/org-context";
-import type { Repo } from "@/api/types";
+import type { ProjectDashboard, Repo } from "@/api/types";
 
 export default function ProjectOverview() {
   const org = useOrgCtx();
   const project = useProjectCtx();
   const [repos, setRepos] = useState<Repo[] | null>(null);
+  const [dashboard, setDashboard] = useState<ProjectDashboard | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
 
   useEffect(() => {
     reposApi.list(org.slug, project.slug).then(setRepos).catch((e) => setError(e as ApiError));
+    projectSuite.dashboard(org.slug, project.slug).then(setDashboard).catch((e) => setError(e as ApiError));
   }, [org.slug, project.slug]);
 
   const basePath = `/orgs/${encodeURIComponent(org.slug)}/projects/${encodeURIComponent(project.slug)}`;
@@ -69,8 +73,24 @@ export default function ProjectOverview() {
 
       <ErrorBanner error={error} />
 
+      <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">
+        <Stat label="Repos" value={dashboard?.repos ?? "—"} />
+        <Stat label="Open Issues" value={dashboard?.open_issues ?? "—"} />
+        <Stat label="Work Items" value={dashboard?.open_work_items ?? "—"} />
+        <Stat label="Pipelines" value={dashboard?.pipeline_runs ?? "—"} />
+        <Stat label="Test Cases" value={dashboard?.test_cases ?? "—"} />
+        <Stat label="Packages" value={dashboard?.packages ?? "—"} />
+        <Stat label="Releases" value={dashboard?.releases ?? "—"} />
+      </div>
+
       {/* Quick links — issue, MR shortcuts */}
-      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <QuickLink
+          to={`${basePath}/backlogs`}
+          icon={<LayoutColumns3 width={16} height={16} />}
+          title="Backlog / 看板"
+          hint={`${dashboard?.backlog_by_state.active ?? 0} 项进行中`}
+        />
         <QuickLink
           to={`${basePath}/repos`}
           icon={<CodeIcon width={16} height={16} />}
@@ -78,17 +98,18 @@ export default function ProjectOverview() {
           hint={repos === null ? "加载中…" : `${repos.length} 个仓库`}
         />
         <QuickLink
-          to={`${basePath}/issues`}
-          icon={<CircleQuestionIcon width={16} height={16} />}
-          title="Issues"
-          hint="任务与缺陷跟踪"
+          to={`${basePath}/test-plans`}
+          icon={<Flask width={16} height={16} />}
+          title="Test Plans"
+          hint={`${dashboard?.test_cases ?? 0} 个测试用例`}
         />
         <QuickLink
-          to={`${basePath}/wiki`}
-          icon={<BookOpenIcon width={16} height={16} />}
-          title="Wiki"
-          hint="文档与说明"
+          to={`${basePath}/artifacts`}
+          icon={<Boxes3 width={16} height={16} />}
+          title="Artifacts"
+          hint={`${dashboard?.packages ?? 0} 个 Package`}
         />
+        <QuickLink to={`${basePath}/issues`} icon={<CircleQuestionIcon width={16} height={16} />} title="Issues" hint="任务与缺陷跟踪" />
       </div>
 
       <SectionHeader

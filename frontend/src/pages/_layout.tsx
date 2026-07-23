@@ -90,7 +90,7 @@ function BrandLockup() {
       </svg>
       <div className="flex flex-col leading-tight">
         <span className="text-[15px] font-semibold tracking-tight text-fg">武陵 DevOps</span>
-        <span className="text-[11px] text-muted">Stage 1 · 紫霄实验室</span>
+        <span className="text-[11px] text-muted">Stage 2 · 紫霄实验室</span>
       </div>
     </div>
   );

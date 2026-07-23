@@ -23,7 +23,8 @@ COPY . .
 # Static-ish build: cgo on (we need libgit2), but pure-Go everywhere else.
 ENV CGO_ENABLED=1 GOOS=linux
 RUN go build -trimpath -ldflags="-s -w" -o /out/wuling-api ./cmd/wuling-api \
- && go build -trimpath -ldflags="-s -w" -o /out/wuling-migrate ./cmd/wuling-migrate
+ && go build -trimpath -ldflags="-s -w" -o /out/wuling-migrate ./cmd/wuling-migrate \
+ && go build -trimpath -ldflags="-s -w" -o /out/wuling-artifacts ./cmd/wuling-artifacts
 
 # --- runtime ---------------------------------------------------------------
 FROM debian:bookworm-slim
@@ -38,6 +39,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=builder /out/wuling-api     /usr/local/bin/wuling-api
 COPY --from=builder /out/wuling-migrate /usr/local/bin/wuling-migrate
+COPY --from=builder /out/wuling-artifacts /usr/local/bin/wuling-artifacts
 
 # Create the repo root, ssh host-key dir, and pipelines (logs/artifacts) dir as
 # root so the non-root runtime user can read/write them. These matter because
@@ -52,5 +54,5 @@ RUN mkdir -p "$WULING_REPO_ROOT" /var/lib/wuling/ssh /var/lib/wuling/pipelines \
 USER wuling
 WORKDIR /home/wuling
 
-EXPOSE 8080
+EXPOSE 8080 8090
 ENTRYPOINT ["/usr/local/bin/wuling-api"]

@@ -32,6 +32,11 @@ import At from "@gravity-ui/icons/At";
 import Rocket from "@gravity-ui/icons/Rocket";
 import Key from "@gravity-ui/icons/Key";
 import Cpu from "@gravity-ui/icons/Cpu";
+import LayoutColumns3 from "@gravity-ui/icons/LayoutColumns3";
+import ListTimeline from "@gravity-ui/icons/ListTimeline";
+import Flask from "@gravity-ui/icons/Flask";
+import Boxes3 from "@gravity-ui/icons/Boxes3";
+import Gear from "@gravity-ui/icons/Gear";
 
 import { authStore } from "@/auth/store";
 import { NavItem, SidebarSection } from "./nav-primitives";
@@ -172,6 +177,8 @@ function ProjectSidebar({ orgSlug, projectSlug }: { orgSlug: string; projectSlug
       </SidebarSection>
       <SidebarSection label="规划">
         <NavItem to={base} icon={House} label="概览" exact />
+        <NavItem to={`${base}/backlogs`} icon={LayoutColumns3} label="Backlog / 看板" />
+        <NavItem to={`${base}/sprints`} icon={ListTimeline} label="Sprints" />
         <NavItem to={`${base}/issues`} icon={CircleQuestion} label="Issues" />
         <NavItem to={`${base}/labels`} icon={Tag} label="标签" />
       </SidebarSection>
@@ -180,6 +187,8 @@ function ProjectSidebar({ orgSlug, projectSlug }: { orgSlug: string; projectSlug
       </SidebarSection>
       <SidebarSection label="持续集成">
         <NavItem to={`${base}/pipelines`} icon={Rocket} label="Pipelines" />
+        <NavItem to={`${base}/test-plans`} icon={Flask} label="Test Plans" />
+        <NavItem to={`${base}/artifacts`} icon={Boxes3} label="Artifacts" />
         <NavItem to={`${base}/secrets`} icon={Key} label="机密" />
       </SidebarSection>
       <SidebarSection label="协作">
@@ -187,6 +196,9 @@ function ProjectSidebar({ orgSlug, projectSlug }: { orgSlug: string; projectSlug
       </SidebarSection>
       <SidebarSection label="洞察">
         <NavItem to={`${base}/insights`} icon={ChartLine} label="Insights" />
+      </SidebarSection>
+      <SidebarSection label="配置">
+        <NavItem to={`${base}/settings`} icon={Gear} label="项目设置" />
       </SidebarSection>
     </>
   );

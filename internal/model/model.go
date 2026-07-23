@@ -4,6 +4,7 @@
 package model
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -64,18 +65,18 @@ type OrgMember struct {
 // only populated on the create-invitation response (the raw token is shown
 // once); subsequent reads omit it.
 type OrgInvitation struct {
-	ID            uuid.UUID  `json:"id"`
-	OrgID         uuid.UUID  `json:"org_id"`
-	OrgSlug       string     `json:"org_slug,omitempty"`
-	OrgDisplayName string    `json:"org_display_name,omitempty"`
-	Inviter       *UserRef   `json:"inviter,omitempty"`
-	InviteeUserID *uuid.UUID `json:"invitee_user_id,omitempty"`
-	InviteeEmail  string     `json:"invitee_email,omitempty"`
-	Role          string     `json:"role"`
-	Status        string     `json:"status"`
-	ExpiresAt     time.Time  `json:"expires_at"`
-	CreatedAt     time.Time  `json:"created_at"`
-	AcceptedAt    *time.Time `json:"accepted_at,omitempty"`
+	ID             uuid.UUID  `json:"id"`
+	OrgID          uuid.UUID  `json:"org_id"`
+	OrgSlug        string     `json:"org_slug,omitempty"`
+	OrgDisplayName string     `json:"org_display_name,omitempty"`
+	Inviter        *UserRef   `json:"inviter,omitempty"`
+	InviteeUserID  *uuid.UUID `json:"invitee_user_id,omitempty"`
+	InviteeEmail   string     `json:"invitee_email,omitempty"`
+	Role           string     `json:"role"`
+	Status         string     `json:"status"`
+	ExpiresAt      time.Time  `json:"expires_at"`
+	CreatedAt      time.Time  `json:"created_at"`
+	AcceptedAt     *time.Time `json:"accepted_at,omitempty"`
 	// Token is the raw, un-hashed invitation token. Non-empty ONLY on the
 	// create-invitation response — every other endpoint returns the empty
 	// string, since we only store the HMAC of the raw token.
@@ -170,28 +171,28 @@ type IssueComment struct {
 // open -> merged | closed; reopen flips closed back to open. The merge_*
 // fields are only populated once state is "merged".
 type MergeRequest struct {
-	ID               uuid.UUID  `json:"id"`
-	RepoID           uuid.UUID  `json:"repo_id"`
-	ProjectID        uuid.UUID  `json:"project_id"`
-	Number           int64      `json:"number"`
-	Title            string     `json:"title"`
-	Body             string     `json:"body"`
-	State            string     `json:"state"`
-	SourceRef        string     `json:"source_ref"`
-	TargetRef        string     `json:"target_ref"`
-	SourceOIDAtOpen  string     `json:"source_oid_at_open"`
-	TargetOIDAtOpen  string     `json:"target_oid_at_open"`
-	MergeStrategy    *string    `json:"merge_strategy,omitempty"`
-	MergeCommitOID   *string    `json:"merge_commit_oid,omitempty"`
-	Author           *UserRef   `json:"author,omitempty"`
-	MergedBy         *UserRef   `json:"merged_by,omitempty"`
-	ClosedBy         *UserRef   `json:"closed_by,omitempty"`
-	MergedAt         *time.Time `json:"merged_at,omitempty"`
-	ClosedAt         *time.Time `json:"closed_at,omitempty"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
-	CommentCnt       int64      `json:"comment_count"`
-	ReviewCnt        int64      `json:"review_count"`
+	ID              uuid.UUID  `json:"id"`
+	RepoID          uuid.UUID  `json:"repo_id"`
+	ProjectID       uuid.UUID  `json:"project_id"`
+	Number          int64      `json:"number"`
+	Title           string     `json:"title"`
+	Body            string     `json:"body"`
+	State           string     `json:"state"`
+	SourceRef       string     `json:"source_ref"`
+	TargetRef       string     `json:"target_ref"`
+	SourceOIDAtOpen string     `json:"source_oid_at_open"`
+	TargetOIDAtOpen string     `json:"target_oid_at_open"`
+	MergeStrategy   *string    `json:"merge_strategy,omitempty"`
+	MergeCommitOID  *string    `json:"merge_commit_oid,omitempty"`
+	Author          *UserRef   `json:"author,omitempty"`
+	MergedBy        *UserRef   `json:"merged_by,omitempty"`
+	ClosedBy        *UserRef   `json:"closed_by,omitempty"`
+	MergedAt        *time.Time `json:"merged_at,omitempty"`
+	ClosedAt        *time.Time `json:"closed_at,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+	CommentCnt      int64      `json:"comment_count"`
+	ReviewCnt       int64      `json:"review_count"`
 }
 
 // MRComment is the public shape of a comment on a merge request.
@@ -256,12 +257,12 @@ type SSHKey struct {
 
 // ActivityDay is one row in the per-day activity rollup. Date is YYYY-MM-DD.
 type ActivityDay struct {
-	Date          string `json:"date"`
-	IssuesOpened  int64  `json:"issues_opened"`
-	IssuesClosed  int64  `json:"issues_closed"`
-	MRsOpened     int64  `json:"mrs_opened"`
-	MRsMerged     int64  `json:"mrs_merged"`
-	Commits       int64  `json:"commits"`
+	Date         string `json:"date"`
+	IssuesOpened int64  `json:"issues_opened"`
+	IssuesClosed int64  `json:"issues_closed"`
+	MRsOpened    int64  `json:"mrs_opened"`
+	MRsMerged    int64  `json:"mrs_merged"`
+	Commits      int64  `json:"commits"`
 }
 
 // ContributorStat is a per-author commit count for the contributors endpoint.
@@ -384,4 +385,158 @@ type PipelineStep struct {
 	Status     string     `json:"status"`
 	StartedAt  *time.Time `json:"started_at,omitempty"`
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
+}
+
+// ----------------------------------------------------------------------------
+// Stage 2: project planning, test plans, repository policy, and artifacts.
+// ----------------------------------------------------------------------------
+
+// ProjectSettings is the mutable setup contract kept separate from Project so
+// Stage-1 clients can continue decoding the original project shape unchanged.
+type ProjectSettings struct {
+	ProjectID           uuid.UUID `json:"project_id"`
+	ProcessTemplate     string    `json:"process_template"`
+	WorkItemPrefix      string    `json:"work_item_prefix"`
+	IterationLengthDays int       `json:"iteration_length_days"`
+	Archived            bool      `json:"archived"`
+}
+
+// DashboardCounts is the compact, single-round-trip summary used by the
+// project dashboard. BacklogState is always returned with zero-valued keys so
+// the UI can render stable Scrum columns even for a new project.
+type DashboardCounts struct {
+	Repos          int64            `json:"repos"`
+	OpenIssues     int64            `json:"open_issues"`
+	OpenWorkItems  int64            `json:"open_work_items"`
+	PipelineRuns   int64            `json:"pipeline_runs"`
+	TestCases      int64            `json:"test_cases"`
+	Packages       int64            `json:"packages"`
+	Releases       int64            `json:"releases"`
+	BacklogByState map[string]int64 `json:"backlog_by_state"`
+	BacklogByType  map[string]int64 `json:"backlog_by_type"`
+}
+
+type ProjectIteration struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+	Name      string    `json:"name"`
+	Goal      string    `json:"goal"`
+	State     string    `json:"state"`
+	StartsAt  time.Time `json:"starts_at"`
+	EndsAt    time.Time `json:"ends_at"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type WorkItem struct {
+	ID           uuid.UUID  `json:"id"`
+	ProjectID    uuid.UUID  `json:"project_id"`
+	Number       int64      `json:"number"`
+	ParentID     *uuid.UUID `json:"parent_id,omitempty"`
+	IterationID  *uuid.UUID `json:"iteration_id,omitempty"`
+	AssigneeID   *uuid.UUID `json:"assignee_id,omitempty"`
+	AuthorID     *uuid.UUID `json:"author_id,omitempty"`
+	Type         string     `json:"type"`
+	Title        string     `json:"title"`
+	Description  string     `json:"description"`
+	State        string     `json:"state"`
+	Priority     int        `json:"priority"`
+	StoryPoints  *float64   `json:"story_points,omitempty"`
+	AreaPath     string     `json:"area_path"`
+	BacklogOrder float64    `json:"backlog_order"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+	ClosedAt     *time.Time `json:"closed_at,omitempty"`
+}
+
+type TestPlan struct {
+	ID          uuid.UUID  `json:"id"`
+	ProjectID   uuid.UUID  `json:"project_id"`
+	IterationID *uuid.UUID `json:"iteration_id,omitempty"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	State       string     `json:"state"`
+	CreatedBy   *uuid.UUID `json:"created_by,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+type TestSuite struct {
+	ID          uuid.UUID  `json:"id"`
+	PlanID      uuid.UUID  `json:"plan_id"`
+	ParentID    *uuid.UUID `json:"parent_id,omitempty"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	CreatedAt   time.Time  `json:"created_at"`
+}
+
+type TestCase struct {
+	ID            uuid.UUID       `json:"id"`
+	SuiteID       uuid.UUID       `json:"suite_id"`
+	Title         string          `json:"title"`
+	Steps         json.RawMessage `json:"steps"`
+	Expected      string          `json:"expected"`
+	Automation    string          `json:"automation"`
+	AutomationRef string          `json:"automation_ref"`
+	Priority      int             `json:"priority"`
+	CreatedBy     *uuid.UUID      `json:"created_by,omitempty"`
+	CreatedAt     time.Time       `json:"created_at"`
+	UpdatedAt     time.Time       `json:"updated_at"`
+	LastRun       *TestRun        `json:"last_run,omitempty"`
+}
+
+type TestRun struct {
+	ID         uuid.UUID  `json:"id"`
+	TestCaseID uuid.UUID  `json:"test_case_id"`
+	Status     string     `json:"status"`
+	DurationMS *int64     `json:"duration_ms,omitempty"`
+	Notes      string     `json:"notes"`
+	RunBy      *uuid.UUID `json:"run_by,omitempty"`
+	RunAt      time.Time  `json:"run_at"`
+}
+
+type RepoSettings struct {
+	RepoID              uuid.UUID `json:"repo_id"`
+	DefaultBranch       string    `json:"default_branch"`
+	Topics              []string  `json:"topics"`
+	IssuesEnabled       bool      `json:"issues_enabled"`
+	WikiEnabled         bool      `json:"wiki_enabled"`
+	MergeStrategies     []string  `json:"merge_strategies"`
+	DeleteBranchOnMerge bool      `json:"delete_branch_on_merge"`
+}
+
+type ArtifactPackage struct {
+	ID          uuid.UUID `json:"id"`
+	ProjectID   uuid.UUID `json:"project_id"`
+	Kind        string    `json:"kind"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	Versions    int64     `json:"versions"`
+}
+
+type PackageVersion struct {
+	ID          uuid.UUID       `json:"id"`
+	PackageID   uuid.UUID       `json:"package_id"`
+	Version     string          `json:"version"`
+	BlobKey     string          `json:"blob_key"`
+	SizeBytes   int64           `json:"size_bytes"`
+	SHA256      string          `json:"sha256"`
+	ContentType string          `json:"content_type"`
+	Metadata    json.RawMessage `json:"metadata"`
+	PublishedBy *uuid.UUID      `json:"published_by,omitempty"`
+	PublishedAt time.Time       `json:"published_at"`
+}
+
+type ProjectRelease struct {
+	ID          uuid.UUID  `json:"id"`
+	ProjectID   uuid.UUID  `json:"project_id"`
+	TagName     string     `json:"tag_name"`
+	Name        string     `json:"name"`
+	Notes       string     `json:"notes"`
+	Prerelease  bool       `json:"prerelease"`
+	CreatedBy   *uuid.UUID `json:"created_by,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	PublishedAt *time.Time `json:"published_at,omitempty"`
 }
