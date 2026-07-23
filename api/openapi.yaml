@@ -1039,6 +1039,9 @@ paths:
                 display_name: { type: string }
                 description: { type: string }
                 visibility: { type: string, enum: [private, internal, public] }
+                process_template: { type: string, enum: [scrum, kanban, basic] }
+                work_item_prefix: { type: string, maxLength: 16 }
+                iteration_length_days: { type: integer, minimum: 1, maximum: 90 }
       responses:
         "201":
           description: created
@@ -2410,6 +2413,319 @@ paths:
         "403": { $ref: "#/components/responses/ForbiddenError" }
         "409": { $ref: "#/components/responses/ConflictError" }
 
+  # ---------------- Stage 2 project suite ----------------
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/dashboard:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+    get:
+      summary: Get the project dashboard rollup
+      tags: [Stage 2]
+      responses:
+        "200":
+          description: project counters and backlog breakdown
+          content: { application/json: { schema: { $ref: "#/components/schemas/ProjectDashboard" } } }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/settings:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+    get:
+      summary: Get Stage 2 project setup
+      tags: [Stage 2]
+      responses:
+        "200":
+          description: project setup
+          content: { application/json: { schema: { $ref: "#/components/schemas/ProjectSettings" } } }
+    patch:
+      summary: Update process, work item prefix, sprint cadence, or archive state
+      tags: [Stage 2]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/UpdateProjectSettingsRequest" } } }
+      responses:
+        "200":
+          description: updated setup
+          content: { application/json: { schema: { $ref: "#/components/schemas/ProjectSettings" } } }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/iterations:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+    get:
+      summary: List project Sprints / iterations
+      tags: [Stage 2]
+      responses:
+        "200":
+          description: iterations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  iterations: { type: array, items: { $ref: "#/components/schemas/ProjectIteration" } }
+    post:
+      summary: Create a Sprint / iteration
+      tags: [Stage 2]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateIterationRequest" } } }
+      responses:
+        "201":
+          description: created
+          content: { application/json: { schema: { $ref: "#/components/schemas/ProjectIteration" } } }
+        "409": { $ref: "#/components/responses/ConflictError" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/iterations/{iteration_id}:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - in: path
+        name: iteration_id
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      summary: Update an iteration or change its lifecycle state
+      tags: [Stage 2]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateIterationRequest" } } }
+      responses:
+        "200":
+          description: updated
+          content: { application/json: { schema: { $ref: "#/components/schemas/ProjectIteration" } } }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/work-items:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+    get:
+      summary: List the complete project Backlog
+      tags: [Stage 2]
+      parameters:
+        - in: query
+          name: state
+          schema: { $ref: "#/components/schemas/WorkItemState" }
+        - in: query
+          name: iteration_id
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: work items in backlog order
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  work_items: { type: array, items: { $ref: "#/components/schemas/WorkItem" } }
+    post:
+      summary: Create a Backlog work item
+      tags: [Stage 2]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateWorkItemRequest" } } }
+      responses:
+        "201":
+          description: created
+          content: { application/json: { schema: { $ref: "#/components/schemas/WorkItem" } } }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/work-items/{number}:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - in: path
+        name: number
+        required: true
+        schema: { type: integer, format: int64, minimum: 1 }
+    patch:
+      summary: Update or move a work item on the board
+      tags: [Stage 2]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/UpdateWorkItemRequest" } } }
+      responses:
+        "200":
+          description: updated
+          content: { application/json: { schema: { $ref: "#/components/schemas/WorkItem" } } }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/test-plans:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+    get:
+      summary: List Test Plans
+      tags: [Stage 2]
+      responses:
+        "200":
+          description: plans
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  test_plans: { type: array, items: { $ref: "#/components/schemas/TestPlan" } }
+    post:
+      summary: Create a Test Plan
+      tags: [Stage 2]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 128 }
+                description: { type: string, maxLength: 4096 }
+                iteration_id: { type: string, format: uuid }
+      responses:
+        "201":
+          description: created
+          content: { application/json: { schema: { $ref: "#/components/schemas/TestPlan" } } }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/test-plans/{plan_id}/suites:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - in: path
+        name: plan_id
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      summary: List suites in a Test Plan
+      tags: [Stage 2]
+      responses:
+        "200": { description: suites }
+    post:
+      summary: Create a static Test Suite
+      tags: [Stage 2]
+      responses:
+        "201": { description: created }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/test-plans/{plan_id}/suites/{suite_id}/cases:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - in: path
+        name: plan_id
+        required: true
+        schema: { type: string, format: uuid }
+      - in: path
+        name: suite_id
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      summary: List manual and Lightning test cases
+      tags: [Stage 2]
+      responses:
+        "200": { description: cases and their most recent result }
+    post:
+      summary: Add a test case to a suite
+      tags: [Stage 2]
+      responses:
+        "201": { description: created }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/test-cases/{case_id}/runs:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - in: path
+        name: case_id
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      summary: Record a manual or Lightning test result
+      tags: [Stage 2]
+      responses:
+        "201": { description: result recorded }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/packages:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+    get:
+      summary: List package registries in the project
+      tags: [Stage 2]
+      responses:
+        "200":
+          description: packages
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  packages: { type: array, items: { $ref: "#/components/schemas/ArtifactPackage" } }
+    post:
+      summary: Register an npm, PyPI, Cargo, Docker, or Logos package
+      tags: [Stage 2]
+      responses:
+        "201": { description: package registered }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/packages/{package_id}/versions:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - in: path
+        name: package_id
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      summary: List immutable package versions
+      tags: [Stage 2]
+      responses:
+        "200": { description: versions }
+    post:
+      summary: Publish package version metadata and allocate its blob key
+      tags: [Stage 2]
+      responses:
+        "201": { description: version published }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/releases:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+    get:
+      summary: List project Releases
+      tags: [Stage 2]
+      responses:
+        "200":
+          description: releases
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  releases: { type: array, items: { $ref: "#/components/schemas/ProjectRelease" } }
+    post:
+      summary: Draft or publish a Release
+      tags: [Stage 2]
+      responses:
+        "201": { description: release created }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/repos/{repo_slug}/settings:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - $ref: "#/components/parameters/RepoSlug"
+    get:
+      summary: Get GitHub-style repository settings
+      tags: [Stage 2]
+      responses:
+        "200":
+          description: repository settings
+          content: { application/json: { schema: { $ref: "#/components/schemas/RepoSettings" } } }
+    patch:
+      summary: Update repository features, topics, and merge strategies
+      tags: [Stage 2]
+      responses:
+        "200":
+          description: updated
+          content: { application/json: { schema: { $ref: "#/components/schemas/RepoSettings" } } }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -2526,6 +2842,172 @@ components:
       content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
 
   schemas:
+    ProjectSettings:
+      type: object
+      required: [project_id, process_template, work_item_prefix, iteration_length_days, archived]
+      properties:
+        project_id: { type: string, format: uuid }
+        process_template: { type: string, enum: [scrum, kanban, basic] }
+        work_item_prefix: { type: string, maxLength: 16 }
+        iteration_length_days: { type: integer, minimum: 1, maximum: 90 }
+        archived: { type: boolean }
+
+    UpdateProjectSettingsRequest:
+      type: object
+      properties:
+        process_template: { type: string, enum: [scrum, kanban, basic] }
+        work_item_prefix: { type: string, maxLength: 16 }
+        iteration_length_days: { type: integer, minimum: 1, maximum: 90 }
+        archived: { type: boolean }
+
+    ProjectDashboard:
+      type: object
+      required: [repos, open_issues, open_work_items, pipeline_runs, test_cases, packages, releases, backlog_by_state, backlog_by_type]
+      properties:
+        repos: { type: integer, format: int64 }
+        open_issues: { type: integer, format: int64 }
+        open_work_items: { type: integer, format: int64 }
+        pipeline_runs: { type: integer, format: int64 }
+        test_cases: { type: integer, format: int64 }
+        packages: { type: integer, format: int64 }
+        releases: { type: integer, format: int64 }
+        backlog_by_state: { type: object, additionalProperties: { type: integer, format: int64 } }
+        backlog_by_type: { type: object, additionalProperties: { type: integer, format: int64 } }
+
+    ProjectIteration:
+      type: object
+      required: [id, project_id, name, goal, state, starts_at, ends_at, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        name: { type: string }
+        goal: { type: string }
+        state: { type: string, enum: [planned, current, closed] }
+        starts_at: { type: string, format: date }
+        ends_at: { type: string, format: date }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CreateIterationRequest:
+      type: object
+      required: [name, starts_at, ends_at]
+      properties:
+        name: { type: string, maxLength: 128 }
+        goal: { type: string, maxLength: 1024 }
+        state: { type: string, enum: [planned, current, closed] }
+        starts_at: { type: string, format: date }
+        ends_at: { type: string, format: date }
+
+    WorkItemState:
+      type: string
+      enum: [new, active, resolved, closed]
+
+    WorkItem:
+      type: object
+      required: [id, project_id, number, type, title, description, state, priority, area_path, backlog_order, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        number: { type: integer, format: int64 }
+        parent_id: { type: string, format: uuid }
+        iteration_id: { type: string, format: uuid }
+        assignee_id: { type: string, format: uuid }
+        author_id: { type: string, format: uuid }
+        type: { type: string, enum: [epic, feature, user_story, task, bug] }
+        title: { type: string }
+        description: { type: string }
+        state: { $ref: "#/components/schemas/WorkItemState" }
+        priority: { type: integer, minimum: 0, maximum: 4 }
+        story_points: { type: number, minimum: 0 }
+        area_path: { type: string }
+        backlog_order: { type: number }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        closed_at: { type: string, format: date-time }
+
+    CreateWorkItemRequest:
+      type: object
+      required: [title]
+      properties:
+        parent_id: { type: string, format: uuid }
+        iteration_id: { type: string, format: uuid }
+        assignee_id: { type: string, format: uuid }
+        type: { type: string, enum: [epic, feature, user_story, task, bug] }
+        title: { type: string, maxLength: 256 }
+        description: { type: string, maxLength: 65536 }
+        priority: { type: integer, minimum: 0, maximum: 4 }
+        story_points: { type: number, minimum: 0 }
+        area_path: { type: string, maxLength: 256 }
+
+    UpdateWorkItemRequest:
+      type: object
+      properties:
+        parent_id: { type: string, format: uuid }
+        iteration_id: { type: string, format: uuid }
+        assignee_id: { type: string, format: uuid }
+        type: { type: string, enum: [epic, feature, user_story, task, bug] }
+        title: { type: string, maxLength: 256 }
+        description: { type: string, maxLength: 65536 }
+        state: { $ref: "#/components/schemas/WorkItemState" }
+        priority: { type: integer, minimum: 0, maximum: 4 }
+        story_points: { type: number, minimum: 0 }
+        area_path: { type: string, maxLength: 256 }
+        backlog_order: { type: number }
+
+    TestPlan:
+      type: object
+      required: [id, project_id, name, description, state, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        iteration_id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        state: { type: string, enum: [active, completed, archived] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ArtifactPackage:
+      type: object
+      required: [id, project_id, kind, name, description, versions, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        kind: { type: string, enum: [npm, pypi, cargo, docker, logos] }
+        name: { type: string }
+        description: { type: string }
+        versions: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ProjectRelease:
+      type: object
+      required: [id, project_id, tag_name, name, notes, prerelease, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        tag_name: { type: string }
+        name: { type: string }
+        notes: { type: string }
+        prerelease: { type: boolean }
+        created_at: { type: string, format: date-time }
+        published_at: { type: string, format: date-time }
+
+    RepoSettings:
+      type: object
+      required: [repo_id, default_branch, topics, issues_enabled, wiki_enabled, merge_strategies, delete_branch_on_merge]
+      properties:
+        repo_id: { type: string, format: uuid }
+        default_branch: { type: string }
+        topics: { type: array, items: { type: string } }
+        issues_enabled: { type: boolean }
+        wiki_enabled: { type: boolean }
+        merge_strategies:
+          type: array
+          minItems: 1
+          items: { type: string, enum: [merge, squash, rebase] }
+        delete_branch_on_merge: { type: boolean }
+
     Error:
       type: object
       required: [error]

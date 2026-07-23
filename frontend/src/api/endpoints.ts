@@ -77,6 +77,27 @@ import type {
   Runner,
   CreateRegistrationTokenRequest,
   RegistrationTokenResponse,
+  ArtifactPackage,
+  CreateIterationRequest,
+  CreateWorkItemRequest,
+  PackageKind,
+  PackageVersion,
+  ProjectDashboard,
+  ProjectIteration,
+  ProjectRelease,
+  ProjectSettings,
+  RepoSettings,
+  TestAutomation,
+  TestCase,
+  TestPlan,
+  TestRun,
+  TestRunStatus,
+  TestSuite,
+  UpdateProjectSettingsRequest,
+  UpdateRepoSettingsRequest,
+  UpdateWorkItemRequest,
+  WorkItem,
+  WorkItemState,
 } from "./types";
 
 const enc = encodeURIComponent;
@@ -606,4 +627,144 @@ export const runners = {
     apiPost<RegistrationTokenResponse>(`${orgBase(org)}/runners/registration-tokens`, body),
   delete: (org: string, id: string) =>
     apiDelete(`${orgBase(org)}/runners/${enc(id)}`),
+};
+
+// ---------------- Stage 2 project suite ----------------
+
+export const projectSuite = {
+  dashboard: (org: string, project: string) =>
+    apiGet<ProjectDashboard>(`${projectBase(org, project)}/dashboard`),
+  settings: (org: string, project: string) =>
+    apiGet<ProjectSettings>(`${projectBase(org, project)}/settings`),
+  updateSettings: (org: string, project: string, body: UpdateProjectSettingsRequest) =>
+    apiPatch<ProjectSettings>(`${projectBase(org, project)}/settings`, body),
+};
+
+export const iterations = {
+  list: (org: string, project: string) =>
+    apiGet<{ iterations: ProjectIteration[] }>(`${projectBase(org, project)}/iterations`).then(
+      (r) => r.iterations,
+    ),
+  create: (org: string, project: string, body: CreateIterationRequest) =>
+    apiPost<ProjectIteration>(`${projectBase(org, project)}/iterations`, body),
+  update: (
+    org: string,
+    project: string,
+    id: string,
+    body: Partial<CreateIterationRequest> & { state?: ProjectIteration["state"] },
+  ) => apiPatch<ProjectIteration>(`${projectBase(org, project)}/iterations/${enc(id)}`, body),
+};
+
+export const workItems = {
+  list: (
+    org: string,
+    project: string,
+    query: { state?: WorkItemState; iteration_id?: string } = {},
+  ) => apiGet<{ work_items: WorkItem[] }>(
+    `${projectBase(org, project)}/work-items`,
+    query,
+  ).then((r) => r.work_items),
+  create: (org: string, project: string, body: CreateWorkItemRequest) =>
+    apiPost<WorkItem>(`${projectBase(org, project)}/work-items`, body),
+  update: (org: string, project: string, number: number, body: UpdateWorkItemRequest) =>
+    apiPatch<WorkItem>(`${projectBase(org, project)}/work-items/${number}`, body),
+};
+
+export const testPlans = {
+  list: (org: string, project: string) =>
+    apiGet<{ test_plans: TestPlan[] }>(`${projectBase(org, project)}/test-plans`).then(
+      (r) => r.test_plans,
+    ),
+  create: (
+    org: string,
+    project: string,
+    body: { name: string; description?: string; iteration_id?: string },
+  ) => apiPost<TestPlan>(`${projectBase(org, project)}/test-plans`, body),
+  listSuites: (org: string, project: string, planID: string) =>
+    apiGet<{ test_suites: TestSuite[] }>(
+      `${projectBase(org, project)}/test-plans/${enc(planID)}/suites`,
+    ).then((r) => r.test_suites),
+  createSuite: (
+    org: string,
+    project: string,
+    planID: string,
+    body: { name: string; description?: string; parent_id?: string },
+  ) => apiPost<TestSuite>(
+    `${projectBase(org, project)}/test-plans/${enc(planID)}/suites`,
+    body,
+  ),
+  listCases: (org: string, project: string, planID: string, suiteID: string) =>
+    apiGet<{ test_cases: TestCase[] }>(
+      `${projectBase(org, project)}/test-plans/${enc(planID)}/suites/${enc(suiteID)}/cases`,
+    ).then((r) => r.test_cases),
+  createCase: (
+    org: string,
+    project: string,
+    planID: string,
+    suiteID: string,
+    body: {
+      title: string;
+      steps?: unknown[];
+      expected?: string;
+      automation?: TestAutomation;
+      automation_ref?: string;
+      priority?: number;
+    },
+  ) => apiPost<TestCase>(
+    `${projectBase(org, project)}/test-plans/${enc(planID)}/suites/${enc(suiteID)}/cases`,
+    body,
+  ),
+  recordRun: (
+    org: string,
+    project: string,
+    caseID: string,
+    body: { status: TestRunStatus; duration_ms?: number; notes?: string },
+  ) => apiPost<TestRun>(`${projectBase(org, project)}/test-cases/${enc(caseID)}/runs`, body),
+};
+
+export const artifactRegistry = {
+  listPackages: (org: string, project: string) =>
+    apiGet<{ packages: ArtifactPackage[] }>(`${projectBase(org, project)}/packages`).then(
+      (r) => r.packages,
+    ),
+  createPackage: (
+    org: string,
+    project: string,
+    body: { kind: PackageKind; name: string; description?: string },
+  ) => apiPost<ArtifactPackage>(`${projectBase(org, project)}/packages`, body),
+  listVersions: (org: string, project: string, packageID: string) =>
+    apiGet<{ versions: PackageVersion[] }>(
+      `${projectBase(org, project)}/packages/${enc(packageID)}/versions`,
+    ).then((r) => r.versions),
+  publishVersion: (
+    org: string,
+    project: string,
+    packageID: string,
+    body: {
+      version: string;
+      size_bytes?: number;
+      sha256?: string;
+      content_type?: string;
+      metadata?: Record<string, unknown>;
+    },
+  ) => apiPost<PackageVersion>(
+    `${projectBase(org, project)}/packages/${enc(packageID)}/versions`,
+    body,
+  ),
+  listReleases: (org: string, project: string) =>
+    apiGet<{ releases: ProjectRelease[] }>(`${projectBase(org, project)}/releases`).then(
+      (r) => r.releases,
+    ),
+  createRelease: (
+    org: string,
+    project: string,
+    body: { tag_name: string; name: string; notes?: string; prerelease?: boolean; publish?: boolean },
+  ) => apiPost<ProjectRelease>(`${projectBase(org, project)}/releases`, body),
+};
+
+export const repositorySettings = {
+  get: (org: string, project: string, repo: string) =>
+    apiGet<RepoSettings>(`${repoBase(org, project, repo)}/settings`),
+  update: (org: string, project: string, repo: string, body: UpdateRepoSettingsRequest) =>
+    apiPatch<RepoSettings>(`${repoBase(org, project, repo)}/settings`, body),
 };

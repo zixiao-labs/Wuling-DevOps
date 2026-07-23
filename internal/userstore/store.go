@@ -634,11 +634,14 @@ func (s *Store) MemberRole(ctx context.Context, orgID, userID uuid.UUID) (string
 
 // CreateProjectParams holds inputs to CreateProject.
 type CreateProjectParams struct {
-	OrgID       uuid.UUID
-	Slug        string
-	DisplayName string
-	Description string
-	Visibility  string
+	OrgID               uuid.UUID
+	Slug                string
+	DisplayName         string
+	Description         string
+	Visibility          string
+	ProcessTemplate     string
+	WorkItemPrefix      string
+	IterationLengthDays int
 }
 
 // CreateProject inserts a project under an org.
@@ -651,11 +654,18 @@ func (s *Store) CreateProject(ctx context.Context, p CreateProjectParams) (*mode
 		Description: p.Description,
 		Visibility:  defaultIfEmpty(p.Visibility, "private"),
 	}
+	processTemplate := defaultIfEmpty(p.ProcessTemplate, "scrum")
+	iterationLength := p.IterationLengthDays
+	if iterationLength == 0 {
+		iterationLength = 14
+	}
 	err := s.pool.QueryRow(ctx, `
-		INSERT INTO projects (id, org_id, slug, display_name, description, visibility)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO projects (id, org_id, slug, display_name, description, visibility,
+			process_template, work_item_prefix, iteration_length_days)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING created_at
-	`, pj.ID, pj.OrgID, pj.Slug, pj.DisplayName, pj.Description, pj.Visibility).Scan(&pj.CreatedAt)
+	`, pj.ID, pj.OrgID, pj.Slug, pj.DisplayName, pj.Description, pj.Visibility,
+		processTemplate, strings.ToUpper(strings.TrimSpace(p.WorkItemPrefix)), iterationLength).Scan(&pj.CreatedAt)
 	if err != nil {
 		return nil, mapInsertErr(err, "project")
 	}

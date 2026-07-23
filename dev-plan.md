@@ -6,6 +6,10 @@ Repo，Issue，Merge Request，Pipelines（需要容器运行时），Wiki，Ins
 
 ## Stage 2：企业级功能和体验优化
 
+> Stage 2.1 已启动：项目过程设置、Dashboard、Backlog/Scrum、仓库策略、Test Plan、
+> Package/Release 元数据与独立 Artifact Blob Service 已落地。下一步继续实现各 Registry
+> 的原生协议适配（npm/PyPI/Cargo/Docker/Logos）和 Blob 上传授权闭环。
+
 Project Setup（类似Azure DevOps的操作逻辑）
 
 Project Dashboard（看板和Scrum并记录所有Backlog）

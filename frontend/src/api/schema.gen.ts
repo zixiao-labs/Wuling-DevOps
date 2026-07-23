@@ -2100,6 +2100,10 @@ export interface paths {
                         description?: string;
                         /** @enum {string} */
                         visibility?: "private" | "internal" | "public";
+                        /** @enum {string} */
+                        process_template?: "scrum" | "kanban" | "basic";
+                        work_item_prefix?: string;
+                        iteration_length_days?: number;
                     };
                 };
             };
@@ -5113,10 +5117,1064 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org_slug}/projects/{project_slug}/dashboard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+                project_slug: components["parameters"]["ProjectSlug"];
+            };
+            cookie?: never;
+        };
+        /** Get the project dashboard rollup */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description project counters and backlog breakdown */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectDashboard"];
+                    };
+                };
+                404: components["responses"]["NotFoundError"];
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/projects/{project_slug}/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+                project_slug: components["parameters"]["ProjectSlug"];
+            };
+            cookie?: never;
+        };
+        /** Get Stage 2 project setup */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description project setup */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectSettings"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update process, work item prefix, sprint cadence, or archive state */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["UpdateProjectSettingsRequest"];
+                };
+            };
+            responses: {
+                /** @description updated setup */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectSettings"];
+                    };
+                };
+                400: components["responses"]["ValidationError"];
+                403: components["responses"]["ForbiddenError"];
+            };
+        };
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/projects/{project_slug}/iterations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+                project_slug: components["parameters"]["ProjectSlug"];
+            };
+            cookie?: never;
+        };
+        /** List project Sprints / iterations */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description iterations */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            iterations?: components["schemas"]["ProjectIteration"][];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create a Sprint / iteration */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CreateIterationRequest"];
+                };
+            };
+            responses: {
+                /** @description created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectIteration"];
+                    };
+                };
+                409: components["responses"]["ConflictError"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/projects/{project_slug}/iterations/{iteration_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+                project_slug: components["parameters"]["ProjectSlug"];
+                iteration_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update an iteration or change its lifecycle state */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                    iteration_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CreateIterationRequest"];
+                };
+            };
+            responses: {
+                /** @description updated */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProjectIteration"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/projects/{project_slug}/work-items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+                project_slug: components["parameters"]["ProjectSlug"];
+            };
+            cookie?: never;
+        };
+        /** List the complete project Backlog */
+        get: {
+            parameters: {
+                query?: {
+                    state?: components["schemas"]["WorkItemState"];
+                    iteration_id?: string;
+                };
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description work items in backlog order */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            work_items?: components["schemas"]["WorkItem"][];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create a Backlog work item */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CreateWorkItemRequest"];
+                };
+            };
+            responses: {
+                /** @description created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorkItem"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/projects/{project_slug}/work-items/{number}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+                project_slug: components["parameters"]["ProjectSlug"];
+                number: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update or move a work item on the board */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                    number: number;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["UpdateWorkItemRequest"];
+                };
+            };
+            responses: {
+                /** @description updated */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorkItem"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/projects/{project_slug}/test-plans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+                project_slug: components["parameters"]["ProjectSlug"];
+            };
+            cookie?: never;
+        };
+        /** List Test Plans */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description plans */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            test_plans?: components["schemas"]["TestPlan"][];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create a Test Plan */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        name: string;
+                        description?: string;
+                        /** Format: uuid */
+                        iteration_id?: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TestPlan"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/projects/{project_slug}/test-plans/{plan_id}/suites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+                project_slug: components["parameters"]["ProjectSlug"];
+                plan_id: string;
+            };
+            cookie?: never;
+        };
+        /** List suites in a Test Plan */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                    plan_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description suites */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /** Create a static Test Suite */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                    plan_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/projects/{project_slug}/test-plans/{plan_id}/suites/{suite_id}/cases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+                project_slug: components["parameters"]["ProjectSlug"];
+                plan_id: string;
+                suite_id: string;
+            };
+            cookie?: never;
+        };
+        /** List manual and Lightning test cases */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                    plan_id: string;
+                    suite_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description cases and their most recent result */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /** Add a test case to a suite */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                    plan_id: string;
+                    suite_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/projects/{project_slug}/test-cases/{case_id}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+                project_slug: components["parameters"]["ProjectSlug"];
+                case_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record a manual or Lightning test result */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                    case_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description result recorded */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/projects/{project_slug}/packages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+                project_slug: components["parameters"]["ProjectSlug"];
+            };
+            cookie?: never;
+        };
+        /** List package registries in the project */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description packages */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            packages?: components["schemas"]["ArtifactPackage"][];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Register an npm, PyPI, Cargo, Docker, or Logos package */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description package registered */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/projects/{project_slug}/packages/{package_id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+                project_slug: components["parameters"]["ProjectSlug"];
+                package_id: string;
+            };
+            cookie?: never;
+        };
+        /** List immutable package versions */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                    package_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description versions */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /** Publish package version metadata and allocate its blob key */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                    package_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description version published */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/projects/{project_slug}/releases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+                project_slug: components["parameters"]["ProjectSlug"];
+            };
+            cookie?: never;
+        };
+        /** List project Releases */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description releases */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            releases?: components["schemas"]["ProjectRelease"][];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Draft or publish a Release */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description release created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/projects/{project_slug}/repos/{repo_slug}/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+                project_slug: components["parameters"]["ProjectSlug"];
+                repo_slug: components["parameters"]["RepoSlug"];
+            };
+            cookie?: never;
+        };
+        /** Get GitHub-style repository settings */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                    repo_slug: components["parameters"]["RepoSlug"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description repository settings */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RepoSettings"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update repository features, topics, and merge strategies */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                    repo_slug: components["parameters"]["RepoSlug"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description updated */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RepoSettings"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        ProjectSettings: {
+            /** Format: uuid */
+            project_id: string;
+            /** @enum {string} */
+            process_template: "scrum" | "kanban" | "basic";
+            work_item_prefix: string;
+            iteration_length_days: number;
+            archived: boolean;
+        };
+        UpdateProjectSettingsRequest: {
+            /** @enum {string} */
+            process_template?: "scrum" | "kanban" | "basic";
+            work_item_prefix?: string;
+            iteration_length_days?: number;
+            archived?: boolean;
+        };
+        ProjectDashboard: {
+            /** Format: int64 */
+            repos: number;
+            /** Format: int64 */
+            open_issues: number;
+            /** Format: int64 */
+            open_work_items: number;
+            /** Format: int64 */
+            pipeline_runs: number;
+            /** Format: int64 */
+            test_cases: number;
+            /** Format: int64 */
+            packages: number;
+            /** Format: int64 */
+            releases: number;
+            backlog_by_state: {
+                [key: string]: number;
+            };
+            backlog_by_type: {
+                [key: string]: number;
+            };
+        };
+        ProjectIteration: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            project_id: string;
+            name: string;
+            goal: string;
+            /** @enum {string} */
+            state: "planned" | "current" | "closed";
+            /** Format: date */
+            starts_at: string;
+            /** Format: date */
+            ends_at: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        CreateIterationRequest: {
+            name: string;
+            goal?: string;
+            /** @enum {string} */
+            state?: "planned" | "current" | "closed";
+            /** Format: date */
+            starts_at: string;
+            /** Format: date */
+            ends_at: string;
+        };
+        /** @enum {string} */
+        WorkItemState: "new" | "active" | "resolved" | "closed";
+        WorkItem: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            project_id: string;
+            /** Format: int64 */
+            number: number;
+            /** Format: uuid */
+            parent_id?: string;
+            /** Format: uuid */
+            iteration_id?: string;
+            /** Format: uuid */
+            assignee_id?: string;
+            /** Format: uuid */
+            author_id?: string;
+            /** @enum {string} */
+            type: "epic" | "feature" | "user_story" | "task" | "bug";
+            title: string;
+            description: string;
+            state: components["schemas"]["WorkItemState"];
+            priority: number;
+            story_points?: number;
+            area_path: string;
+            backlog_order: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: date-time */
+            closed_at?: string;
+        };
+        CreateWorkItemRequest: {
+            /** Format: uuid */
+            parent_id?: string;
+            /** Format: uuid */
+            iteration_id?: string;
+            /** Format: uuid */
+            assignee_id?: string;
+            /** @enum {string} */
+            type?: "epic" | "feature" | "user_story" | "task" | "bug";
+            title: string;
+            description?: string;
+            priority?: number;
+            story_points?: number;
+            area_path?: string;
+        };
+        UpdateWorkItemRequest: {
+            /** Format: uuid */
+            parent_id?: string;
+            /** Format: uuid */
+            iteration_id?: string;
+            /** Format: uuid */
+            assignee_id?: string;
+            /** @enum {string} */
+            type?: "epic" | "feature" | "user_story" | "task" | "bug";
+            title?: string;
+            description?: string;
+            state?: components["schemas"]["WorkItemState"];
+            priority?: number;
+            story_points?: number;
+            area_path?: string;
+            backlog_order?: number;
+        };
+        TestPlan: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            project_id: string;
+            /** Format: uuid */
+            iteration_id?: string;
+            name: string;
+            description: string;
+            /** @enum {string} */
+            state: "active" | "completed" | "archived";
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        ArtifactPackage: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            project_id: string;
+            /** @enum {string} */
+            kind: "npm" | "pypi" | "cargo" | "docker" | "logos";
+            name: string;
+            description: string;
+            /** Format: int64 */
+            versions: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        ProjectRelease: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            project_id: string;
+            tag_name: string;
+            name: string;
+            notes: string;
+            prerelease: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            published_at?: string;
+        };
+        RepoSettings: {
+            /** Format: uuid */
+            repo_id: string;
+            default_branch: string;
+            topics: string[];
+            issues_enabled: boolean;
+            wiki_enabled: boolean;
+            merge_strategies: ("merge" | "squash" | "rebase")[];
+            delete_branch_on_merge: boolean;
+        };
         Error: {
             error: {
                 /** @enum {string} */

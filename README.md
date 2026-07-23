@@ -35,6 +35,7 @@ irm https://raw.githubusercontent.com/zixiao-labs/Wuling-DevOps/refs/heads/main/
 
 - [`deploy/production/README.md`](deploy/production/README.md) — 生产部署 Runbook（Docker Compose / Nix / k8s）
 - [`docs/auth.md`](docs/auth.md) — 身份认证：GitHub OAuth 登录 + 注册审批工作流的配置和运维
+- [`docs/artifacts.md`](docs/artifacts.md) — Stage 2 Artifact Service 与对象存储配置
 
 ## 关于项目
 
@@ -48,4 +49,3 @@ irm https://raw.githubusercontent.com/zixiao-labs/Wuling-DevOps/refs/heads/main/
 还有用Github Actions做竞品平台的构建和部署真的没问题吗（~~小声bb~~）
 
 还有Zed集成终于回来了（只不过是Fork，出门右拐[Kal'tsit·Esperanta](https://github.com/zixiao-labs/Esperanta)）
-

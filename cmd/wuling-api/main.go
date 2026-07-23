@@ -33,6 +33,7 @@ import (
 	"github.com/zixiao-labs/wuling-devops/internal/secretstore"
 	"github.com/zixiao-labs/wuling-devops/internal/server"
 	"github.com/zixiao-labs/wuling-devops/internal/sshd"
+	"github.com/zixiao-labs/wuling-devops/internal/stage2store"
 	"github.com/zixiao-labs/wuling-devops/internal/userstore"
 	"github.com/zixiao-labs/wuling-devops/internal/wikistore"
 )
@@ -116,6 +117,7 @@ func run() error {
 	secrets := secretstore.New(pool, box)
 	runners := runnerstore.New(pool)
 	pipelines := pipelinestore.New(pool, cfg.Pipeline.LogDir)
+	stage2 := stage2store.New(pool)
 
 	handler := server.New(server.Deps{
 		Cfg:       cfg,
@@ -130,6 +132,7 @@ func run() error {
 		Secrets:   secrets,
 		Runners:   runners,
 		Pipelines: pipelines,
+		Stage2:    stage2,
 	})
 
 	srv := &http.Server{

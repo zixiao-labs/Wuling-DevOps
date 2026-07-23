@@ -43,6 +43,22 @@ services:
     volumes:
       - wuling-repos:/var/lib/wuling/repos
 
+  artifacts:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    entrypoint: ["/usr/local/bin/wuling-artifacts"]
+    environment:
+      WULING_ARTIFACTS_ADDR: ":8090"
+      WULING_ARTIFACTS_STORAGE_PROVIDER: "local"
+      WULING_ARTIFACTS_LOCAL_DIR: "/var/lib/wuling/artifacts"
+      WULING_ARTIFACTS_INTERNAL_TOKEN: "dev-artifacts-token"
+    ports:
+      - "8090:8090"
+    volumes:
+      - wuling-artifacts:/var/lib/wuling/artifacts
+
 volumes:
   wuling-pg:
   wuling-repos:
+  wuling-artifacts:

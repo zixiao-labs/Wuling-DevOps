@@ -39,6 +39,8 @@ import (
 	"github.com/zixiao-labs/wuling-devops/internal/runnerstore"
 	"github.com/zixiao-labs/wuling-devops/internal/secrethttp"
 	"github.com/zixiao-labs/wuling-devops/internal/secretstore"
+	"github.com/zixiao-labs/wuling-devops/internal/stage2http"
+	"github.com/zixiao-labs/wuling-devops/internal/stage2store"
 	"github.com/zixiao-labs/wuling-devops/internal/userstore"
 	"github.com/zixiao-labs/wuling-devops/internal/wikihttp"
 	"github.com/zixiao-labs/wuling-devops/internal/wikistore"
@@ -58,6 +60,7 @@ type Deps struct {
 	Secrets   *secretstore.Store
 	Runners   *runnerstore.Store
 	Pipelines *pipelinestore.Store
+	Stage2    *stage2store.Store
 }
 
 // New returns a router fully wired with all current Stage-1 domains.
@@ -223,6 +226,11 @@ func New(d Deps) http.Handler {
 				RegistrationTTL: d.Cfg.Runner.RegistrationTTL,
 				CloneBaseURL:    d.Cfg.OAuth.PublicBaseURL,
 				DefaultTier:     model.TierMedium,
+			}).Mount(api)
+		}
+		if d.Stage2 != nil {
+			(&stage2http.Handler{
+				Users: d.Store, Stage2: d.Stage2, Verifier: verifier, OAT: oauthH,
 			}).Mount(api)
 		}
 	})

@@ -149,10 +149,13 @@ func (h *Handler) getOrg(w http.ResponseWriter, r *http.Request) {
 // ----------------------------------------------------------------------------
 
 type createProjectReq struct {
-	Slug        string `json:"slug"         validate:"required,min=2,max=64,alphanumdash"`
-	DisplayName string `json:"display_name" validate:"max=128"`
-	Description string `json:"description"  validate:"max=512"`
-	Visibility  string `json:"visibility"   validate:"omitempty,oneof=private internal public"`
+	Slug                string `json:"slug"                  validate:"required,min=2,max=64,alphanumdash"`
+	DisplayName         string `json:"display_name"          validate:"max=128"`
+	Description         string `json:"description"           validate:"max=512"`
+	Visibility          string `json:"visibility"            validate:"omitempty,oneof=private internal public"`
+	ProcessTemplate     string `json:"process_template"      validate:"omitempty,oneof=scrum kanban basic"`
+	WorkItemPrefix      string `json:"work_item_prefix"      validate:"omitempty,max=16,alphanum"`
+	IterationLengthDays int    `json:"iteration_length_days" validate:"omitempty,min=1,max=90"`
 }
 
 func (h *Handler) listProjects(w http.ResponseWriter, r *http.Request) {
@@ -217,11 +220,14 @@ func (h *Handler) createProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	project, err := h.Store.CreateProject(r.Context(), userstore.CreateProjectParams{
-		OrgID:       org.ID,
-		Slug:        strings.TrimSpace(req.Slug),
-		DisplayName: req.DisplayName,
-		Description: req.Description,
-		Visibility:  req.Visibility,
+		OrgID:               org.ID,
+		Slug:                strings.TrimSpace(req.Slug),
+		DisplayName:         req.DisplayName,
+		Description:         req.Description,
+		Visibility:          req.Visibility,
+		ProcessTemplate:     req.ProcessTemplate,
+		WorkItemPrefix:      req.WorkItemPrefix,
+		IterationLengthDays: req.IterationLengthDays,
 	})
 	if err != nil {
 		httpapi.RenderError(w, r, err)

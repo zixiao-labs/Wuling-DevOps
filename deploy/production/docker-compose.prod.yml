@@ -43,11 +43,12 @@ services:
       [
         "sh",
         "-c",
-        "mkdir -p /ssh /pipelines && chown -R 10001:10001 /ssh /pipelines && chmod 0700 /ssh",
+        "mkdir -p /ssh /pipelines /artifacts && chown -R 10001:10001 /ssh /pipelines /artifacts && chmod 0700 /ssh",
       ]
     volumes:
       - wuling-ssh:/ssh
       - wuling-pipelines:/pipelines
+      - wuling-artifacts:/artifacts
     restart: "no"
 
   api:
@@ -95,6 +96,25 @@ services:
     command: ["sh", "-c", "cp -r /app/dist/. /dist/ && echo built"]
     restart: "no"
 
+  artifacts:
+    image: ghcr.io/zixiao-labs/wuling-api:${WULING_TAG:-latest}
+    entrypoint: ["/usr/local/bin/wuling-artifacts"]
+    restart: unless-stopped
+    depends_on:
+      api-init:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      WULING_ARTIFACTS_ADDR: ":8090"
+    volumes:
+      - wuling-artifacts:/var/lib/wuling/artifacts
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8090/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -119,6 +139,7 @@ volumes:
   wuling-repos:
   wuling-ssh:
   wuling-pipelines:
+  wuling-artifacts:
   wuling-frontend:
   wuling-caddy-data:
   wuling-caddy-config:

@@ -6,6 +6,7 @@ import CodeIcon from "@gravity-ui/icons/Code";
 import CodePullRequest from "@gravity-ui/icons/CodePullRequest";
 import Clock from "@gravity-ui/icons/Clock";
 import BranchesRight from "@gravity-ui/icons/BranchesRight";
+import Gear from "@gravity-ui/icons/Gear";
 
 import { cloneUrls, repos as reposApi } from "@/api/endpoints";
 import { ApiError } from "@/api/errors";
@@ -125,6 +126,7 @@ export default function RepoHomePage() {
             { to: `${base}/tree`, label: "文件" },
             { to: `${base}/commits`, label: "提交" },
             { to: `${base}/merge-requests`, label: "合并请求", icon: CodePullRequest },
+            { to: `${base}/settings`, label: "设置", icon: Gear },
           ]}
         />
 
