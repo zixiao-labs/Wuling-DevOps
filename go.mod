@@ -3,6 +3,7 @@ module github.com/zixiao-labs/wuling-devops
 go 1.25.0
 
 require (
+	github.com/aliyun/alibabacloud-oss-go-sdk-v2 v1.5.3
 	github.com/caarlos0/env/v11 v11.3.1
 	github.com/gliderlabs/ssh v0.3.8
 	github.com/go-chi/chi/v5 v5.2.1
@@ -90,4 +91,5 @@ require (
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
+	golang.org/x/time v0.11.0 // indirect
 )

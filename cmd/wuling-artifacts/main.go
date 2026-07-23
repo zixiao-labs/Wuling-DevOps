@@ -203,7 +203,13 @@ func main() {
 		os.Exit(1)
 	}
 	svc := &service{store: store, token: cfg.Token, maxUpload: cfg.MaxUpload}
-	server := &http.Server{Addr: cfg.Addr, Handler: svc.routes(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute}
+	server := &http.Server{
+		Addr:              cfg.Addr,
+		Handler:           svc.routes(),
+		ReadTimeout:       2 * time.Hour,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go func() {

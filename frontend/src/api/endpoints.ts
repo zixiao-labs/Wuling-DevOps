@@ -61,6 +61,7 @@ import type {
   SSHKey,
   TokenResponse,
   TreeResponse,
+  UpdateIterationRequest,
   UpdateOAuthAppRequest,
   User,
   UserApprovalStatus,
@@ -651,7 +652,7 @@ export const iterations = {
     org: string,
     project: string,
     id: string,
-    body: Partial<CreateIterationRequest> & { state?: ProjectIteration["state"] },
+    body: UpdateIterationRequest,
   ) => apiPatch<ProjectIteration>(`${projectBase(org, project)}/iterations/${enc(id)}`, body),
 };
 

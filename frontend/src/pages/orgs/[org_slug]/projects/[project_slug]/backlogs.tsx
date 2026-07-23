@@ -169,6 +169,32 @@ export default function BacklogsPage() {
                       <span>P{item.priority}</span>
                       <span>{item.story_points == null ? "未估点" : `${item.story_points} pts`}</span>
                     </div>
+                    <div
+                      className="mt-3"
+                      draggable={false}
+                      onDragStart={(e) => e.stopPropagation()}
+                    >
+                      <Select
+                        value={item.state}
+                        variant="secondary"
+                        onChange={(value) => value && void move(item, String(value) as WorkItemState)}
+                      >
+                        <Label className="sr-only">移动 “{item.title}” 到</Label>
+                        <Select.Trigger className="min-h-8 text-[11px]">
+                          <Select.Value />
+                          <Select.Indicator />
+                        </Select.Trigger>
+                        <Select.Popover>
+                          <ListBox>
+                            {WORK_ITEM_STATES.map((state) => (
+                              <ListBox.Item key={state.id} id={state.id} textValue={state.label}>
+                                {state.label}<ListBox.ItemIndicator />
+                              </ListBox.Item>
+                            ))}
+                          </ListBox>
+                        </Select.Popover>
+                      </Select>
+                    </div>
                   </article>
                 ))}
                 {grouped[column.id].length === 0 ? (

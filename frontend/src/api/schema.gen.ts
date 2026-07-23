@@ -5334,7 +5334,7 @@ export interface paths {
             };
             requestBody: {
                 content: {
-                    "application/json": components["schemas"]["CreateIterationRequest"];
+                    "application/json": components["schemas"]["UpdateIterationRequest"];
                 };
             };
             responses: {
@@ -6053,6 +6053,16 @@ export interface components {
             starts_at: string;
             /** Format: date */
             ends_at: string;
+        };
+        UpdateIterationRequest: {
+            name?: string;
+            goal?: string;
+            /** @enum {string} */
+            state?: "planned" | "current" | "closed";
+            /** Format: date */
+            starts_at?: string;
+            /** Format: date */
+            ends_at?: string;
         };
         /** @enum {string} */
         WorkItemState: "new" | "active" | "resolved" | "closed";

@@ -32,6 +32,12 @@ func TestStage2ProjectLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "scrum", settings.ProcessTemplate)
 	require.Equal(t, 14, settings.IterationLengthDays)
+	prefix := "  wl  "
+	settings, err = store.UpdateProjectSettings(ctx, project.ID, UpdateProjectSettingsParams{
+		WorkItemPrefix: &prefix,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "WL", settings.WorkItemPrefix)
 
 	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	iteration, err := store.CreateIteration(ctx, CreateIterationParams{

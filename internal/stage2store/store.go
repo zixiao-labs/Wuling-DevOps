@@ -97,6 +97,10 @@ type UpdateProjectSettingsParams struct {
 }
 
 func (s *Store) UpdateProjectSettings(ctx context.Context, projectID uuid.UUID, p UpdateProjectSettingsParams) (*model.ProjectSettings, error) {
+	if p.WorkItemPrefix != nil {
+		value := strings.ToUpper(strings.TrimSpace(*p.WorkItemPrefix))
+		p.WorkItemPrefix = &value
+	}
 	var out model.ProjectSettings
 	err := s.pool.QueryRow(ctx, `
 		UPDATE projects SET

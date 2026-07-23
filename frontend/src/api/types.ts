@@ -206,8 +206,8 @@ export interface ProjectDashboard {
   test_cases: number;
   packages: number;
   releases: number;
-  backlog_by_state: Record<WorkItemState, number>;
-  backlog_by_type: Record<WorkItemType, number>;
+  backlog_by_state: Record<string, number>;
+  backlog_by_type: Record<string, number>;
 }
 
 export type IterationState = "planned" | "current" | "closed";
@@ -231,6 +231,10 @@ export interface CreateIterationRequest {
   starts_at: string;
   ends_at: string;
 }
+
+export type UpdateIterationRequest = Omit<Partial<CreateIterationRequest>, "state"> & {
+  state?: IterationState;
+};
 
 export type WorkItemType = "epic" | "feature" | "user_story" | "task" | "bug";
 export type WorkItemState = "new" | "active" | "resolved" | "closed";

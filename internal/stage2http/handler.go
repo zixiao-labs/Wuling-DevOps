@@ -304,12 +304,8 @@ func (h *Handler) listWorkItems(w http.ResponseWriter, r *http.Request) {
 	var iterationID *uuid.UUID
 	if raw := r.URL.Query().Get("iteration_id"); raw != "" {
 		parsed, err := uuid.Parse(raw)
-		if renderError(w, r, func() error {
-			if err != nil {
-				return apperr.New(apperr.CodeBadRequest, "invalid iteration_id")
-			}
-			return nil
-		}()) {
+		if err != nil {
+			renderError(w, r, apperr.New(apperr.CodeBadRequest, "invalid iteration_id"))
 			return
 		}
 		iterationID = &parsed

@@ -2493,7 +2493,7 @@ paths:
       tags: [Stage 2]
       requestBody:
         required: true
-        content: { application/json: { schema: { $ref: "#/components/schemas/CreateIterationRequest" } } }
+        content: { application/json: { schema: { $ref: "#/components/schemas/UpdateIterationRequest" } } }
       responses:
         "200":
           description: updated
@@ -2891,6 +2891,15 @@ components:
     CreateIterationRequest:
       type: object
       required: [name, starts_at, ends_at]
+      properties:
+        name: { type: string, maxLength: 128 }
+        goal: { type: string, maxLength: 1024 }
+        state: { type: string, enum: [planned, current, closed] }
+        starts_at: { type: string, format: date }
+        ends_at: { type: string, format: date }
+
+    UpdateIterationRequest:
+      type: object
       properties:
         name: { type: string, maxLength: 128 }
         goal: { type: string, maxLength: 1024 }
