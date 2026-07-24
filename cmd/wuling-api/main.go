@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/zixiao-labs/wuling-devops/internal/applog"
+	"github.com/zixiao-labs/wuling-devops/internal/artifactclient"
 	"github.com/zixiao-labs/wuling-devops/internal/autoscale"
 	"github.com/zixiao-labs/wuling-devops/internal/config"
 	"github.com/zixiao-labs/wuling-devops/internal/db"
@@ -118,6 +119,10 @@ func run() error {
 	runners := runnerstore.New(pool)
 	pipelines := pipelinestore.New(pool, cfg.Pipeline.LogDir)
 	stage2 := stage2store.New(pool)
+	artifacts, err := artifactclient.New(cfg.Artifacts.BaseURL, cfg.Artifacts.InternalToken)
+	if err != nil {
+		return err
+	}
 
 	handler := server.New(server.Deps{
 		Cfg:       cfg,
@@ -133,6 +138,7 @@ func run() error {
 		Runners:   runners,
 		Pipelines: pipelines,
 		Stage2:    stage2,
+		Artifacts: artifacts,
 	})
 
 	srv := &http.Server{

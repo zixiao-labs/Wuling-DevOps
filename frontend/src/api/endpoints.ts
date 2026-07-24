@@ -752,6 +752,20 @@ export const artifactRegistry = {
     `${projectBase(org, project)}/packages/${enc(packageID)}/versions`,
     body,
   ),
+  uploadVersion: (
+    org: string,
+    project: string,
+    packageID: string,
+    version: string,
+    file: File,
+  ) => {
+    const body = new FormData();
+    body.append("file", file);
+    return apiFetch<PackageVersion>(
+      `${projectBase(org, project)}/packages/${enc(packageID)}/uploads?version=${enc(version)}`,
+      { method: "POST", body },
+    );
+  },
   listReleases: (org: string, project: string) =>
     apiGet<{ releases: ProjectRelease[] }>(`${projectBase(org, project)}/releases`).then(
       (r) => r.releases,

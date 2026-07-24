@@ -38,6 +38,8 @@ services:
       WULING_REPO_ROOT: "/var/lib/wuling/repos"
       WULING_JWT_SECRET: "dev-only-not-a-real-secret"
       WULING_LOG_FORMAT: "json"
+      WULING_ARTIFACTS_BASE_URL: "http://artifacts:8090"
+      WULING_ARTIFACTS_INTERNAL_TOKEN: "dev-artifacts-token"
     ports:
       - "8080:8080"
     volumes:

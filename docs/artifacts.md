@@ -5,6 +5,11 @@ Stage 2 将制品拆成两个边界：
 - `wuling-api` 管理 Package、Version、Release 元数据与项目权限；
 - `wuling-artifacts` 只管理不可变 Blob，可独立扩容和挂载对象存储。
 
+Stage 2.3 增加浏览器手动上传闭环。用户在项目的 Artifacts 页面选择已注册的
+Package、版本号和文件；浏览器只访问 `wuling-api`，由主 API 完成项目权限和版本
+唯一性校验后，使用内部令牌把文件转发到 `wuling-artifacts`。成功响应会记录文件
+大小、SHA-256、Content-Type 和原始文件名。
+
 ## 本地启动
 
 ```bash
@@ -17,6 +22,18 @@ go run ./cmd/wuling-artifacts
 健康检查为 `GET /healthz`。内部 Blob API 位于 `/v1/blobs/{key}`，支持
 `PUT`、`GET`、`HEAD`、`DELETE`，请求需携带
 `Authorization: Bearer <WULING_ARTIFACTS_INTERNAL_TOKEN>`。
+
+主 API 通过以下配置访问该内部接口：
+
+- `WULING_ARTIFACTS_BASE_URL`（Docker Compose 中为 `http://artifacts:8090`）
+- `WULING_ARTIFACTS_INTERNAL_TOKEN`
+- `WULING_ARTIFACTS_MAX_UPLOAD_BYTES`
+
+面向用户的上传接口为
+`POST /api/v1/orgs/{org}/projects/{project}/packages/{package_id}/uploads`，
+版本通过必填的 `version` query 参数传入，请求体使用 `multipart/form-data` 且只包含
+一个 `file` 文件字段。主 API 将文件流式转发，不会先把整个大文件缓存在内存或本地
+磁盘。上传需要项目 `developer` 或更高角色。
 
 ## 对象存储
 

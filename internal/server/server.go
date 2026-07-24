@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/zixiao-labs/wuling-devops/internal/apperr"
+	"github.com/zixiao-labs/wuling-devops/internal/artifactclient"
 	"github.com/zixiao-labs/wuling-devops/internal/auth"
 	"github.com/zixiao-labs/wuling-devops/internal/authhttp"
 	"github.com/zixiao-labs/wuling-devops/internal/config"
@@ -61,6 +62,7 @@ type Deps struct {
 	Runners   *runnerstore.Store
 	Pipelines *pipelinestore.Store
 	Stage2    *stage2store.Store
+	Artifacts *artifactclient.Client
 }
 
 // New returns a router fully wired with all current Stage-1 domains.
@@ -231,6 +233,7 @@ func New(d Deps) http.Handler {
 		if d.Stage2 != nil {
 			(&stage2http.Handler{
 				Users: d.Store, Stage2: d.Stage2, Verifier: verifier, OAT: oauthH,
+				Artifacts: d.Artifacts, MaxUploadBytes: d.Cfg.Artifacts.MaxUploadBytes,
 			}).Mount(api)
 		}
 	})

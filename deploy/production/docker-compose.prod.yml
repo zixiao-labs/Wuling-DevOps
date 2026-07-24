@@ -65,6 +65,7 @@ services:
       # Force-fix a couple of things even if .env disagrees
       WULING_ENV: prod
       WULING_HTTP_ADDR: ":8080"
+      WULING_ARTIFACTS_BASE_URL: "http://artifacts:8090"
     # SSH must be reachable on the public Internet (or whatever
     # network you want git users on). HTTP is only reached via Caddy.
     ports:

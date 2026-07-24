@@ -2682,7 +2682,58 @@ paths:
       summary: Publish package version metadata and allocate its blob key
       tags: [Stage 2]
       responses:
-        "201": { description: version published }
+        "201":
+          description: version published
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PackageVersion" }
+
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/packages/{package_id}/uploads:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - in: path
+        name: package_id
+        required: true
+        schema: { type: string, format: uuid }
+      - in: query
+        name: version
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+    post:
+      summary: Manually upload an immutable package artifact
+      description: |
+        Requires developer access or above. The core API validates project
+        membership, forwards the file to the private Artifact Service, computes
+        SHA-256, and only then records the package version metadata.
+      tags: [Stage 2]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "201":
+          description: artifact uploaded and version published
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PackageVersion" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+        "409": { $ref: "#/components/responses/ConflictError" }
+        "413": { description: artifact exceeds the configured upload limit }
+        "503": { description: Artifact Service unavailable }
 
   /api/v1/orgs/{org_slug}/projects/{project_slug}/releases:
     parameters:
@@ -2988,6 +3039,23 @@ components:
         versions: { type: integer, format: int64 }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    PackageVersion:
+      type: object
+      required: [id, package_id, version, blob_key, size_bytes, sha256, content_type, metadata, published_at]
+      properties:
+        id: { type: string, format: uuid }
+        package_id: { type: string, format: uuid }
+        version: { type: string }
+        blob_key: { type: string }
+        size_bytes: { type: integer, format: int64 }
+        sha256: { type: string, pattern: "^$|^[0-9a-f]{64}$" }
+        content_type: { type: string }
+        metadata:
+          type: object
+          additionalProperties: true
+        published_by: { type: string, format: uuid }
+        published_at: { type: string, format: date-time }
 
     ProjectRelease:
       type: object

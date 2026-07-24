@@ -19,6 +19,7 @@ export type ApiErrorCode =
   | "rate_limited"
   | "unsupported"
   | "bad_request"
+  | "payload_too_large"
   | "internal"
   | "unavailable";
 

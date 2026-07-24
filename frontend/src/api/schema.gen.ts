@@ -5841,6 +5841,87 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
+                    content: {
+                        "application/json": components["schemas"]["PackageVersion"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/projects/{project_slug}/packages/{package_id}/uploads": {
+        parameters: {
+            query: {
+                version: string;
+            };
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+                project_slug: components["parameters"]["ProjectSlug"];
+                package_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Manually upload an immutable package artifact
+         * @description Requires developer access or above. The core API validates project
+         *     membership, forwards the file to the private Artifact Service, computes
+         *     SHA-256, and only then records the package version metadata.
+         */
+        post: {
+            parameters: {
+                query: {
+                    version: string;
+                };
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                    package_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "multipart/form-data": {
+                        /** Format: binary */
+                        file: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description artifact uploaded and version published */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PackageVersion"];
+                    };
+                };
+                400: components["responses"]["ValidationError"];
+                401: components["responses"]["UnauthorizedError"];
+                403: components["responses"]["ForbiddenError"];
+                404: components["responses"]["NotFoundError"];
+                409: components["responses"]["ConflictError"];
+                /** @description artifact exceeds the configured upload limit */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Artifact Service unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
                     content?: never;
                 };
             };
@@ -6160,6 +6241,25 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        PackageVersion: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            package_id: string;
+            version: string;
+            blob_key: string;
+            /** Format: int64 */
+            size_bytes: number;
+            sha256: string;
+            content_type: string;
+            metadata: {
+                [key: string]: unknown;
+            };
+            /** Format: uuid */
+            published_by?: string;
+            /** Format: date-time */
+            published_at: string;
         };
         ProjectRelease: {
             /** Format: uuid */

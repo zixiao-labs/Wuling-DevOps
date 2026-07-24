@@ -28,6 +28,7 @@ type Config struct {
 	Log       LogConfig
 	Secrets   SecretsConfig
 	Pipeline  PipelineConfig
+	Artifacts ArtifactServiceConfig
 	Runner    RunnerConfig
 	Autoscale AutoscaleConfig
 }
@@ -164,6 +165,15 @@ type PipelineConfig struct {
 	LogDir string `env:"WULING_PIPELINE_LOG_DIR" envDefault:"./var/pipeline-logs"`
 }
 
+// ArtifactServiceConfig connects the authenticated core API to the private
+// blob service. InternalToken is shared by both processes and is never exposed
+// to browsers.
+type ArtifactServiceConfig struct {
+	BaseURL        string `env:"WULING_ARTIFACTS_BASE_URL" envDefault:"http://localhost:8090"`
+	InternalToken  string `env:"WULING_ARTIFACTS_INTERNAL_TOKEN"`
+	MaxUploadBytes int64  `env:"WULING_ARTIFACTS_MAX_UPLOAD_BYTES" envDefault:"5368709120"`
+}
+
 // RunnerConfig controls runner registration and the GitOps config repo lookup.
 //
 // ConfigProject/ConfigRepo name the per-org "config" repo whose
@@ -220,6 +230,17 @@ func (c *Config) validate() error {
 	}
 	if c.Storage.AvatarsDir == "" {
 		problems = append(problems, "WULING_AVATARS_DIR must not be empty")
+	}
+	artifactURL, artifactURLErr := url.Parse(c.Artifacts.BaseURL)
+	if artifactURLErr != nil || artifactURL.Scheme == "" || artifactURL.Host == "" ||
+		(artifactURL.Scheme != "http" && artifactURL.Scheme != "https") {
+		problems = append(problems, "WULING_ARTIFACTS_BASE_URL must be an absolute http(s) URL")
+	}
+	if c.Artifacts.MaxUploadBytes < 1 {
+		problems = append(problems, "WULING_ARTIFACTS_MAX_UPLOAD_BYTES must be positive")
+	}
+	if c.IsProd() && c.Artifacts.InternalToken == "" {
+		problems = append(problems, "WULING_ARTIFACTS_INTERNAL_TOKEN must be set in production")
 	}
 	if c.IsProd() && c.OAuth.ProviderHMACSecret == "" {
 		problems = append(problems, "WULING_OAUTH_HMAC_SECRET must be set in production")
