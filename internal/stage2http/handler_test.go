@@ -39,6 +39,16 @@ type fakeArtifactBlobs struct {
 	lastSize int64
 }
 
+type readDeadlineRecorder struct {
+	*httptest.ResponseRecorder
+	deadline time.Time
+}
+
+func (r *readDeadlineRecorder) SetReadDeadline(deadline time.Time) error {
+	r.deadline = deadline
+	return nil
+}
+
 func (f *fakeArtifactBlobs) Put(
 	_ context.Context,
 	key string,
@@ -129,6 +139,24 @@ func newHandlerFixture(t *testing.T) handlerFixture {
 		reporterToken:  issue(reporter.ID, reporter.Username),
 		blobs:          blobs,
 	}
+}
+
+func TestUploadReadDeadline(t *testing.T) {
+	const timeout = 2 * time.Hour
+	h := &Handler{UploadReadTimeout: timeout}
+	recorder := &readDeadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
+	request := httptest.NewRequest(http.MethodPost, "/uploads", nil)
+	called := false
+	handler := h.withUploadReadDeadline(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		called = true
+	}))
+
+	started := time.Now()
+	handler.ServeHTTP(recorder, request)
+
+	require.True(t, called)
+	require.False(t, recorder.deadline.Before(started.Add(timeout)))
+	require.False(t, recorder.deadline.After(time.Now().Add(timeout)))
 }
 
 func requestJSON(t *testing.T, router http.Handler, token, method, path, body string) (int, map[string]any) {

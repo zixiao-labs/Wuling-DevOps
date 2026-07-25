@@ -234,6 +234,7 @@ func New(d Deps) http.Handler {
 			(&stage2http.Handler{
 				Users: d.Store, Stage2: d.Stage2, Verifier: verifier, OAT: oauthH,
 				Artifacts: d.Artifacts, MaxUploadBytes: d.Cfg.Artifacts.MaxUploadBytes,
+				UploadReadTimeout: d.Cfg.Artifacts.RequestTimeout,
 			}).Mount(api)
 		}
 	})

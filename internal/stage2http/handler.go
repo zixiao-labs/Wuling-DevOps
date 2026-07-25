@@ -27,12 +27,13 @@ import (
 )
 
 type Handler struct {
-	Users          *userstore.Store
-	Stage2         *stage2store.Store
-	Verifier       *auth.Verifier
-	OAT            auth.OATResolver
-	Artifacts      artifactBlobs
-	MaxUploadBytes int64
+	Users             *userstore.Store
+	Stage2            *stage2store.Store
+	Verifier          *auth.Verifier
+	OAT               auth.OATResolver
+	Artifacts         artifactBlobs
+	MaxUploadBytes    int64
+	UploadReadTimeout time.Duration
 }
 
 type artifactBlobs interface {
@@ -69,12 +70,22 @@ func (h *Handler) Mount(r chi.Router) {
 		r.Post(base+"/packages", h.createPackage)
 		r.Get(base+"/packages/{package_id}/versions", h.listVersions)
 		r.Post(base+"/packages/{package_id}/versions", h.publishVersion)
-		r.Post(base+"/packages/{package_id}/uploads", h.uploadVersion)
+		r.With(h.withUploadReadDeadline).Post(base+"/packages/{package_id}/uploads", h.uploadVersion)
 		r.Get(base+"/releases", h.listReleases)
 		r.Post(base+"/releases", h.createRelease)
 
 		r.Get(base+"/repos/{repo_slug}/settings", h.getRepoSettings)
 		r.Patch(base+"/repos/{repo_slug}/settings", h.updateRepoSettings)
+	})
+}
+
+func (h *Handler) withUploadReadDeadline(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h.UploadReadTimeout > 0 {
+			// Override the server-wide deadline only for streamed artifact uploads.
+			_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(h.UploadReadTimeout))
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 
