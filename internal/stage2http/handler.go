@@ -3,15 +3,23 @@
 package stage2http
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/zixiao-labs/wuling-devops/internal/apperr"
+	"github.com/zixiao-labs/wuling-devops/internal/artifactclient"
 	"github.com/zixiao-labs/wuling-devops/internal/auth"
 	"github.com/zixiao-labs/wuling-devops/internal/httpapi"
 	"github.com/zixiao-labs/wuling-devops/internal/stage2store"
@@ -19,10 +27,18 @@ import (
 )
 
 type Handler struct {
-	Users    *userstore.Store
-	Stage2   *stage2store.Store
-	Verifier *auth.Verifier
-	OAT      auth.OATResolver
+	Users             *userstore.Store
+	Stage2            *stage2store.Store
+	Verifier          *auth.Verifier
+	OAT               auth.OATResolver
+	Artifacts         artifactBlobs
+	MaxUploadBytes    int64
+	UploadReadTimeout time.Duration
+}
+
+type artifactBlobs interface {
+	Put(context.Context, string, io.Reader, int64, string) (*artifactclient.ObjectInfo, error)
+	Delete(context.Context, string) error
 }
 
 func (h *Handler) Mount(r chi.Router) {
@@ -54,11 +70,22 @@ func (h *Handler) Mount(r chi.Router) {
 		r.Post(base+"/packages", h.createPackage)
 		r.Get(base+"/packages/{package_id}/versions", h.listVersions)
 		r.Post(base+"/packages/{package_id}/versions", h.publishVersion)
+		r.With(h.withUploadReadDeadline).Post(base+"/packages/{package_id}/uploads", h.uploadVersion)
 		r.Get(base+"/releases", h.listReleases)
 		r.Post(base+"/releases", h.createRelease)
 
 		r.Get(base+"/repos/{repo_slug}/settings", h.getRepoSettings)
 		r.Patch(base+"/repos/{repo_slug}/settings", h.updateRepoSettings)
+	})
+}
+
+func (h *Handler) withUploadReadDeadline(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h.UploadReadTimeout > 0 {
+			// Override the server-wide deadline only for streamed artifact uploads.
+			_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(h.UploadReadTimeout))
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -623,6 +650,173 @@ func (h *Handler) publishVersion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpapi.WriteJSON(w, http.StatusCreated, out)
+}
+
+const (
+	defaultMaxArtifactUpload = int64(5 * 1024 * 1024 * 1024)
+	multipartOverhead        = int64(1 * 1024 * 1024)
+)
+
+func (h *Handler) maxArtifactUpload() int64 {
+	if h.MaxUploadBytes > 0 {
+		return h.MaxUploadBytes
+	}
+	return defaultMaxArtifactUpload
+}
+
+func (h *Handler) uploadVersion(w http.ResponseWriter, r *http.Request) {
+	pc, err := h.resolveProject(r)
+	if renderError(w, r, err) || renderError(w, r, requireWrite(pc)) {
+		return
+	}
+	if h.Artifacts == nil {
+		renderError(w, r, apperr.New(apperr.CodeUnavailable, "artifact service is unavailable"))
+		return
+	}
+	packageID, err := parseUUIDParam(r, "package_id")
+	if renderError(w, r, err) {
+		return
+	}
+
+	maxUpload := h.maxArtifactUpload()
+	if r.ContentLength > maxUpload+multipartOverhead {
+		renderError(w, r, apperr.New(apperr.CodePayloadTooLarge, "artifact exceeds upload limit"))
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxUpload+multipartOverhead)
+	version := strings.TrimSpace(r.URL.Query().Get("version"))
+	if version == "" || len(version) > 128 {
+		renderError(w, r, apperr.Validation("version must be between 1 and 128 characters", map[string]any{
+			"version": "required,max=128",
+		}))
+		return
+	}
+
+	blobKey, err := h.Stage2.PrepareVersionUpload(r.Context(), pc.ProjectID, packageID, version)
+	if renderError(w, r, err) {
+		return
+	}
+	reader, err := r.MultipartReader()
+	if err != nil {
+		renderError(w, r, apperr.Wrap(apperr.CodeBadRequest, "invalid multipart upload", err))
+		return
+	}
+
+	var (
+		info     *artifactclient.ObjectInfo
+		digest   = sha256.New()
+		filename string
+	)
+	for {
+		part, nextErr := reader.NextPart()
+		if errors.Is(nextErr, io.EOF) {
+			break
+		}
+		if nextErr != nil {
+			if info != nil {
+				h.deleteUploadedBlob(blobKey)
+			}
+			var maxErr *http.MaxBytesError
+			if errors.As(nextErr, &maxErr) {
+				renderError(w, r, apperr.New(apperr.CodePayloadTooLarge, "artifact exceeds upload limit"))
+			} else {
+				renderError(w, r, apperr.Wrap(apperr.CodeBadRequest, "invalid multipart upload", nextErr))
+			}
+			return
+		}
+		if part.FormName() != "file" || part.FileName() == "" {
+			_ = part.Close()
+			if info != nil {
+				h.deleteUploadedBlob(blobKey)
+			}
+			renderError(w, r, apperr.Validation("multipart upload only accepts one file field", map[string]any{
+				"file": "required",
+			}))
+			return
+		}
+		if info != nil {
+			_ = part.Close()
+			h.deleteUploadedBlob(blobKey)
+			renderError(w, r, apperr.Validation("exactly one artifact file is required", map[string]any{
+				"file": "max=1",
+			}))
+			return
+		}
+		filename = strings.TrimSpace(part.FileName())
+		if filename == "" {
+			filename = "artifact"
+		}
+		if len(filename) > 1024 {
+			_ = part.Close()
+			renderError(w, r, apperr.Validation("artifact filename is too long", map[string]any{
+				"file": "max=1024",
+			}))
+			return
+		}
+		contentType := part.Header.Get("Content-Type")
+		if contentType == "" {
+			contentType = "application/octet-stream"
+		}
+		info, err = h.Artifacts.Put(
+			r.Context(),
+			blobKey,
+			io.TeeReader(part, digest),
+			-1,
+			contentType,
+		)
+		_ = part.Close()
+		if err != nil {
+			var maxErr *http.MaxBytesError
+			switch {
+			case errors.Is(err, artifactclient.ErrAlreadyExists):
+				err = apperr.New(apperr.CodeAlreadyExists, "package version blob already exists")
+			case errors.Is(err, artifactclient.ErrTooLarge), errors.As(err, &maxErr):
+				err = apperr.New(apperr.CodePayloadTooLarge, "artifact exceeds upload limit")
+			default:
+				err = apperr.Wrap(apperr.CodeUnavailable, "artifact service upload failed", err)
+			}
+			renderError(w, r, err)
+			return
+		}
+		if info.ContentType == "" {
+			info.ContentType = contentType
+		}
+	}
+	if info == nil {
+		renderError(w, r, apperr.Validation("exactly one artifact file is required", map[string]any{
+			"file": "required",
+		}))
+		return
+	}
+
+	metadata, err := json.Marshal(map[string]any{
+		"filename": filename,
+		"source":   "manual",
+	})
+	if err != nil {
+		h.deleteUploadedBlob(blobKey)
+		renderError(w, r, apperr.Internal(err))
+		return
+	}
+	out, err := h.Stage2.PublishVersion(r.Context(), stage2store.PublishVersionParams{
+		ProjectID: pc.ProjectID, PackageID: packageID, Version: version,
+		SizeBytes: info.Size, SHA256: hex.EncodeToString(digest.Sum(nil)), ContentType: info.ContentType,
+		Metadata: metadata, PublishedBy: pc.UserID,
+	})
+	if err != nil {
+		h.deleteUploadedBlob(blobKey)
+		renderError(w, r, err)
+		return
+	}
+	httpapi.WriteJSON(w, http.StatusCreated, out)
+}
+
+func (h *Handler) deleteUploadedBlob(key string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := h.Artifacts.Delete(ctx, key); err != nil {
+		slog.Warn("clean up artifact blob after metadata failure", "key", key, "err", err)
+	}
 }
 
 func (h *Handler) listReleases(w http.ResponseWriter, r *http.Request) {

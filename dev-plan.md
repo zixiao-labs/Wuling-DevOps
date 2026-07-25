@@ -10,6 +10,13 @@ Repo，Issue，Merge Request，Pipelines（需要容器运行时），Wiki，Ins
 > Package/Release 元数据与独立 Artifact Blob Service 已落地。下一步继续实现各 Registry
 > 的原生协议适配（npm/PyPI/Cargo/Docker/Logos）和 Blob 上传授权闭环。
 
+### Stage 2.3：手动上传 Artifacts
+
+- [x] 项目成员可从 Artifacts 页面选择 Package、版本和本地文件手动上传。
+- [x] `wuling-api` 完成项目权限、版本唯一性和上传大小校验，内部令牌不会暴露给浏览器。
+- [x] 文件写入独立 Artifact Service 后自动记录大小、SHA-256、Content-Type 和原始文件名。
+- [x] Blob 写入或元数据落库失败时返回稳定错误，并尽力清理未完成的不可变对象。
+
 Project Setup（类似Azure DevOps的操作逻辑）
 
 Project Dashboard（看板和Scrum并记录所有Backlog）

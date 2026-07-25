@@ -2,10 +2,14 @@ package stage2http
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -13,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zixiao-labs/wuling-devops/internal/artifactclient"
 	"github.com/zixiao-labs/wuling-devops/internal/auth"
 	"github.com/zixiao-labs/wuling-devops/internal/config"
 	"github.com/zixiao-labs/wuling-devops/internal/stage2store"
@@ -26,6 +31,48 @@ type handlerFixture struct {
 	ownerToken     string
 	developerToken string
 	reporterToken  string
+	blobs          *fakeArtifactBlobs
+}
+
+type fakeArtifactBlobs struct {
+	objects  map[string][]byte
+	lastSize int64
+}
+
+type readDeadlineRecorder struct {
+	*httptest.ResponseRecorder
+	deadline time.Time
+}
+
+func (r *readDeadlineRecorder) SetReadDeadline(deadline time.Time) error {
+	r.deadline = deadline
+	return nil
+}
+
+func (f *fakeArtifactBlobs) Put(
+	_ context.Context,
+	key string,
+	body io.Reader,
+	size int64,
+	contentType string,
+) (*artifactclient.ObjectInfo, error) {
+	f.lastSize = size
+	if _, exists := f.objects[key]; exists {
+		return nil, artifactclient.ErrAlreadyExists
+	}
+	value, err := io.ReadAll(body)
+	if err != nil {
+		return nil, fmt.Errorf("upload artifact blob: %w", err)
+	}
+	f.objects[key] = value
+	return &artifactclient.ObjectInfo{
+		Key: key, Size: int64(len(value)), ContentType: contentType,
+	}, nil
+}
+
+func (f *fakeArtifactBlobs) Delete(_ context.Context, key string) error {
+	delete(f.objects, key)
+	return nil
 }
 
 func newHandlerFixture(t *testing.T) handlerFixture {
@@ -77,8 +124,10 @@ func newHandlerFixture(t *testing.T) handlerFixture {
 		return token
 	}
 
+	blobs := &fakeArtifactBlobs{objects: make(map[string][]byte)}
 	h := &Handler{
 		Users: users, Stage2: stage2store.New(pool), Verifier: auth.NewVerifier(jwtConfig),
+		Artifacts: blobs, MaxUploadBytes: 1 << 20,
 	}
 	router := chi.NewRouter()
 	router.Route("/api/v1", func(api chi.Router) { h.Mount(api) })
@@ -88,7 +137,26 @@ func newHandlerFixture(t *testing.T) handlerFixture {
 		ownerToken:     issue(owner.ID, owner.Username),
 		developerToken: issue(developer.ID, developer.Username),
 		reporterToken:  issue(reporter.ID, reporter.Username),
+		blobs:          blobs,
 	}
+}
+
+func TestUploadReadDeadline(t *testing.T) {
+	const timeout = 2 * time.Hour
+	h := &Handler{UploadReadTimeout: timeout}
+	recorder := &readDeadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
+	request := httptest.NewRequest(http.MethodPost, "/uploads", nil)
+	called := false
+	handler := h.withUploadReadDeadline(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		called = true
+	}))
+
+	started := time.Now()
+	handler.ServeHTTP(recorder, request)
+
+	require.True(t, called)
+	require.False(t, recorder.deadline.Before(started.Add(timeout)))
+	require.False(t, recorder.deadline.After(time.Now().Add(timeout)))
 }
 
 func requestJSON(t *testing.T, router http.Handler, token, method, path, body string) (int, map[string]any) {
@@ -109,6 +177,58 @@ func requestJSON(t *testing.T, router http.Handler, token, method, path, body st
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 
+	payload := map[string]any{}
+	if response.Body.Len() > 0 {
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &payload), response.Body.String())
+	}
+	return response.Code, payload
+}
+
+func requestUpload(
+	t *testing.T,
+	router http.Handler,
+	token, path, version, filename string,
+	content []byte,
+) (int, map[string]any) {
+	t.Helper()
+	return requestUploadWithMode(t, router, token, path, version, filename, content, false)
+}
+
+func requestChunkedUpload(
+	t *testing.T,
+	router http.Handler,
+	token, path, version, filename string,
+	content []byte,
+) (int, map[string]any) {
+	t.Helper()
+	return requestUploadWithMode(t, router, token, path, version, filename, content, true)
+}
+
+func requestUploadWithMode(
+	t *testing.T,
+	router http.Handler,
+	token, path, version, filename string,
+	content []byte,
+	chunked bool,
+) (int, map[string]any) {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	file, err := writer.CreateFormFile("file", filename)
+	require.NoError(t, err)
+	_, err = file.Write(content)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	request := httptest.NewRequest(http.MethodPost, path+"?version="+url.QueryEscape(version), &body)
+	if chunked {
+		request.ContentLength = -1
+		request.TransferEncoding = []string{"chunked"}
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
 	payload := map[string]any{}
 	if response.Body.Len() > 0 {
 		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &payload), response.Body.String())
@@ -240,4 +360,91 @@ func TestMountRepresentativeRouteLifecycle(t *testing.T) {
 	status, payload = requestJSON(t, fixture.router, fixture.ownerToken, http.MethodPatch, fixture.base+"/repos/api/settings", `{"topics":[" DevOps ","go"],"merge_strategies":["squash"]}`)
 	require.Equal(t, http.StatusOK, status)
 	require.Equal(t, []any{"devops", "go"}, payload["topics"])
+}
+
+func TestManualArtifactUploadLifecycle(t *testing.T) {
+	fixture := newHandlerFixture(t)
+	status, payload := requestJSON(
+		t,
+		fixture.router,
+		fixture.ownerToken,
+		http.MethodPost,
+		fixture.base+"/packages",
+		`{"kind":"cargo","name":"wuling-cli"}`,
+	)
+	require.Equal(t, http.StatusCreated, status)
+	packageID := responseID(t, payload)
+	uploadPath := fixture.base + "/packages/" + packageID + "/uploads"
+
+	status, payload = requestUpload(
+		t,
+		fixture.router,
+		fixture.developerToken,
+		uploadPath,
+		"2.3.0",
+		"wuling-cli.tar.gz",
+		[]byte("manual artifact"),
+	)
+	require.Equal(t, http.StatusCreated, status)
+	require.Equal(t, "2.3.0", payload["version"])
+	require.Equal(t, float64(len("manual artifact")), payload["size_bytes"])
+	require.Len(t, payload["sha256"], 64)
+	metadata, ok := payload["metadata"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "wuling-cli.tar.gz", metadata["filename"])
+	require.Equal(t, "manual", metadata["source"])
+	require.Len(t, fixture.blobs.objects, 1)
+	require.Equal(t, int64(-1), fixture.blobs.lastSize, "manual uploads should stream without pre-buffering")
+
+	status, payload = requestUpload(
+		t,
+		fixture.router,
+		fixture.developerToken,
+		uploadPath,
+		"2.3.0",
+		"duplicate.tar.gz",
+		[]byte("duplicate"),
+	)
+	require.Equal(t, http.StatusConflict, status)
+	requireErrorCode(t, payload, "already_exists")
+	require.Len(t, fixture.blobs.objects, 1)
+
+	status, payload = requestUpload(
+		t,
+		fixture.router,
+		fixture.reporterToken,
+		uploadPath,
+		"2.3.1",
+		"denied.tar.gz",
+		[]byte("denied"),
+	)
+	require.Equal(t, http.StatusForbidden, status)
+	requireErrorCode(t, payload, "forbidden")
+	require.Len(t, fixture.blobs.objects, 1)
+
+	status, payload = requestUpload(
+		t,
+		fixture.router,
+		fixture.developerToken,
+		uploadPath,
+		"2.3.2",
+		"too-large.tar.gz",
+		make([]byte, 2<<20),
+	)
+	require.Equal(t, http.StatusRequestEntityTooLarge, status)
+	requireErrorCode(t, payload, "payload_too_large")
+	require.Len(t, fixture.blobs.objects, 1)
+
+	status, payload = requestChunkedUpload(
+		t,
+		fixture.router,
+		fixture.developerToken,
+		uploadPath,
+		"2.3.3",
+		"too-large-chunked.tar.gz",
+		make([]byte, 2<<20),
+	)
+	require.Equal(t, http.StatusRequestEntityTooLarge, status)
+	requireErrorCode(t, payload, "payload_too_large")
+	require.Len(t, fixture.blobs.objects, 1)
 }

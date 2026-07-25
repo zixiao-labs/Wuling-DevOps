@@ -15,18 +15,19 @@ import (
 type Code string
 
 const (
-	CodeInternal       Code = "internal"
-	CodeValidation     Code = "validation"
-	CodeUnauthorized   Code = "unauthorized"
-	CodeForbidden      Code = "forbidden"
-	CodeNotFound       Code = "not_found"
-	CodeConflict       Code = "conflict"
-	CodeRateLimited    Code = "rate_limited"
-	CodeUnavailable    Code = "unavailable"
-	CodeUnsupported    Code = "unsupported"
-	CodeBadRequest     Code = "bad_request"
-	CodeAlreadyExists  Code = "already_exists"
-	CodeAuthentication Code = "authentication"
+	CodeInternal        Code = "internal"
+	CodeValidation      Code = "validation"
+	CodeUnauthorized    Code = "unauthorized"
+	CodeForbidden       Code = "forbidden"
+	CodeNotFound        Code = "not_found"
+	CodeConflict        Code = "conflict"
+	CodeRateLimited     Code = "rate_limited"
+	CodeUnavailable     Code = "unavailable"
+	CodeUnsupported     Code = "unsupported"
+	CodeBadRequest      Code = "bad_request"
+	CodePayloadTooLarge Code = "payload_too_large"
+	CodeAlreadyExists   Code = "already_exists"
+	CodeAuthentication  Code = "authentication"
 )
 
 // Error is the canonical API-layer error.
@@ -61,6 +62,8 @@ func (e *Error) HTTPStatus() int {
 		return 409
 	case CodeUnsupported:
 		return 415
+	case CodePayloadTooLarge:
+		return 413
 	case CodeRateLimited:
 		return 429
 	case CodeUnavailable:

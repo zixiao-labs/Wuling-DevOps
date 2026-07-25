@@ -254,6 +254,40 @@ func (s *Store) ListPackages(ctx context.Context, projectID uuid.UUID) ([]model.
 	return out, mapDBError(rows.Err(), "packages")
 }
 
+// PrepareVersionUpload validates the package boundary before the API sends a
+// potentially large body to the blob service. PublishVersion still performs
+// the authoritative insert, so concurrent uploads remain protected by the
+// immutable blob write and the database unique constraint.
+func (s *Store) PrepareVersionUpload(
+	ctx context.Context,
+	projectID, packageID uuid.UUID,
+	version string,
+) (string, error) {
+	version = strings.TrimSpace(version)
+	var packageExists, versionExists bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT
+			EXISTS (
+				SELECT 1 FROM artifact_packages
+				WHERE id = $1 AND project_id = $2
+			),
+			EXISTS (
+				SELECT 1 FROM artifact_package_versions
+				WHERE package_id = $1 AND version = $3
+			)
+	`, packageID, projectID, version).Scan(&packageExists, &versionExists)
+	if err != nil {
+		return "", apperr.Internal(err)
+	}
+	if !packageExists {
+		return "", apperr.NotFound("package")
+	}
+	if versionExists {
+		return "", apperr.New(apperr.CodeAlreadyExists, "package version already exists")
+	}
+	return formatBlobKey(projectID, packageID, version), nil
+}
+
 type PublishVersionParams struct {
 	ProjectID   uuid.UUID
 	PackageID   uuid.UUID
@@ -276,11 +310,17 @@ func (s *Store) PublishVersion(ctx context.Context, p PublishVersionParams) (*mo
 	if out.ContentType == "" {
 		out.ContentType = "application/octet-stream"
 	}
-	err := s.pool.QueryRow(ctx, `INSERT INTO artifact_package_versions
-		(id, package_id, version, blob_key, size_bytes, sha256, content_type, metadata, published_by)
-		SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9
-		WHERE EXISTS (SELECT 1 FROM artifact_packages WHERE id = $2 AND project_id = $10)
-		RETURNING published_at`, out.ID, out.PackageID, out.Version, out.BlobKey,
+	err := s.pool.QueryRow(ctx, `WITH inserted AS (
+			INSERT INTO artifact_package_versions
+				(id, package_id, version, blob_key, size_bytes, sha256, content_type, metadata, published_by)
+			SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9
+			WHERE EXISTS (SELECT 1 FROM artifact_packages WHERE id = $2 AND project_id = $10)
+			RETURNING published_at
+		), touched AS (
+			UPDATE artifact_packages SET updated_at = now()
+			WHERE id = $2 AND EXISTS (SELECT 1 FROM inserted)
+		)
+		SELECT published_at FROM inserted`, out.ID, out.PackageID, out.Version, out.BlobKey,
 		out.SizeBytes, out.SHA256, out.ContentType, out.Metadata, out.PublishedBy,
 		p.ProjectID).Scan(&out.PublishedAt)
 	if err != nil {
