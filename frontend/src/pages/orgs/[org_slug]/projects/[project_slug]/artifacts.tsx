@@ -82,12 +82,20 @@ export default function ArtifactsPage() {
     void load();
   }, [load]);
 
-  function closePanel() {
-    setPanelMode(null);
+  function resetPanel(nextMode: PanelMode) {
+    setName("");
+    setKind("npm");
+    setTag("");
+    setNotes("");
     setUploaded(null);
     setUploadVersion("");
     setUploadFile(null);
     setUploadInputKey((value) => value + 1);
+    setPanelMode(nextMode);
+  }
+
+  function closePanel() {
+    resetPanel(null);
   }
 
   async function create(e: React.SyntheticEvent<HTMLFormElement>) {
@@ -108,10 +116,7 @@ export default function ArtifactsPage() {
           publish: true,
         });
       }
-      setName("");
-      setTag("");
-      setNotes("");
-      setPanelMode(null);
+      closePanel();
       await load();
     } catch (err) {
       setError(err as ApiError);
@@ -161,27 +166,18 @@ export default function ArtifactsPage() {
           <>
             <Button
               variant="secondary"
-              onPress={() => {
-                setUploaded(null);
-                setPanelMode("release");
-              }}
+              onPress={() => resetPanel("release")}
             >
               <Plus width={14} height={14} /> Release
             </Button>
             <Button
               variant="secondary"
-              onPress={() => {
-                setUploaded(null);
-                setPanelMode("package");
-              }}
+              onPress={() => resetPanel("package")}
             >
               <Plus width={14} height={14} /> Package
             </Button>
             <Button
-              onPress={() => {
-                setUploaded(null);
-                setPanelMode("upload");
-              }}
+              onPress={() => resetPanel("upload")}
               isDisabled={packages?.length === 0}
             >
               <FileArrowUp width={14} height={14} /> 上传 Artifact

@@ -28,6 +28,9 @@ go run ./cmd/wuling-artifacts
 - `WULING_ARTIFACTS_BASE_URL`（Docker Compose 中为 `http://artifacts:8090`）
 - `WULING_ARTIFACTS_INTERNAL_TOKEN`
 - `WULING_ARTIFACTS_MAX_UPLOAD_BYTES`
+- `WULING_ARTIFACTS_CONNECT_TIMEOUT`（默认 `10s`）
+- `WULING_ARTIFACTS_RESPONSE_HEADER_TIMEOUT`（默认 `2m`）
+- `WULING_ARTIFACTS_REQUEST_TIMEOUT`（默认 `2h`，覆盖上传与后端处理）
 
 面向用户的上传接口为
 `POST /api/v1/orgs/{org}/projects/{project}/packages/{package_id}/uploads`，

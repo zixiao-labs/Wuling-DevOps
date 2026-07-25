@@ -52,7 +52,7 @@ func (f *fakeArtifactBlobs) Put(
 	}
 	value, err := io.ReadAll(body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("upload artifact blob: %w", err)
 	}
 	f.objects[key] = value
 	return &artifactclient.ObjectInfo{
@@ -163,6 +163,27 @@ func requestUpload(
 	content []byte,
 ) (int, map[string]any) {
 	t.Helper()
+	return requestUploadWithMode(t, router, token, path, version, filename, content, false)
+}
+
+func requestChunkedUpload(
+	t *testing.T,
+	router http.Handler,
+	token, path, version, filename string,
+	content []byte,
+) (int, map[string]any) {
+	t.Helper()
+	return requestUploadWithMode(t, router, token, path, version, filename, content, true)
+}
+
+func requestUploadWithMode(
+	t *testing.T,
+	router http.Handler,
+	token, path, version, filename string,
+	content []byte,
+	chunked bool,
+) (int, map[string]any) {
+	t.Helper()
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	file, err := writer.CreateFormFile("file", filename)
@@ -172,6 +193,10 @@ func requestUpload(
 	require.NoError(t, writer.Close())
 
 	request := httptest.NewRequest(http.MethodPost, path+"?version="+url.QueryEscape(version), &body)
+	if chunked {
+		request.ContentLength = -1
+		request.TransferEncoding = []string{"chunked"}
+	}
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Content-Type", writer.FormDataContentType())
 	response := httptest.NewRecorder()
@@ -376,6 +401,19 @@ func TestManualArtifactUploadLifecycle(t *testing.T) {
 		uploadPath,
 		"2.3.2",
 		"too-large.tar.gz",
+		make([]byte, 2<<20),
+	)
+	require.Equal(t, http.StatusRequestEntityTooLarge, status)
+	requireErrorCode(t, payload, "payload_too_large")
+	require.Len(t, fixture.blobs.objects, 1)
+
+	status, payload = requestChunkedUpload(
+		t,
+		fixture.router,
+		fixture.developerToken,
+		uploadPath,
+		"2.3.3",
+		"too-large-chunked.tar.gz",
 		make([]byte, 2<<20),
 	)
 	require.Equal(t, http.StatusRequestEntityTooLarge, status)

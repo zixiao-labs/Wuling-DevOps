@@ -9,9 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 var (
@@ -32,7 +34,13 @@ type Client struct {
 	httpClient *http.Client
 }
 
-func New(baseURL, token string) (*Client, error) {
+type Options struct {
+	ConnectTimeout        time.Duration
+	ResponseHeaderTimeout time.Duration
+	RequestTimeout        time.Duration
+}
+
+func New(baseURL, token string, options Options) (*Client, error) {
 	parsed, err := url.Parse(strings.TrimRight(strings.TrimSpace(baseURL), "/"))
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return nil, errors.New("artifact service base URL must be an absolute URL")
@@ -40,10 +48,24 @@ func New(baseURL, token string) (*Client, error) {
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return nil, errors.New("artifact service base URL must use http or https")
 	}
+	if options.ConnectTimeout <= 0 ||
+		options.ResponseHeaderTimeout <= 0 ||
+		options.RequestTimeout <= 0 {
+		return nil, errors.New("artifact service HTTP timeouts must be positive")
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = (&net.Dialer{
+		Timeout:   options.ConnectTimeout,
+		KeepAlive: 30 * time.Second,
+	}).DialContext
+	transport.ResponseHeaderTimeout = options.ResponseHeaderTimeout
 	return &Client{
-		baseURL:    parsed,
-		token:      strings.TrimSpace(token),
-		httpClient: &http.Client{},
+		baseURL: parsed,
+		token:   strings.TrimSpace(token),
+		httpClient: &http.Client{
+			Transport: transport,
+			Timeout:   options.RequestTimeout,
+		},
 	}, nil
 }
 

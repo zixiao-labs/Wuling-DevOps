@@ -8,9 +8,16 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+var testOptions = Options{
+	ConnectTimeout:        time.Second,
+	ResponseHeaderTimeout: time.Second,
+	RequestTimeout:        time.Minute,
+}
 
 func TestPutAndDelete(t *testing.T) {
 	t.Parallel()
@@ -37,7 +44,7 @@ func TestPutAndDelete(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New(server.URL, "shared-token")
+	client, err := New(server.URL, "shared-token", testOptions)
 	require.NoError(t, err)
 	key := "projects/project/packages/package/1.0.0"
 	info, err := client.Put(context.Background(), key, strings.NewReader("artifact"), 8, "application/gzip")
@@ -63,10 +70,45 @@ func TestPutMapsServiceConflictsAndLimits(t *testing.T) {
 				w.WriteHeader(test.status)
 			}))
 			defer server.Close()
-			client, err := New(server.URL, "")
+			client, err := New(server.URL, "", testOptions)
 			require.NoError(t, err)
 			_, err = client.Put(context.Background(), "packages/a/1", strings.NewReader("x"), 1, "")
 			require.True(t, errors.Is(err, test.want))
+		})
+	}
+}
+
+func TestNewConfiguresHTTPTimeouts(t *testing.T) {
+	t.Parallel()
+	options := Options{
+		ConnectTimeout:        2 * time.Second,
+		ResponseHeaderTimeout: 3 * time.Second,
+		RequestTimeout:        4 * time.Second,
+	}
+	client, err := New("https://artifacts.example.com", "", options)
+	require.NoError(t, err)
+	require.Equal(t, options.RequestTimeout, client.httpClient.Timeout)
+	transport, ok := client.httpClient.Transport.(*http.Transport)
+	require.True(t, ok)
+	require.NotNil(t, transport.DialContext)
+	require.Equal(t, options.ResponseHeaderTimeout, transport.ResponseHeaderTimeout)
+}
+
+func TestNewRejectsNonPositiveHTTPTimeouts(t *testing.T) {
+	t.Parallel()
+	for _, field := range []string{"connect", "response header", "request"} {
+		t.Run(field, func(t *testing.T) {
+			options := testOptions
+			switch field {
+			case "connect":
+				options.ConnectTimeout = 0
+			case "response header":
+				options.ResponseHeaderTimeout = 0
+			case "request":
+				options.RequestTimeout = 0
+			}
+			_, err := New("https://artifacts.example.com", "", options)
+			require.EqualError(t, err, "artifact service HTTP timeouts must be positive")
 		})
 	}
 }

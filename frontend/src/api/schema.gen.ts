@@ -5915,14 +5915,18 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
                 };
                 /** @description Artifact Service unavailable */
                 503: {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
                 };
             };
         };
@@ -6288,7 +6292,7 @@ export interface components {
         Error: {
             error: {
                 /** @enum {string} */
-                code: "validation" | "unauthorized" | "forbidden" | "not_found" | "conflict" | "already_exists" | "rate_limited" | "unsupported" | "bad_request" | "internal" | "unavailable";
+                code: "validation" | "unauthorized" | "forbidden" | "not_found" | "conflict" | "already_exists" | "rate_limited" | "unsupported" | "bad_request" | "payload_too_large" | "internal" | "unavailable";
                 message: string;
                 details?: {
                     [key: string]: unknown;

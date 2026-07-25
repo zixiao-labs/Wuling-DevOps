@@ -119,7 +119,15 @@ func run() error {
 	runners := runnerstore.New(pool)
 	pipelines := pipelinestore.New(pool, cfg.Pipeline.LogDir)
 	stage2 := stage2store.New(pool)
-	artifacts, err := artifactclient.New(cfg.Artifacts.BaseURL, cfg.Artifacts.InternalToken)
+	artifacts, err := artifactclient.New(
+		cfg.Artifacts.BaseURL,
+		cfg.Artifacts.InternalToken,
+		artifactclient.Options{
+			ConnectTimeout:        cfg.Artifacts.ConnectTimeout,
+			ResponseHeaderTimeout: cfg.Artifacts.ResponseHeaderTimeout,
+			RequestTimeout:        cfg.Artifacts.RequestTimeout,
+		},
+	)
 	if err != nil {
 		return err
 	}

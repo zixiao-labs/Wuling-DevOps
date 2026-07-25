@@ -2732,8 +2732,16 @@ paths:
         "403": { $ref: "#/components/responses/ForbiddenError" }
         "404": { $ref: "#/components/responses/NotFoundError" }
         "409": { $ref: "#/components/responses/ConflictError" }
-        "413": { description: artifact exceeds the configured upload limit }
-        "503": { description: Artifact Service unavailable }
+        "413":
+          description: artifact exceeds the configured upload limit
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: Artifact Service unavailable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/v1/orgs/{org_slug}/projects/{project_slug}/releases:
     parameters:
@@ -3105,6 +3113,7 @@ components:
                 - rate_limited
                 - unsupported
                 - bad_request
+                - payload_too_large
                 - internal
                 - unavailable
             message: { type: string }
