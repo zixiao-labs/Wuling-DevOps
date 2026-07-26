@@ -2752,7 +2752,8 @@ paths:
       description: |
         Requires developer access or above. For both Package and Release key
         layouts, the core API uploads a unique test file to the private Artifact
-        Service, downloads and verifies its contents, then deletes it.
+        Service, downloads and verifies its contents, then deletes it. Tests are
+        limited to once per project per minute.
       tags: [Stage 2]
       responses:
         "200":
@@ -2763,11 +2764,35 @@ paths:
         "401": { $ref: "#/components/responses/UnauthorizedError" }
         "403": { $ref: "#/components/responses/ForbiddenError" }
         "404": { $ref: "#/components/responses/NotFoundError" }
+        "429":
+          description: A configuration test is already in the project cooldown window
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "503":
           description: At least one Artifact Service lifecycle operation failed
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Error" }
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Error"
+                  - type: object
+                    required: [error]
+                    properties:
+                      error:
+                        type: object
+                        required: [details]
+                        properties:
+                          details:
+                            type: object
+                            required: [failures]
+                            properties:
+                              checks:
+                                type: array
+                                items: { $ref: "#/components/schemas/ArtifactsConfigurationCheck" }
+                              failures:
+                                type: array
+                                items: { $ref: "#/components/schemas/ArtifactsConfigurationFailure" }
 
   /api/v1/orgs/{org_slug}/projects/{project_slug}/releases:
     parameters:
@@ -3099,6 +3124,14 @@ components:
         upload_ok: { type: boolean }
         download_ok: { type: boolean }
         delete_ok: { type: boolean }
+
+    ArtifactsConfigurationFailure:
+      type: object
+      required: [kind, operation, reason]
+      properties:
+        kind: { type: string }
+        operation: { type: string }
+        reason: { type: string }
 
     ArtifactsConfigurationTestResult:
       type: object

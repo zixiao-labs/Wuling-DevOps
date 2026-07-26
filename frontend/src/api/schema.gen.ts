@@ -5952,7 +5952,8 @@ export interface paths {
          * Test the configured Artifact Service and blob storage
          * @description Requires developer access or above. For both Package and Release key
          *     layouts, the core API uploads a unique test file to the private Artifact
-         *     Service, downloads and verifies its contents, then deletes it.
+         *     Service, downloads and verifies its contents, then deletes it. Tests are
+         *     limited to once per project per minute.
          */
         post: {
             parameters: {
@@ -5978,13 +5979,29 @@ export interface paths {
                 401: components["responses"]["UnauthorizedError"];
                 403: components["responses"]["ForbiddenError"];
                 404: components["responses"]["NotFoundError"];
+                /** @description A configuration test is already in the project cooldown window */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
                 /** @description At least one Artifact Service lifecycle operation failed */
                 503: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["Error"];
+                        "application/json": components["schemas"]["Error"] & {
+                            error: {
+                                details: {
+                                    checks?: components["schemas"]["ArtifactsConfigurationCheck"][];
+                                    failures: components["schemas"]["ArtifactsConfigurationFailure"][];
+                                };
+                            };
+                        };
                     };
                 };
             };
@@ -6330,6 +6347,11 @@ export interface components {
             upload_ok: boolean;
             download_ok: boolean;
             delete_ok: boolean;
+        };
+        ArtifactsConfigurationFailure: {
+            kind: string;
+            operation: string;
+            reason: string;
         };
         ArtifactsConfigurationTestResult: {
             /** @enum {string} */

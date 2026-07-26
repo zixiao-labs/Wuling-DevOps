@@ -369,6 +369,12 @@ export interface ArtifactsConfigurationCheck {
   delete_ok: boolean;
 }
 
+export interface ArtifactsConfigurationFailure {
+  kind: string;
+  operation: string;
+  reason: string;
+}
+
 export interface ArtifactsConfigurationTestResult {
   status: "ok";
   message: string;

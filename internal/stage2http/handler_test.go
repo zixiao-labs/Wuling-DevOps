@@ -33,6 +33,7 @@ type handlerFixture struct {
 	developerToken string
 	reporterToken  string
 	blobs          *fakeArtifactBlobs
+	handler        *Handler
 }
 
 type fakeArtifactBlobs struct {
@@ -162,6 +163,7 @@ func newHandlerFixture(t *testing.T) handlerFixture {
 		developerToken: issue(developer.ID, developer.Username),
 		reporterToken:  issue(reporter.ID, reporter.Username),
 		blobs:          blobs,
+		handler:        h,
 	}
 }
 
@@ -192,7 +194,7 @@ func TestArtifactsConfigurationTest(t *testing.T) {
 	)
 	require.Equal(t, http.StatusOK, status)
 	require.Equal(t, "ok", payload["status"])
-	require.Equal(t, "测试成功", payload["message"])
+	require.Equal(t, "ARTIFACTS 配置测试成功", payload["message"])
 	checks, ok := payload["checks"].([]any)
 	require.True(t, ok)
 	require.Len(t, checks, 2)
@@ -216,13 +218,27 @@ func TestArtifactsConfigurationTest(t *testing.T) {
 	requireErrorCode(t, payload, "forbidden")
 	require.Len(t, fixture.blobs.putKeys, 2)
 
-	fixture.blobs.openErr = errors.New("synthetic storage read failure")
 	status, payload = requestJSON(
+		t, fixture.router, fixture.ownerToken, http.MethodPost, path, "",
+	)
+	require.Equal(t, http.StatusTooManyRequests, status)
+	requireErrorCode(t, payload, "rate_limited")
+	errorBody := payload["error"].(map[string]any)
+	require.Equal(t, "ARTIFACTS 配置测试请求过于频繁，请稍后重试", errorBody["message"])
+	require.Len(t, fixture.blobs.putKeys, 2)
+}
+
+func TestArtifactsConfigurationTestFailure(t *testing.T) {
+	fixture := newHandlerFixture(t)
+	path := fixture.base + "/artifacts/configuration-test"
+	fixture.blobs.openErr = errors.New("synthetic storage read failure")
+	status, payload := requestJSON(
 		t, fixture.router, fixture.developerToken, http.MethodPost, path, "",
 	)
 	require.Equal(t, http.StatusServiceUnavailable, status)
 	requireErrorCode(t, payload, "unavailable")
 	errorBody := payload["error"].(map[string]any)
+	require.Equal(t, "ARTIFACTS 配置测试失败", errorBody["message"])
 	details := errorBody["details"].(map[string]any)
 	failures := details["failures"].([]any)
 	require.Len(t, failures, 2)
@@ -232,6 +248,36 @@ func TestArtifactsConfigurationTest(t *testing.T) {
 		require.Equal(t, "synthetic storage read failure", failure["reason"])
 	}
 	require.Empty(t, fixture.blobs.objects)
+}
+
+func TestArtifactsConfigurationTestUnavailable(t *testing.T) {
+	fixture := newHandlerFixture(t)
+	fixture.handler.Artifacts = nil
+
+	status, payload := requestJSON(
+		t, fixture.router, fixture.developerToken, http.MethodPost,
+		fixture.base+"/artifacts/configuration-test", "",
+	)
+
+	require.Equal(t, http.StatusServiceUnavailable, status)
+	requireErrorCode(t, payload, "unavailable")
+	errorBody := payload["error"].(map[string]any)
+	require.Equal(t, "ARTIFACTS 配置测试失败", errorBody["message"])
+}
+
+func TestArtifactConfigurationCooldown(t *testing.T) {
+	h := &Handler{}
+	projectID := uuid.New()
+	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
+
+	require.True(t, h.reserveArtifactConfigurationCheck(projectID, now))
+	require.True(t, h.reserveArtifactConfigurationCheck(uuid.New(), now))
+	require.False(t, h.reserveArtifactConfigurationCheck(
+		projectID, now.Add(artifactConfigurationCooldown-time.Nanosecond),
+	))
+	require.True(t, h.reserveArtifactConfigurationCheck(
+		projectID, now.Add(artifactConfigurationCooldown),
+	))
 }
 
 func requestJSON(t *testing.T, router http.Handler, token, method, path, body string) (int, map[string]any) {

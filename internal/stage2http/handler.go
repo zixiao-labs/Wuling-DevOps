@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -34,7 +35,12 @@ type Handler struct {
 	Artifacts         artifactBlobs
 	MaxUploadBytes    int64
 	UploadReadTimeout time.Duration
+
+	artifactConfigurationMu      sync.Mutex
+	artifactConfigurationNextRun map[uuid.UUID]time.Time
 }
+
+const artifactConfigurationCooldown = time.Minute
 
 type artifactBlobs interface {
 	Put(context.Context, string, io.Reader, int64, string) (*artifactclient.ObjectInfo, error)
@@ -841,10 +847,16 @@ func (h *Handler) testArtifactsConfiguration(w http.ResponseWriter, r *http.Requ
 	}
 	if h.Artifacts == nil {
 		renderError(w, r, apperr.WithDetails(
-			apperr.New(apperr.CodeUnavailable, "ARTIFACTS configuration test failed"),
+			apperr.New(apperr.CodeUnavailable, "ARTIFACTS 配置测试失败"),
 			map[string]any{"failures": []artifactConfigurationFailure{{
 				Kind: "service", Operation: "connect", Reason: "artifact service is unavailable",
 			}}},
+		))
+		return
+	}
+	if !h.reserveArtifactConfigurationCheck(pc.ProjectID, time.Now()) {
+		renderError(w, r, apperr.New(
+			apperr.CodeRateLimited, "ARTIFACTS 配置测试请求过于频繁，请稍后重试",
 		))
 		return
 	}
@@ -871,16 +883,30 @@ func (h *Handler) testArtifactsConfiguration(w http.ResponseWriter, r *http.Requ
 	}
 	if len(failures) > 0 {
 		renderError(w, r, apperr.WithDetails(
-			apperr.New(apperr.CodeUnavailable, "ARTIFACTS configuration test failed"),
+			apperr.New(apperr.CodeUnavailable, "ARTIFACTS 配置测试失败"),
 			map[string]any{"checks": checks, "failures": failures},
 		))
 		return
 	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{
 		"status":  "ok",
-		"message": "测试成功",
+		"message": "ARTIFACTS 配置测试成功",
 		"checks":  checks,
 	})
+}
+
+func (h *Handler) reserveArtifactConfigurationCheck(projectID uuid.UUID, now time.Time) bool {
+	h.artifactConfigurationMu.Lock()
+	defer h.artifactConfigurationMu.Unlock()
+
+	if nextRun, ok := h.artifactConfigurationNextRun[projectID]; ok && now.Before(nextRun) {
+		return false
+	}
+	if h.artifactConfigurationNextRun == nil {
+		h.artifactConfigurationNextRun = make(map[uuid.UUID]time.Time)
+	}
+	h.artifactConfigurationNextRun[projectID] = now.Add(artifactConfigurationCooldown)
+	return true
 }
 
 func (h *Handler) runArtifactConfigurationCheck(
