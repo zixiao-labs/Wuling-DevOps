@@ -32,6 +32,12 @@ go run ./cmd/wuling-artifacts
 - `WULING_ARTIFACTS_RESPONSE_HEADER_TIMEOUT`（默认 `2m`）
 - `WULING_ARTIFACTS_REQUEST_TIMEOUT`（默认 `2h`，覆盖上传与后端处理）
 
+项目 Artifacts 页面提供“测试 ARTIFACTS 配置”操作（开发者及以上角色可用）。测试由
+`wuling-api` 经内部客户端分别使用 Package 与 Release 的 Blob key 写入唯一测试文件，
+下载并逐字节校验内容，然后删除测试文件。因此它会同时验证 Artifact Service 地址、
+内部令牌，以及当前本地磁盘或对象存储配置的真实读写删权限；测试数据不会写入 Package /
+Release 元数据表。
+
 面向用户的上传接口为
 `POST /api/v1/orgs/{org}/projects/{project}/packages/{package_id}/uploads`，
 版本通过必填的 `version` query 参数传入，请求体使用 `multipart/form-data` 且只包含

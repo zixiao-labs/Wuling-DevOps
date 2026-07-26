@@ -18,6 +18,7 @@ import (
 
 var (
 	ErrAlreadyExists = errors.New("artifact blob already exists")
+	ErrNotFound      = errors.New("artifact blob not found")
 	ErrTooLarge      = errors.New("artifact blob exceeds upload limit")
 )
 
@@ -26,6 +27,11 @@ type ObjectInfo struct {
 	Size        int64  `json:"size"`
 	ContentType string `json:"content_type"`
 	ETag        string `json:"etag,omitempty"`
+}
+
+type Object struct {
+	ObjectInfo
+	Body io.ReadCloser
 }
 
 type Client struct {
@@ -114,6 +120,35 @@ func (c *Client) Put(
 		_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 1<<20))
 		return nil, fmt.Errorf("artifact service upload returned HTTP %d", res.StatusCode)
 	}
+}
+
+func (c *Client) Open(ctx context.Context, key string) (*Object, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.blobURL(key), nil)
+	if err != nil {
+		return nil, fmt.Errorf("build artifact download request: %w", err)
+	}
+	c.authorize(req)
+	res, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("download artifact blob: %w", err)
+	}
+	if res.StatusCode == http.StatusOK {
+		return &Object{
+			ObjectInfo: ObjectInfo{
+				Key:         key,
+				Size:        res.ContentLength,
+				ContentType: res.Header.Get("Content-Type"),
+				ETag:        strings.Trim(res.Header.Get("ETag"), `"`),
+			},
+			Body: res.Body,
+		}, nil
+	}
+	defer res.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 1<<20))
+	if res.StatusCode == http.StatusNotFound {
+		return nil, ErrNotFound
+	}
+	return nil, fmt.Errorf("artifact service download returned HTTP %d", res.StatusCode)
 }
 
 func (c *Client) Delete(ctx context.Context, key string) error {

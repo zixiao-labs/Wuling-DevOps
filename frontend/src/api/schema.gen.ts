@@ -5936,6 +5936,82 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org_slug}/projects/{project_slug}/artifacts/configuration-test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+                project_slug: components["parameters"]["ProjectSlug"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test the configured Artifact Service and blob storage
+         * @description Requires developer access or above. For both Package and Release key
+         *     layouts, the core API uploads a unique test file to the private Artifact
+         *     Service, downloads and verifies its contents, then deletes it. Tests are
+         *     limited to once per project per minute.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Package and Release blob lifecycle tests succeeded */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ArtifactsConfigurationTestResult"];
+                    };
+                };
+                401: components["responses"]["UnauthorizedError"];
+                403: components["responses"]["ForbiddenError"];
+                404: components["responses"]["NotFoundError"];
+                /** @description A configuration test is already in the project cooldown window */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description At least one Artifact Service lifecycle operation failed */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"] & {
+                            error: {
+                                details: {
+                                    checks?: components["schemas"]["ArtifactsConfigurationCheck"][];
+                                    failures: components["schemas"]["ArtifactsConfigurationFailure"][];
+                                };
+                            };
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org_slug}/projects/{project_slug}/releases": {
         parameters: {
             query?: never;
@@ -6264,6 +6340,24 @@ export interface components {
             published_by?: string;
             /** Format: date-time */
             published_at: string;
+        };
+        ArtifactsConfigurationCheck: {
+            /** @enum {string} */
+            kind: "package" | "release";
+            upload_ok: boolean;
+            download_ok: boolean;
+            delete_ok: boolean;
+        };
+        ArtifactsConfigurationFailure: {
+            kind: string;
+            operation: string;
+            reason: string;
+        };
+        ArtifactsConfigurationTestResult: {
+            /** @enum {string} */
+            status: "ok";
+            message: string;
+            checks: components["schemas"]["ArtifactsConfigurationCheck"][];
         };
         ProjectRelease: {
             /** Format: uuid */

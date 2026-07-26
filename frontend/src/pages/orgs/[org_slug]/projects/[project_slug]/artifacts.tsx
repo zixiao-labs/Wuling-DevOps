@@ -1,4 +1,14 @@
-import { Button, Input, Label, ListBox, Select, Tabs, TextArea, TextField } from "@heroui/react";
+import {
+  Alert,
+  Button,
+  Input,
+  Label,
+  ListBox,
+  Select,
+  Tabs,
+  TextArea,
+  TextField,
+} from "@heroui/react";
 import FileArrowUp from "@gravity-ui/icons/FileArrowUp";
 import Plus from "@gravity-ui/icons/Plus";
 import { useCallback, useEffect, useState } from "react";
@@ -6,6 +16,7 @@ import { useCallback, useEffect, useState } from "react";
 import { artifactRegistry } from "@/api/endpoints";
 import type {
   ArtifactPackage,
+  ArtifactsConfigurationTestResult,
   PackageKind,
   PackageVersion,
   ProjectRelease,
@@ -43,6 +54,23 @@ function formatBytes(size: number): string {
   return `${(size / 1024 / 1024 / 1024).toFixed(1)} GiB`;
 }
 
+function configurationFailures(error: ApiError): string[] {
+  const failures = error.details?.failures;
+  if (!Array.isArray(failures)) return [];
+  return failures.flatMap((failure) => {
+    if (typeof failure !== "object" || failure === null) return [];
+    const item = failure as Record<string, unknown>;
+    if (
+      typeof item.kind !== "string" ||
+      typeof item.operation !== "string" ||
+      typeof item.reason !== "string"
+    ) {
+      return [];
+    }
+    return [`${item.kind} · ${item.operation}: ${item.reason}`];
+  });
+}
+
 export default function ArtifactsPage() {
   const org = useOrgCtx();
   const project = useProjectCtx();
@@ -60,6 +88,10 @@ export default function ArtifactsPage() {
   const [uploading, setUploading] = useState(false);
   const [uploaded, setUploaded] = useState<PackageVersion | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
+  const [testingConfiguration, setTestingConfiguration] = useState(false);
+  const [configurationResult, setConfigurationResult] =
+    useState<ArtifactsConfigurationTestResult | null>(null);
+  const [configurationError, setConfigurationError] = useState<ApiError | null>(null);
 
   const load = useCallback(() => {
     return Promise.all([
@@ -149,12 +181,30 @@ export default function ArtifactsPage() {
     }
   }
 
+  async function testConfiguration() {
+    setTestingConfiguration(true);
+    setConfigurationResult(null);
+    setConfigurationError(null);
+    try {
+      setConfigurationResult(
+        await artifactRegistry.testConfiguration(org.slug, project.slug),
+      );
+    } catch (err) {
+      setConfigurationError(err as ApiError);
+    } finally {
+      setTestingConfiguration(false);
+    }
+  }
+
   const panelTitle =
     panelMode === "package"
       ? "注册 Package"
       : panelMode === "release"
         ? "发布 Release"
         : "手动上传 Artifact";
+  const configurationFailureDetails = configurationError
+    ? configurationFailures(configurationError)
+    : [];
 
   return (
     <PageContainer>
@@ -164,6 +214,13 @@ export default function ArtifactsPage() {
         description="统一管理 Package Registry、容器镜像、Logos 扩展与 Release；二进制内容由独立 Artifact Service 写入 Blob Storage。"
         actions={
           <>
+            <Button
+              variant="outline"
+              onPress={testConfiguration}
+              isPending={testingConfiguration}
+            >
+              {testingConfiguration ? "测试中…" : "测试ARTIFACTS配置"}
+            </Button>
             <Button
               variant="secondary"
               onPress={() => resetPanel("release")}
@@ -186,6 +243,35 @@ export default function ArtifactsPage() {
         }
       />
       <ErrorBanner error={error} />
+      {configurationResult ? (
+        <Alert status="success" className="mb-4">
+          <Alert.Indicator />
+          <Alert.Content>
+            <Alert.Title>{configurationResult.message}</Alert.Title>
+            <Alert.Description>
+              Package 和 Release 均已完成测试文件上传、下载校验与删除。
+            </Alert.Description>
+          </Alert.Content>
+        </Alert>
+      ) : null}
+      {configurationError ? (
+        <Alert status="danger" className="mb-4">
+          <Alert.Indicator />
+          <Alert.Content>
+            <Alert.Title>测试失败</Alert.Title>
+            <Alert.Description>
+              <span>{configurationError.message}</span>
+              {configurationFailureDetails.length > 0 ? (
+                <ul className="mt-2 list-inside list-disc space-y-1 font-mono text-xs">
+                  {configurationFailureDetails.map((failure) => (
+                    <li key={failure}>{failure}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </Alert.Description>
+          </Alert.Content>
+        </Alert>
+      ) : null}
 
       {panelMode ? (
         <Surface className="mb-4">

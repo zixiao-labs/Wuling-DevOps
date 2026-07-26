@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -32,11 +33,16 @@ type handlerFixture struct {
 	developerToken string
 	reporterToken  string
 	blobs          *fakeArtifactBlobs
+	handler        *Handler
 }
 
 type fakeArtifactBlobs struct {
-	objects  map[string][]byte
-	lastSize int64
+	objects    map[string][]byte
+	lastSize   int64
+	putKeys    []string
+	openKeys   []string
+	deleteKeys []string
+	openErr    error
 }
 
 type readDeadlineRecorder struct {
@@ -57,6 +63,7 @@ func (f *fakeArtifactBlobs) Put(
 	contentType string,
 ) (*artifactclient.ObjectInfo, error) {
 	f.lastSize = size
+	f.putKeys = append(f.putKeys, key)
 	if _, exists := f.objects[key]; exists {
 		return nil, artifactclient.ErrAlreadyExists
 	}
@@ -70,7 +77,25 @@ func (f *fakeArtifactBlobs) Put(
 	}, nil
 }
 
+func (f *fakeArtifactBlobs) Open(_ context.Context, key string) (*artifactclient.Object, error) {
+	f.openKeys = append(f.openKeys, key)
+	if f.openErr != nil {
+		return nil, f.openErr
+	}
+	value, exists := f.objects[key]
+	if !exists {
+		return nil, artifactclient.ErrNotFound
+	}
+	return &artifactclient.Object{
+		ObjectInfo: artifactclient.ObjectInfo{
+			Key: key, Size: int64(len(value)), ContentType: "text/plain",
+		},
+		Body: io.NopCloser(bytes.NewReader(value)),
+	}, nil
+}
+
 func (f *fakeArtifactBlobs) Delete(_ context.Context, key string) error {
+	f.deleteKeys = append(f.deleteKeys, key)
 	delete(f.objects, key)
 	return nil
 }
@@ -138,6 +163,7 @@ func newHandlerFixture(t *testing.T) handlerFixture {
 		developerToken: issue(developer.ID, developer.Username),
 		reporterToken:  issue(reporter.ID, reporter.Username),
 		blobs:          blobs,
+		handler:        h,
 	}
 }
 
@@ -157,6 +183,101 @@ func TestUploadReadDeadline(t *testing.T) {
 	require.True(t, called)
 	require.False(t, recorder.deadline.Before(started.Add(timeout)))
 	require.False(t, recorder.deadline.After(time.Now().Add(timeout)))
+}
+
+func TestArtifactsConfigurationTest(t *testing.T) {
+	fixture := newHandlerFixture(t)
+	path := fixture.base + "/artifacts/configuration-test"
+
+	status, payload := requestJSON(
+		t, fixture.router, fixture.developerToken, http.MethodPost, path, "",
+	)
+	require.Equal(t, http.StatusOK, status)
+	require.Equal(t, "ok", payload["status"])
+	require.Equal(t, "ARTIFACTS 配置测试成功", payload["message"])
+	checks, ok := payload["checks"].([]any)
+	require.True(t, ok)
+	require.Len(t, checks, 2)
+	for _, raw := range checks {
+		check := raw.(map[string]any)
+		require.True(t, check["upload_ok"].(bool))
+		require.True(t, check["download_ok"].(bool))
+		require.True(t, check["delete_ok"].(bool))
+	}
+	require.Empty(t, fixture.blobs.objects)
+	require.Len(t, fixture.blobs.putKeys, 2)
+	require.Len(t, fixture.blobs.openKeys, 2)
+	require.Len(t, fixture.blobs.deleteKeys, 2)
+	require.Contains(t, fixture.blobs.putKeys[0], "/packages/")
+	require.Contains(t, fixture.blobs.putKeys[1], "/releases/")
+
+	status, payload = requestJSON(
+		t, fixture.router, fixture.reporterToken, http.MethodPost, path, "",
+	)
+	require.Equal(t, http.StatusForbidden, status)
+	requireErrorCode(t, payload, "forbidden")
+	require.Len(t, fixture.blobs.putKeys, 2)
+
+	status, payload = requestJSON(
+		t, fixture.router, fixture.ownerToken, http.MethodPost, path, "",
+	)
+	require.Equal(t, http.StatusTooManyRequests, status)
+	requireErrorCode(t, payload, "rate_limited")
+	errorBody := payload["error"].(map[string]any)
+	require.Equal(t, "ARTIFACTS 配置测试请求过于频繁，请稍后重试", errorBody["message"])
+	require.Len(t, fixture.blobs.putKeys, 2)
+}
+
+func TestArtifactsConfigurationTestFailure(t *testing.T) {
+	fixture := newHandlerFixture(t)
+	path := fixture.base + "/artifacts/configuration-test"
+	fixture.blobs.openErr = errors.New("synthetic storage read failure")
+	status, payload := requestJSON(
+		t, fixture.router, fixture.developerToken, http.MethodPost, path, "",
+	)
+	require.Equal(t, http.StatusServiceUnavailable, status)
+	requireErrorCode(t, payload, "unavailable")
+	errorBody := payload["error"].(map[string]any)
+	require.Equal(t, "ARTIFACTS 配置测试失败", errorBody["message"])
+	details := errorBody["details"].(map[string]any)
+	failures := details["failures"].([]any)
+	require.Len(t, failures, 2)
+	for _, raw := range failures {
+		failure := raw.(map[string]any)
+		require.Equal(t, "download", failure["operation"])
+		require.Equal(t, "synthetic storage read failure", failure["reason"])
+	}
+	require.Empty(t, fixture.blobs.objects)
+}
+
+func TestArtifactsConfigurationTestUnavailable(t *testing.T) {
+	fixture := newHandlerFixture(t)
+	fixture.handler.Artifacts = nil
+
+	status, payload := requestJSON(
+		t, fixture.router, fixture.developerToken, http.MethodPost,
+		fixture.base+"/artifacts/configuration-test", "",
+	)
+
+	require.Equal(t, http.StatusServiceUnavailable, status)
+	requireErrorCode(t, payload, "unavailable")
+	errorBody := payload["error"].(map[string]any)
+	require.Equal(t, "ARTIFACTS 配置测试失败", errorBody["message"])
+}
+
+func TestArtifactConfigurationCooldown(t *testing.T) {
+	h := &Handler{}
+	projectID := uuid.New()
+	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
+
+	require.True(t, h.reserveArtifactConfigurationCheck(projectID, now))
+	require.True(t, h.reserveArtifactConfigurationCheck(uuid.New(), now))
+	require.False(t, h.reserveArtifactConfigurationCheck(
+		projectID, now.Add(artifactConfigurationCooldown-time.Nanosecond),
+	))
+	require.True(t, h.reserveArtifactConfigurationCheck(
+		projectID, now.Add(artifactConfigurationCooldown),
+	))
 }
 
 func requestJSON(t *testing.T, router http.Handler, token, method, path, body string) (int, map[string]any) {
