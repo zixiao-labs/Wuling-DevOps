@@ -79,6 +79,7 @@ import type {
   CreateRegistrationTokenRequest,
   RegistrationTokenResponse,
   ArtifactPackage,
+  ArtifactsConfigurationTestResult,
   CreateIterationRequest,
   CreateWorkItemRequest,
   PackageKind,
@@ -766,6 +767,10 @@ export const artifactRegistry = {
       { method: "POST", body },
     );
   },
+  testConfiguration: (org: string, project: string) =>
+    apiPost<ArtifactsConfigurationTestResult>(
+      `${projectBase(org, project)}/artifacts/configuration-test`,
+    ),
   listReleases: (org: string, project: string) =>
     apiGet<{ releases: ProjectRelease[] }>(`${projectBase(org, project)}/releases`).then(
       (r) => r.releases,

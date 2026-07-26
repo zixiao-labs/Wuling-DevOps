@@ -2743,6 +2743,32 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/artifacts/configuration-test:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+    post:
+      summary: Test the configured Artifact Service and blob storage
+      description: |
+        Requires developer access or above. For both Package and Release key
+        layouts, the core API uploads a unique test file to the private Artifact
+        Service, downloads and verifies its contents, then deletes it.
+      tags: [Stage 2]
+      responses:
+        "200":
+          description: Package and Release blob lifecycle tests succeeded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ArtifactsConfigurationTestResult" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+        "503":
+          description: At least one Artifact Service lifecycle operation failed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /api/v1/orgs/{org_slug}/projects/{project_slug}/releases:
     parameters:
       - $ref: "#/components/parameters/OrgSlug"
@@ -3064,6 +3090,25 @@ components:
           additionalProperties: true
         published_by: { type: string, format: uuid }
         published_at: { type: string, format: date-time }
+
+    ArtifactsConfigurationCheck:
+      type: object
+      required: [kind, upload_ok, download_ok, delete_ok]
+      properties:
+        kind: { type: string, enum: [package, release] }
+        upload_ok: { type: boolean }
+        download_ok: { type: boolean }
+        delete_ok: { type: boolean }
+
+    ArtifactsConfigurationTestResult:
+      type: object
+      required: [status, message, checks]
+      properties:
+        status: { type: string, enum: [ok] }
+        message: { type: string }
+        checks:
+          type: array
+          items: { $ref: "#/components/schemas/ArtifactsConfigurationCheck" }
 
     ProjectRelease:
       type: object

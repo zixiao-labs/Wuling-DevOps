@@ -38,6 +38,7 @@ type Handler struct {
 
 type artifactBlobs interface {
 	Put(context.Context, string, io.Reader, int64, string) (*artifactclient.ObjectInfo, error)
+	Open(context.Context, string) (*artifactclient.Object, error)
 	Delete(context.Context, string) error
 }
 
@@ -71,6 +72,7 @@ func (h *Handler) Mount(r chi.Router) {
 		r.Get(base+"/packages/{package_id}/versions", h.listVersions)
 		r.Post(base+"/packages/{package_id}/versions", h.publishVersion)
 		r.With(h.withUploadReadDeadline).Post(base+"/packages/{package_id}/uploads", h.uploadVersion)
+		r.Post(base+"/artifacts/configuration-test", h.testArtifactsConfiguration)
 		r.Get(base+"/releases", h.listReleases)
 		r.Post(base+"/releases", h.createRelease)
 
@@ -817,6 +819,121 @@ func (h *Handler) deleteUploadedBlob(key string) {
 	if err := h.Artifacts.Delete(ctx, key); err != nil {
 		slog.Warn("clean up artifact blob after metadata failure", "key", key, "err", err)
 	}
+}
+
+type artifactConfigurationCheck struct {
+	Kind       string `json:"kind"`
+	UploadOK   bool   `json:"upload_ok"`
+	DownloadOK bool   `json:"download_ok"`
+	DeleteOK   bool   `json:"delete_ok"`
+}
+
+type artifactConfigurationFailure struct {
+	Kind      string `json:"kind"`
+	Operation string `json:"operation"`
+	Reason    string `json:"reason"`
+}
+
+func (h *Handler) testArtifactsConfiguration(w http.ResponseWriter, r *http.Request) {
+	pc, err := h.resolveProject(r)
+	if renderError(w, r, err) || renderError(w, r, requireWrite(pc)) {
+		return
+	}
+	if h.Artifacts == nil {
+		renderError(w, r, apperr.WithDetails(
+			apperr.New(apperr.CodeUnavailable, "ARTIFACTS configuration test failed"),
+			map[string]any{"failures": []artifactConfigurationFailure{{
+				Kind: "service", Operation: "connect", Reason: "artifact service is unavailable",
+			}}},
+		))
+		return
+	}
+
+	runID := uuid.NewString()
+	checks := make([]artifactConfigurationCheck, 0, 2)
+	failures := make([]artifactConfigurationFailure, 0, 2)
+	for _, target := range []struct {
+		kind   string
+		prefix string
+	}{
+		{kind: "package", prefix: "packages"},
+		{kind: "release", prefix: "releases"},
+	} {
+		key := strings.Join([]string{
+			"projects", pc.ProjectID.String(), target.prefix, runID, "configuration-test.txt",
+		}, "/")
+		payload := "wuling-artifacts " + target.kind + " configuration test " + runID
+		check, failure := h.runArtifactConfigurationCheck(r.Context(), target.kind, key, payload)
+		checks = append(checks, check)
+		if failure != nil {
+			failures = append(failures, *failure)
+		}
+	}
+	if len(failures) > 0 {
+		renderError(w, r, apperr.WithDetails(
+			apperr.New(apperr.CodeUnavailable, "ARTIFACTS configuration test failed"),
+			map[string]any{"checks": checks, "failures": failures},
+		))
+		return
+	}
+	httpapi.WriteJSON(w, http.StatusOK, map[string]any{
+		"status":  "ok",
+		"message": "测试成功",
+		"checks":  checks,
+	})
+}
+
+func (h *Handler) runArtifactConfigurationCheck(
+	ctx context.Context,
+	kind, key, payload string,
+) (artifactConfigurationCheck, *artifactConfigurationFailure) {
+	check := artifactConfigurationCheck{Kind: kind}
+	fail := func(operation string, err error) (artifactConfigurationCheck, *artifactConfigurationFailure) {
+		return check, &artifactConfigurationFailure{
+			Kind: kind, Operation: operation, Reason: err.Error(),
+		}
+	}
+
+	_, err := h.Artifacts.Put(ctx, key, strings.NewReader(payload), int64(len(payload)), "text/plain")
+	if err != nil {
+		return fail("upload", err)
+	}
+	check.UploadOK = true
+	needsCleanup := true
+	defer func() {
+		if !needsCleanup {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if cleanupErr := h.Artifacts.Delete(cleanupCtx, key); cleanupErr != nil {
+			slog.Warn("clean up ARTIFACTS configuration test blob", "key", key, "err", cleanupErr)
+		}
+	}()
+
+	object, err := h.Artifacts.Open(ctx, key)
+	if err != nil {
+		return fail("download", err)
+	}
+	downloaded, readErr := io.ReadAll(io.LimitReader(object.Body, int64(len(payload))+1))
+	closeErr := object.Body.Close()
+	if readErr != nil {
+		return fail("download", readErr)
+	}
+	if closeErr != nil {
+		return fail("download", closeErr)
+	}
+	if string(downloaded) != payload {
+		return fail("download", errors.New("downloaded test file content does not match upload"))
+	}
+	check.DownloadOK = true
+
+	if err := h.Artifacts.Delete(ctx, key); err != nil {
+		return fail("delete", err)
+	}
+	needsCleanup = false
+	check.DeleteOK = true
+	return check, nil
 }
 
 func (h *Handler) listReleases(w http.ResponseWriter, r *http.Request) {

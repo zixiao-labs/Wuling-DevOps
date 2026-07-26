@@ -362,6 +362,19 @@ export interface PackageVersion {
   published_at: string;
 }
 
+export interface ArtifactsConfigurationCheck {
+  kind: "package" | "release";
+  upload_ok: boolean;
+  download_ok: boolean;
+  delete_ok: boolean;
+}
+
+export interface ArtifactsConfigurationTestResult {
+  status: "ok";
+  message: string;
+  checks: ArtifactsConfigurationCheck[];
+}
+
 export interface ProjectRelease {
   id: string;
   project_id: string;

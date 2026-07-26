@@ -19,7 +19,7 @@ var testOptions = Options{
 	RequestTimeout:        time.Minute,
 }
 
-func TestPutAndDelete(t *testing.T) {
+func TestPutOpenAndDelete(t *testing.T) {
 	t.Parallel()
 	var deleted bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -35,6 +35,12 @@ func TestPutAndDelete(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
 			_, _ = io.WriteString(w, `{"key":"projects/project/packages/package/1.0.0","size":8,"content_type":"application/gzip"}`)
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "application/gzip")
+			w.Header().Set("ETag", `"download-etag"`)
+			w.Header().Set("Content-Length", "8")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, "artifact")
 		case http.MethodDelete:
 			deleted = true
 			w.WriteHeader(http.StatusNoContent)
@@ -51,8 +57,30 @@ func TestPutAndDelete(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, key, info.Key)
 	require.Equal(t, int64(8), info.Size)
+	object, err := client.Open(context.Background(), key)
+	require.NoError(t, err)
+	require.Equal(t, key, object.Key)
+	require.Equal(t, int64(8), object.Size)
+	require.Equal(t, "application/gzip", object.ContentType)
+	require.Equal(t, "download-etag", object.ETag)
+	body, err := io.ReadAll(object.Body)
+	require.NoError(t, err)
+	require.NoError(t, object.Body.Close())
+	require.Equal(t, "artifact", string(body))
 	require.NoError(t, client.Delete(context.Background(), key))
 	require.True(t, deleted)
+}
+
+func TestOpenMapsNotFound(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+	client, err := New(server.URL, "", testOptions)
+	require.NoError(t, err)
+	_, err = client.Open(context.Background(), "packages/a/1")
+	require.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestPutMapsServiceConflictsAndLimits(t *testing.T) {
