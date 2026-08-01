@@ -194,9 +194,21 @@ Runner/Autoscaler 配置。控制面用 libgit2 直接读该 blob（带 TTL 缓�
 1. 读该 org `config` 仓库的 `runner-config.yaml`（缓存）。
 2. 统计每个 (tier, labels) 维度上**当前没有合适在线 runner 承接**的 queued job 数。
 3. **扩容**：匹配的 pool 若未达 `max`，调用 `Provider.Launch(spec)` 拉起实例，并通过 user-data
-   注入「服务端地址 + 持久 runner token + labels/tier」，新机自举后上线。引导脚本随 `pool.os` 而变：
-   Linux 走 cloud-init（写 `runner.env` + `systemctl enable --now`），Windows 走 `<powershell>`
-   （写 `runner.env` + 计划任务 `schtasks /Run`，见 `BuildWindowsUserData`）；macOS 不参与扩容。
+   注入「服务端地址 + 持久 runner token + labels/tier」，新机自举后上线。引导脚本随 `pool.os`
+   **和 `pool.provider`** 而变：Linux 走 cloud-init（写 `runner.env` + `systemctl enable --now`，
+   首行 `#!`，两朵云通用）；Windows 写 `runner.env` + 计划任务 `schtasks /Run`，但**外层包装各云不同**
+   （见 `BuildWindowsUserData` / `windowsUserDataWrapper`）；macOS 不参与扩容。
+
+   | Provider | Windows 引导代理 | 包装形式 |
+   |----|----|----|
+   | AWS EC2 | EC2Launch v2 | `<powershell>` … `</powershell>` 标签对 |
+   | 阿里云 ECS | Vminit（`Plugin_Main_CloudinitUserData`） | 首行裸标记 `[powershell]`，**无闭合标记** |
+
+   ⚠️ 两者**不可互换**：阿里云不认 `<powershell>` 标签，且失败是**静默**的——Vminit 只是不把这段数据
+   当脚本，实例照常起来但 runner 永远不上线，表现为「池一直拉不起机器」。另有两条阿里云硬约束：
+   `[powershell]` 必须是第一行且行首无空格；user-data **只能是半角字符**；并且初始化阶段**不能往
+   `C:\Users` 下写**（那时还没有用户登录、profile 未挂载）——所以 `runner.env` 一律放
+   `C:\ProgramData\wuling-runner\`。Base64 编码前原文上限 32 KB。
 4. **缩容**：`ephemeral` 且 `provider==该池` 的 runner，若**空闲（无运行中 job）时长 > `idle_timeout`**
    且池内存活数 > `min`，调用 `Provider.Terminate(externalID)` 释放并删除 runner 行。
 5. `min` 维持热备：池内存活不足 `min` 时补足（即便当前无排队）。

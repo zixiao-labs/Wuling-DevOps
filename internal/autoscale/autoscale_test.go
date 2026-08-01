@@ -143,7 +143,7 @@ func TestOSValidation(t *testing.T) {
 }
 
 func TestWindowsUserData(t *testing.T) {
-	pool := Pool{Name: "win", OS: "windows", Labels: []string{"windows", "msvc"}}
+	pool := Pool{Name: "win", OS: "windows", Provider: "aws", Labels: []string{"windows", "msvc"}}
 	ud := BuildWindowsUserData("https://wuling.example.com", "wlrt_deadbeef_secret", pool, "win-01")
 	for _, want := range []string{
 		"<powershell>",
@@ -167,5 +167,41 @@ func TestWindowsUserData(t *testing.T) {
 	linux := BuildUserDataForPool("s", "t", Pool{Name: "lin", Labels: []string{"linux"}}, "n")
 	if !strings.Contains(linux, "systemctl") || strings.Contains(linux, "<powershell>") {
 		t.Errorf("dispatcher should pick Linux user-data for a non-windows pool:\n%s", linux)
+	}
+}
+
+// Alibaba Cloud's Vminit agent dispatches Windows user-data on a bare
+// `[powershell]` marker that must be the first line, and rejects the
+// <powershell> tags EC2Launch v2 uses. Emitting the wrong one fails silently —
+// the agent just never recognises the payload as a script — so pin both forms.
+func TestWindowsUserDataIsProviderAware(t *testing.T) {
+	pool := Pool{Name: "win", OS: "windows", Provider: "aliyun", Labels: []string{"windows"}}
+	ud := BuildWindowsUserData("https://wuling.example.com", "wlrt_tok", pool, "win-01")
+
+	if !strings.HasPrefix(ud, "[powershell]\n") {
+		t.Errorf("aliyun user-data must begin with the [powershell] marker, got:\n%.40q", ud)
+	}
+	if strings.Contains(ud, "<powershell>") || strings.Contains(ud, "</powershell>") {
+		t.Errorf("aliyun user-data must not carry EC2Launch tags:\n%s", ud)
+	}
+	// The payload itself is provider-independent.
+	if !strings.Contains(ud, "WULING_RUNNER_TOKEN=wlrt_tok") {
+		t.Errorf("aliyun user-data lost its payload:\n%s", ud)
+	}
+	// Aliyun rejects a script that writes under C:\Users at init time (no user
+	// profile is mounted yet), so the env file must stay in ProgramData.
+	if !strings.Contains(ud, `C:\ProgramData\wuling-runner`) || strings.Contains(ud, `C:\Users`) {
+		t.Errorf("aliyun user-data must write to ProgramData, never C:\\Users:\n%s", ud)
+	}
+	// Aliyun accepts half-width characters only.
+	for _, r := range ud {
+		if r > 127 {
+			t.Errorf("aliyun user-data must be ASCII-only, found %q", r)
+			break
+		}
+	}
+
+	if !strings.HasPrefix(BuildUserDataForPool("s", "t", pool, "n"), "[powershell]\n") {
+		t.Error("dispatcher must carry the provider through to the Windows renderer")
 	}
 }

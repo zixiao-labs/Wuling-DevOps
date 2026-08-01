@@ -3,6 +3,8 @@ package autoscale
 import (
 	"fmt"
 	"strings"
+
+	"github.com/zixiao-labs/wuling-devops/internal/model"
 )
 
 // BuildUserData renders the VM startup script that self-configures the runner.
@@ -34,15 +36,35 @@ func BuildUserData(serverURL, token string, pool Pool, runnerName string) string
 	return b.String()
 }
 
-// BuildUserDataForPool renders the startup script appropriate to the pool's OS:
-// Linux cloud-init/bash (BuildUserData) or Windows PowerShell
+// BuildUserDataForPool renders the startup script appropriate to the pool's OS
+// *and* provider: Linux cloud-init/bash (BuildUserData) or Windows PowerShell
 // (BuildWindowsUserData). An empty/unknown OS is treated as linux. macOS pools
 // are rejected at config validation, so they never reach here.
 func BuildUserDataForPool(serverURL, token string, pool Pool, runnerName string) string {
-	if pool.OS == "windows" {
+	if pool.OS == model.OSWindows {
 		return BuildWindowsUserData(serverURL, token, pool, runnerName)
 	}
 	return BuildUserData(serverURL, token, pool, runnerName)
+}
+
+// windowsUserDataWrapper returns the prologue and epilogue a provider's Windows
+// guest agent requires around a PowerShell payload. The two clouds disagree,
+// and getting it wrong is silent: the agent simply does not recognise the blob
+// as a script, the runner never starts, and the pool looks like it is failing
+// to launch instances.
+//
+//   - AWS: EC2Launch v2 dispatches on XML-ish <powershell>…</powershell> tags.
+//   - Alibaba Cloud: the Vminit agent's Plugin_Main_CloudinitUserData plugin
+//     dispatches on a bare `[powershell]` marker that must be the very first
+//     line with no leading whitespace, and takes NO closing marker.
+//
+// Anything else (a Proxmox/vCenter template running cloudbase-init, say) gets
+// the AWS-style tags, which is what cloudbase-init also accepts.
+func windowsUserDataWrapper(provider string) (prologue, epilogue string) {
+	if provider == "aliyun" {
+		return "[powershell]\n", ""
+	}
+	return "<powershell>\n", "</powershell>\n"
 }
 
 // BuildWindowsUserData renders the Windows VM startup script. Like the Linux
@@ -52,12 +74,16 @@ func BuildUserDataForPool(serverURL, token string, pool Pool, runnerName string)
 // §7.1). The script writes that env file with the injected token + server URL,
 // then (re)starts the task. A Scheduled Task — not a service — because the
 // runner is a plain console binary, so this needs no third-party service shim.
-// The whole script is wrapped in <powershell></powershell> so EC2Launch v2 /
-// cloudbase-init execute it as PowerShell on first boot.
+//
+// C:\ProgramData is deliberate, and not merely conventional: Alibaba Cloud
+// documents that user-data running at init time cannot write anywhere under
+// C:\Users, because no user has logged in yet and the profile tree is not
+// mounted. ProgramData is machine-scoped and always present.
 func BuildWindowsUserData(serverURL, token string, pool Pool, runnerName string) string {
 	labels := strings.Join(pool.Labels, ",")
+	prologue, epilogue := windowsUserDataWrapper(pool.Provider)
 	var b strings.Builder
-	b.WriteString("<powershell>\n")
+	b.WriteString(prologue)
 	b.WriteString("$ErrorActionPreference = 'Stop'\n")
 	b.WriteString("$dir = 'C:\\ProgramData\\wuling-runner'\n")
 	b.WriteString("New-Item -ItemType Directory -Force -Path $dir | Out-Null\n")
@@ -78,6 +104,6 @@ func BuildWindowsUserData(serverURL, token string, pool Pool, runnerName string)
 	// (Re)start the image-provided Scheduled Task now that runner.env is written.
 	b.WriteString("& schtasks /End /TN 'wuling-runner' 2>$null | Out-Null\n")
 	b.WriteString("& schtasks /Run /TN 'wuling-runner'\n")
-	b.WriteString("</powershell>\n")
+	b.WriteString(epilogue)
 	return b.String()
 }
