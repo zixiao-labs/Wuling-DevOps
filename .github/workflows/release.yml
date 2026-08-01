@@ -192,6 +192,11 @@ jobs:
           npm run api:types
           npm run build
 
+      # The PR gate in frontend-check.yml never runs on a tag, so without this
+      # the artifact that actually ships is the one bundle nothing checks.
+      - name: Verify brand assets survived the build
+        run: ./scripts/verify-brand-assets.sh
+
       - name: Tar + checksum
         run: |
           tar -czf "wuling-frontend-dist-${GITHUB_REF_NAME}.tar.gz" -C frontend/dist .

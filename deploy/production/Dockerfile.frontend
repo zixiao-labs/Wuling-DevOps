@@ -14,11 +14,18 @@ RUN npm ci --ignore-scripts
 # enable it) can read it.
 COPY api/openapi.yaml /tmp/api/openapi.yaml
 
-# Now the rest of the frontend source.
+# Now the rest of the frontend source, plus the bundle verifier.
 COPY frontend/ ./
+COPY scripts/verify-brand-assets.sh /tmp/verify-brand-assets.sh
 
 # Build static bundle. The output lives in /app/dist
 RUN npm run build
+
+# Nasti's build has no publicDir handling; frontend/public is only copied in by
+# the closeBundle plugin in nasti.config.ts. This image is built by its own
+# release job, so neither the PR gate nor the tarball check covers it — assert
+# here too rather than ship an iconless image a third way.
+RUN PUBLIC_DIR=/app/public /tmp/verify-brand-assets.sh /app/dist
 
 # --- runtime ---------------------------------------------------------------
 FROM nginx:1.27-alpine
