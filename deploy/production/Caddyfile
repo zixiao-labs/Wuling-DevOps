@@ -78,11 +78,19 @@ http://{$WULING_DOMAIN} {
             precompressed gzip
         }
 
-        # Cache hashed assets aggressively, never cache index.html
-        @assets path /assets/* /icon-*.png /favicon.svg /manifest.webmanifest /sw.js
-        header @assets Cache-Control "public, max-age=31536000, immutable"
+        # Only /assets/* is content-hashed by Nasti, so only it may be cached
+        # immutably. Brand files keep stable names (they are referenced from
+        # index.html and the manifest) — revalidate those daily instead.
+        @hashed path /assets/*
+        header @hashed Cache-Control "public, max-age=31536000, immutable"
 
-        @noCache path /index.html / /
+        @brand path /favicon.ico /favicon-32.png /apple-touch-icon.png /icon-*.png /brand-wordmark.png /og-image.png
+        header @brand Cache-Control "public, max-age=86400"
+
+        # The service worker and the manifest must never be cached hard, or a
+        # client pins itself to a stale build forever. (Nasti emits the manifest
+        # as manifest.json — there is no .webmanifest.)
+        @noCache path /index.html / /sw.js /manifest.json
         header @noCache Cache-Control "no-cache"
     }
 

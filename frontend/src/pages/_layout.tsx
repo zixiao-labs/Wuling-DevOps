@@ -69,29 +69,15 @@ function AuthChrome() {
 
 function BrandLockup() {
   return (
-    <div className="mb-7 flex items-center justify-center gap-2.5">
-      <svg
-        width="32"
-        height="32"
-        viewBox="0 0 24 24"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-        aria-hidden="true"
-      >
-        <rect x="2" y="2" width="20" height="20" rx="5" fill="var(--accent)" />
-        <path
-          d="M7 8.5 12 16l5-7.5"
-          stroke="var(--accent-foreground)"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        <circle cx="12" cy="6.5" r="1.2" fill="var(--accent-foreground)" />
-      </svg>
-      <div className="flex flex-col leading-tight">
-        <span className="text-[15px] font-semibold tracking-tight text-fg">武陵 DevOps</span>
-        <span className="text-[11px] text-muted">Stage 2 · 紫霄实验室</span>
-      </div>
+    <div className="mb-7 flex flex-col items-center gap-2">
+      <img
+        src="/brand-wordmark.png"
+        alt="武陵 DevOps"
+        width={130}
+        height={60}
+        className="h-[38px] w-auto"
+      />
+      <span className="text-[11px] text-muted">Stage 2 · 紫霄实验室</span>
     </div>
   );
 }

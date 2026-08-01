@@ -121,13 +121,12 @@ function BrandAndTopBar({
         {!collapsed ? (
           <Link
             to="/orgs"
-            className="flex min-w-0 items-center gap-1.5 rounded-sm px-1.5 py-1 text-fg hover:bg-[var(--surface-secondary)]"
+            className="flex min-w-0 items-center gap-2 rounded-sm px-1.5 py-1 text-fg hover:bg-[var(--surface-secondary)]"
           >
             <BrandMark />
-            <div className="flex min-w-0 flex-col leading-none">
-              <span className="text-[13px] font-semibold tracking-tight">武陵</span>
-              <span className="truncate text-[10px] text-muted">DevOps · 紫霄</span>
-            </div>
+            <span className="truncate text-[10px] leading-none text-muted">
+              DevOps · 紫霄
+            </span>
           </Link>
         ) : null}
       </div>
@@ -160,29 +159,20 @@ function BrandAndTopBar({
   );
 }
 
-/** Brand glyph. Pure SVG so we don't pull a logo asset; intent is a subtle
- *  geometric mark, not the org logo. */
+/** Brand glyph — the 武陵 wordmark itself, so the adjacent label only carries
+ *  the product/instance qualifier. The asset is a transparent trim of the
+ *  master logo (see scripts/gen-brand-assets.sh), sized by height so it sits on
+ *  any theme surface. Fixed brand teal by design: it does not re-tint with
+ *  --accent the way the placeholder mark it replaced did. */
 function BrandMark() {
   return (
-    <svg
-      width="22"
-      height="22"
-      viewBox="0 0 24 24"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden="true"
-      className="shrink-0"
-    >
-      <rect x="2" y="2" width="20" height="20" rx="5" fill="var(--accent)" />
-      <path
-        d="M7 8.5 12 16l5-7.5"
-        stroke="var(--accent-foreground)"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <circle cx="12" cy="6.5" r="1.2" fill="var(--accent-foreground)" />
-    </svg>
+    <img
+      src="/brand-wordmark.png"
+      alt="武陵"
+      width={65}
+      height={30}
+      className="h-[18px] w-auto shrink-0"
+    />
   );
 }
 
