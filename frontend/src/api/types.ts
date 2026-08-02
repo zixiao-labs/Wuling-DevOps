@@ -1028,3 +1028,28 @@ export interface RegistrationTokenResponse {
   token: string;
   expires_in: number;
 }
+
+export interface RunnerConfig {
+  content: string;
+  exists: boolean;
+  blob_sha: string;
+  commit_sha: string;
+  branch: string;
+  path: string;
+  project_slug: string;
+  repo_slug: string;
+  updated_at?: string;
+  updated_by?: string;
+  valid: boolean;
+  parse_error?: string;
+  warnings: string[];
+  created_project?: boolean;
+  created_repo?: boolean;
+  unchanged?: boolean;
+}
+
+export interface PutRunnerConfigRequest {
+  content: string;
+  message?: string;
+  base_blob_sha?: string;
+}
