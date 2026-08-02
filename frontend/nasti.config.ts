@@ -4,19 +4,36 @@
 // we don't have to add @types/node just for this dev-only config file. (`URL`
 // is a global in both Node and the DOM lib that's already in scope.)
 // @ts-ignore — node builtin, no types in this tsconfig
-import http from "node:http";
+import { builtinModules } from "node:module";
 // @ts-ignore — node builtin, no types in this tsconfig
 import fs from "node:fs";
 // @ts-ignore — node builtin, no types in this tsconfig
 import path from "node:path";
+// @ts-ignore — node builtin, no types in this tsconfig
+import http from "node:http";
 
 import { defineConfig, type NastiPlugin } from "@nasti-toolchain/nasti";
 import { chen } from "chen-the-dawnstreak/vite-plugin";
 
 // @ts-ignore — plain-JS build helper, deliberately outside the app tsconfig
 import { serviceWorkerPlugin } from "./build/service-worker-plugin.js";
+// @ts-ignore — plain-JS build helper
+import { helpDocsPlugin } from "./build/help-docs-plugin.js";
 
 declare const process: { env: Record<string, string | undefined>; cwd(): string };
+
+const NODE_BUILTINS = new Set([
+  ...builtinModules,
+  ...builtinModules.map((m: string) => `node:${m}`),
+]);
+
+/** Pin client-only plugins to the client environment (see environments.ssr). */
+function clientOnly(plugins: NastiPlugin[]): NastiPlugin[] {
+  return plugins.map((p) => ({
+    ...p,
+    applyToEnvironment: (env: { name: string }) => env.name === "client",
+  }));
+}
 
 const API_TARGET = process.env.WULING_API_URL ?? "http://localhost:8080";
 
@@ -126,22 +143,22 @@ const pwaIcons = [
 export default defineConfig({
   plugins: [
     devProxyPlugin(API_TARGET),
-    copyPublicDirPlugin(),
-    ...chen({
-      routes: true,
-      pwa: {
-        name: "武陵 DevOps",
-        shortName: "武陵",
-        themeColor: "#46828F",
-        backgroundColor: "#D0E0E3",
-        display: "standalone",
-        icons: pwaIcons,
-      },
-    }),
-    // Must come after chen(): both write sw.js in closeBundle and the last
-    // write wins. See build/service-worker-plugin.js for why chen's generated
-    // worker cannot be shipped as-is.
-    serviceWorkerPlugin(),
+    helpDocsPlugin({ contentDir: "src/help/content" }),
+    ...clientOnly([
+      copyPublicDirPlugin(),
+      ...chen({
+        routes: true,
+        pwa: {
+          name: "武陵 DevOps",
+          shortName: "武陵",
+          themeColor: "#46828F",
+          backgroundColor: "#D0E0E3",
+          display: "standalone",
+          icons: pwaIcons,
+        },
+      }),
+      serviceWorkerPlugin(),
+    ]),
   ],
   resolve: {
     alias: {
@@ -155,5 +172,22 @@ export default defineConfig({
   build: {
     outDir: "dist",
     sourcemap: true,
+  },
+
+  environments: {
+    ssr: {
+      entry: [
+        "src/help/server.ts",
+        "src/help/prerender.ts",
+        "src/help/client/enhance.ts",
+      ],
+      build: {
+        outDir: "dist-help",
+        sourcemap: false,
+        rolldownOptions: {
+          external: (id: string) => NODE_BUILTINS.has(id),
+        },
+      },
+    },
   },
 });

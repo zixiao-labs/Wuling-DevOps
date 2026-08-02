@@ -257,12 +257,26 @@ jobs:
         with:
           context: .
           file: deploy/production/Dockerfile.frontend
+          target: static
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/wuling-frontend:${{ steps.meta.outputs.version }}
             ghcr.io/${{ github.repository_owner }}/wuling-frontend:latest
             ghcr.io/${{ github.repository_owner }}/wuling-frontend:sha-${{ steps.meta.outputs.sha }}
+
+      - name: Build & push help (SSR) image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/production/Dockerfile.frontend
+          target: help
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/wuling-help:${{ steps.meta.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/wuling-help:latest
+            ghcr.io/${{ github.repository_owner }}/wuling-help:sha-${{ steps.meta.outputs.sha }}
 
   # ─────────────────────────────────────────────────────────────────────────
   # 4. Nix flake check (cheap smoke test that the flake still builds).
@@ -315,6 +329,7 @@ jobs:
 
           - \`ghcr.io/${{ github.repository_owner }}/wuling-api:${GITHUB_REF_NAME}\`
           - \`ghcr.io/${{ github.repository_owner }}/wuling-frontend:${GITHUB_REF_NAME}\`
+          - \`ghcr.io/${{ github.repository_owner }}/wuling-help:${GITHUB_REF_NAME}\`
 
           ### Binaries
 

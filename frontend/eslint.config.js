@@ -118,9 +118,15 @@ export default tseslint.config(
     },
   },
 
-  // 4. Node-flavored config files (nasti.config.ts, this file itself).
+  // 4. Node-flavoured config + help server entries + build helpers.
   {
-    files: ["*.{js,ts,mjs,cjs}", "nasti.config.ts"],
+    files: [
+      "*.{js,ts,mjs,cjs}",
+      "nasti.config.ts",
+      "src/help/server.ts",
+      "src/help/prerender.ts",
+      "build/*.js",
+    ],
     languageOptions: {
       globals: {
         ...globals.node,

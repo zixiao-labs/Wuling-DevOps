@@ -95,6 +95,8 @@ self.addEventListener('fetch', (event) => {
   // served to an authenticated user is worse than an offline error.
   if (url.origin !== self.location.origin) return;
   if (url.pathname.startsWith('/api/')) return;
+  // /help/* is server-rendered and changes without a new SW — always network.
+  if (url.pathname === '/help' || url.pathname.startsWith('/help/')) return;
 
   if (IMMUTABLE.test(url.pathname)) {
     event.respondWith((async () => {

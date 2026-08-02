@@ -253,13 +253,7 @@ function ContextRail() {
         const active = it.matchPrefix ? pathname.startsWith(it.matchPrefix) : false;
         return <RailButton key={it.to} to={it.to} icon={Icon} label={it.label} active={active} />;
       })}
-      <RailButton
-        to="/orgs"
-        icon={CircleQuestion}
-        label="帮助"
-        active={false}
-        // Help link is a placeholder — points back home for now.
-      />
+      <RailButton to="/help" external icon={CircleQuestion} label="帮助" active={false} />
     </nav>
   );
 }
@@ -269,29 +263,42 @@ function RailButton({
   icon: Icon,
   label,
   active,
+  external,
 }: {
   to: string;
   icon: typeof House;
   label: string;
   active: boolean;
+  external?: boolean;
 }) {
-  return (
-    <Link
-      to={to}
-      title={label}
-      aria-label={label}
-      className={[
-        "group relative grid h-9 w-9 place-items-center rounded-md",
-        "transition-colors duration-75",
-        active
-          ? "bg-[var(--surface)] text-fg shadow-sm"
-          : "text-fg/70 hover:bg-[var(--surface)] hover:text-fg",
-      ].join(" ")}
-    >
+  const className = [
+    "group relative grid h-9 w-9 place-items-center rounded-md",
+    "transition-colors duration-75",
+    active
+      ? "bg-[var(--surface)] text-fg shadow-sm"
+      : "text-fg/70 hover:bg-[var(--surface)] hover:text-fg",
+  ].join(" ");
+
+  const inner = (
+    <>
       {active ? (
         <span aria-hidden className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-full bg-accent" />
       ) : null}
       <Icon width={18} height={18} />
+    </>
+  );
+
+  if (external) {
+    return (
+      <a href={to} title={label} aria-label={label} className={className}>
+        {inner}
+      </a>
+    );
+  }
+
+  return (
+    <Link to={to} title={label} aria-label={label} className={className}>
+      {inner}
     </Link>
   );
 }
