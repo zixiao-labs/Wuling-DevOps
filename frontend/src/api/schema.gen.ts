@@ -4789,6 +4789,115 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org_slug}/runner-config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Read the org's GitOps runner-config.yaml
+         * @description Reads runner-config.yaml from the root of the org's config repo
+         *     (`{org}/config/config` by default). Returns 200 with `exists: false`
+         *     when the org has not opted into autoscaling yet — the config project,
+         *     repo, or file may all be absent. `valid`/`parse_error` report whether
+         *     the committed bytes still satisfy the autoscaler's schema; a file that
+         *     was pushed directly with `git` may be invalid, in which case the
+         *     autoscaler ignores it. Requires org membership.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description current config (possibly absent) */
+                200: {
+                    headers: {
+                        /** @description Quoted blob SHA of runner-config.yaml. Echo as If-Match on PUT. */
+                        ETag?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RunnerConfig"];
+                    };
+                };
+                401: components["responses"]["UnauthorizedError"];
+                404: components["responses"]["NotFoundError"];
+            };
+        };
+        /**
+         * Commit the org's GitOps runner-config.yaml
+         * @description Validates the payload with the autoscaler's own parser and, only if it
+         *     passes, commits it to the root of the config repo's default branch as
+         *     the calling user. Creates the config project and repo when missing.
+         *     Requires maintainer or above.
+         *
+         *     Optimistic concurrency is mandatory: send `base_blob_sha` (or an
+         *     `If-Match` header) carrying the `blob_sha` from a prior GET, or the
+         *     empty string to assert the file does not exist yet. A mismatch returns
+         *     409 with `details.current_blob_sha`.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: {
+                    /** @description Quoted blob SHA. Alternative to `base_blob_sha`; supplying both requires them to agree. */
+                    "If-Match"?: string;
+                };
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["PutRunnerConfigRequest"];
+                };
+            };
+            responses: {
+                /** @description committed (or unchanged) */
+                200: {
+                    headers: {
+                        /** @description Quoted blob SHA of the newly committed file. */
+                        ETag?: string;
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RunnerConfig"];
+                    };
+                };
+                400: components["responses"]["ValidationError"];
+                401: components["responses"]["UnauthorizedError"];
+                403: components["responses"]["ForbiddenError"];
+                404: components["responses"]["NotFoundError"];
+                409: components["responses"]["ConflictError"];
+                /** @description server built without the libgit2 backend */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runner/register": {
         parameters: {
             query?: never;
@@ -6908,9 +7017,22 @@ export interface components {
             id?: string;
             /** Format: uuid */
             run_id?: string;
+            /** @description Logical YAML job id, shared by every leg of a matrix job. `needs` resolves against this, not against `name`. */
+            job_key?: string;
+            /** @description Per-leg display name, unique within the run — the job's `name:` when declared, otherwise `<job_key> (v1, v2)` over the matrix values. */
             name?: string;
+            /** @description 1-based position in the run's expanded, topologically ordered job list. */
+            ordinal?: number;
+            /** @description Resolved matrix context for this leg; absent for a job with no strategy.matrix. */
+            matrix?: {
+                [key: string]: string;
+            };
+            fail_fast?: boolean;
+            /** @description 0 = unlimited. */
+            max_parallel?: number;
             runs_on?: string[];
             resource_tier?: components["schemas"]["ResourceTier"];
+            /** @description Job keys this job depends on; every leg of each must succeed. */
             needs?: string[];
             status?: components["schemas"]["RunStatus"];
             /** Format: uuid */
@@ -7008,6 +7130,12 @@ export interface components {
             project_slug?: string;
             repo_slug?: string;
             job_name?: string;
+            /** @description Logical YAML job id, shared by every leg of a matrix job. */
+            job_key?: string;
+            /** @description Resolved matrix context, for runner log context only. `${{ matrix.* }}` is already interpolated into `spec` server-side. */
+            matrix?: {
+                [key: string]: string;
+            };
             commit_sha?: string;
             git_ref?: string;
             event?: components["schemas"]["RunEvent"];
@@ -7072,6 +7200,42 @@ export interface components {
         RegistrationTokenResponse: {
             token?: string;
             expires_in?: number;
+        };
+        RunnerConfig: {
+            /** @description Raw YAML. Comments are preserved verbatim — the server never re-serialises the parsed struct. */
+            content: string;
+            /** @description false when the config project */
+            exists: boolean;
+            /** @description Git blob OID of runner-config.yaml; the optimistic-concurrency token. Empty when absent. */
+            blob_sha: string;
+            /** @description Tip commit of the config repo's default branch. Informational. */
+            commit_sha: string;
+            branch: string;
+            /** @example runner-config.yaml */
+            path: string;
+            project_slug: string;
+            repo_slug: string;
+            /** Format: date-time */
+            updated_at?: string;
+            updated_by?: string;
+            /** @description Whether `content` parses under the autoscaler schema. */
+            valid: boolean;
+            parse_error?: string;
+            /** @description Non-blocking advisories (missing credentials_secret, unimplemented provider, unknown version). */
+            warnings: string[];
+            /** @description PUT only — the config project was auto-created. */
+            created_project?: boolean;
+            /** @description PUT only — the config repo was auto-created. */
+            created_repo?: boolean;
+            /** @description PUT only — content matched the committed bytes */
+            unchanged?: boolean;
+        };
+        PutRunnerConfigRequest: {
+            content: string;
+            /** @description Git commit message. Defaults to "Update runner-config.yaml". */
+            message?: string;
+            /** @description blob_sha from a prior GET; the empty string asserts the file does not exist yet. Required unless If-Match is sent. */
+            base_blob_sha?: string;
         };
         RegisterRunnerRequest: {
             token: string;

@@ -30,6 +30,7 @@ import (
 	"github.com/zixiao-labs/wuling-devops/internal/mrstore"
 	"github.com/zixiao-labs/wuling-devops/internal/oauthhttp"
 	"github.com/zixiao-labs/wuling-devops/internal/oauthstore"
+	"github.com/zixiao-labs/wuling-devops/internal/orgconfig"
 	"github.com/zixiao-labs/wuling-devops/internal/orghttp"
 	"github.com/zixiao-labs/wuling-devops/internal/pipelinehttp"
 	"github.com/zixiao-labs/wuling-devops/internal/pipelinestore"
@@ -63,6 +64,7 @@ type Deps struct {
 	Pipelines *pipelinestore.Store
 	Stage2    *stage2store.Store
 	Artifacts *artifactclient.Client
+	OrgConfig *orgconfig.Store
 }
 
 // New returns a router fully wired with all current Stage-1 domains.
@@ -228,6 +230,7 @@ func New(d Deps) http.Handler {
 				RegistrationTTL: d.Cfg.Runner.RegistrationTTL,
 				CloneBaseURL:    d.Cfg.OAuth.PublicBaseURL,
 				DefaultTier:     model.TierMedium,
+				OrgConfig:       d.OrgConfig,
 			}).Mount(api)
 		}
 		if d.Stage2 != nil {

@@ -231,7 +231,14 @@ run 的解析快照。（注意：Runner 侧的 `secrets` / `env` 表达式插�
 **约定**：每个 org 维护一个 **config 仓库**——默认 `项目 slug = config`、`仓库 slug = config`
 （即 `{org}/config/config`，二者均可用 `WULING_RUNNER_CONFIG_PROJECT` /
 `WULING_RUNNER_CONFIG_REPO` 改名）。仓库默认分支根目录下的 `runner-config.yaml` 即该 org 的
-Runner/Autoscaler 配置。控制面用 libgit2 直接读该 blob（带 TTL 缓存）。
+Runner/Autoscaler 配置。控制面在每次 autoscaler reconcile 循环中通过 libgit2 直接读取该 blob
+（无 TTL 缓存；写入后通常在一个 reconcile 周期内生效，默认 ≤20s）。
+
+维护者及以上可通过 **`GET/PUT /api/v1/orgs/{org_slug}/runner-config`** 读写该文件：PUT 会先用
+autoscaler 同一套解析器校验 YAML，通过后以当前用户身份直接提交到 config 仓库默认分支（不走 MR）。
+若 org 尚无 config 项目/仓库，PUT 会自动创建 `{org}/config/config`。乐观并发：GET 返回的
+`blob_sha`（或 `ETag`）须在 PUT 的 `base_blob_sha`（或 `If-Match`）中原样回传；空字符串表示
+断言文件尚不存在。GET 对 org 成员开放；PUT 需 maintainer+。
 
 把配置放进 git（而非全局 server 配置）满足三点：**组织级**、**可走 MR 评审**、**可审计**。
 完整字段见 `runners/config/runner-config.example.yaml`。要点：
@@ -252,7 +259,7 @@ Runner/Autoscaler 配置。控制面用 libgit2 直接读该 blob（带 TTL 缓�
 控制面内的一个协调 goroutine（`WULING_AUTOSCALER_ENABLED`，默认开），周期
 `WULING_AUTOSCALER_INTERVAL`（默认 `20s`）对每个 org 执行 reconcile：
 
-1. 读该 org `config` 仓库的 `runner-config.yaml`（缓存）。
+1. 读该 org `config` 仓库的 `runner-config.yaml`（每次 reconcile 从 git 重新读取）。
 2. 统计每个 (tier, labels) 维度上**当前没有合适在线 runner 承接**的 queued job 数。
 3. **扩容**：匹配的 pool 若未达 `max`，调用 `Provider.Launch(spec)` 拉起实例，并通过 user-data
    注入「服务端地址 + 持久 runner token + labels/tier」，新机自举后上线。引导脚本随 `pool.os`

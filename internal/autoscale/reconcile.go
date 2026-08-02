@@ -8,13 +8,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/zixiao-labs/wuling-devops/internal/apperr"
-	"github.com/zixiao-labs/wuling-devops/internal/git"
+	"github.com/zixiao-labs/wuling-devops/internal/orgconfig"
 	"github.com/zixiao-labs/wuling-devops/internal/pipelinestore"
-	"github.com/zixiao-labs/wuling-devops/internal/repostore"
 	"github.com/zixiao-labs/wuling-devops/internal/runnerstore"
 	"github.com/zixiao-labs/wuling-devops/internal/secretstore"
-	"github.com/zixiao-labs/wuling-devops/internal/userstore"
 )
 
 // ConfigFileName is the runner config blob read from each org's config repo.
@@ -29,13 +26,10 @@ type Reconciler struct {
 	Pipelines *pipelinestore.Store
 	Runners   *runnerstore.Store
 	Secrets   *secretstore.Store
-	Users     *userstore.Store
-	Layout    *repostore.Layout
 	Log       *slog.Logger
 
-	// ConfigProject/ConfigRepo locate each org's config repo.
-	ConfigProject string
-	ConfigRepo    string
+	// OrgConfig reads each org's runner-config.yaml from its config repo.
+	OrgConfig *orgconfig.Store
 	// ServerURL is injected into runner user-data (the control-plane origin).
 	ServerURL string
 	// DefaultIdleTimeout applies when runner-config.yaml omits idle_timeout.
@@ -375,47 +369,17 @@ func (r *Reconciler) launchOne(ctx context.Context, orgID uuid.UUID, cfg *Config
 // repo. Returns (nil, nil) when the org has no config repo / file (i.e. it
 // hasn't opted into autoscaling), and an error only on a real parse/IO fault.
 func (r *Reconciler) loadOrgConfig(ctx context.Context, orgID uuid.UUID) (*Config, error) {
-	project, err := r.Users.GetProjectBySlug(ctx, orgID, r.ConfigProject)
-	if err != nil {
-		if isNotFound(err) {
-			return nil, nil
-		}
-		return nil, err
+	if r.OrgConfig == nil {
+		return nil, nil
 	}
-	repo, err := r.Users.GetRepoBySlug(ctx, project.ID, r.ConfigRepo)
-	if err != nil {
-		if isNotFound(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	repoPath := r.Layout.Path(orgID, project.ID, repo.ID)
-	sha, err := git.Resolve(repoPath, repo.DefaultBranch)
-	if err != nil {
-		if git.IsNotFound(err) {
-			return nil, nil // empty repo
-		}
-		return nil, err
-	}
-	entries, err := git.ReadTree(repoPath, sha)
+	f, err := r.OrgConfig.Read(ctx, orgID, orgconfig.RunnerConfigPath)
 	if err != nil {
 		return nil, err
 	}
-	var blobOID string
-	for _, e := range entries {
-		if e.Kind == "blob" && e.Name == ConfigFileName {
-			blobOID = e.OID
-			break
-		}
+	if !f.Exists() {
+		return nil, nil
 	}
-	if blobOID == "" {
-		return nil, nil // repo exists but no runner-config.yaml
-	}
-	blob, err := git.ReadBlob(repoPath, blobOID)
-	if err != nil {
-		return nil, err
-	}
-	return Parse(blob.Data)
+	return Parse(f.Content)
 }
 
 // ---- helpers ---------------------------------------------------------------
@@ -470,11 +434,4 @@ func idleSince(rn runnerstore.AutoscaleRunner, now time.Time) time.Duration {
 		since = *rn.LastJobAt
 	}
 	return now.Sub(since)
-}
-
-func isNotFound(err error) bool {
-	if ae := apperr.As(err); ae != nil {
-		return ae.Code == apperr.CodeNotFound
-	}
-	return false
 }

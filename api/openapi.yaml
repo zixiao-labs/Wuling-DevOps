@@ -2265,6 +2265,73 @@ paths:
         "403": { $ref: "#/components/responses/ForbiddenError" }
         "404": { $ref: "#/components/responses/NotFoundError" }
 
+  /api/v1/orgs/{org_slug}/runner-config:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+    get:
+      summary: Read the org's GitOps runner-config.yaml
+      description: |
+        Reads runner-config.yaml from the root of the org's config repo
+        (`{org}/config/config` by default). Returns 200 with `exists: false`
+        when the org has not opted into autoscaling yet — the config project,
+        repo, or file may all be absent. `valid`/`parse_error` report whether
+        the committed bytes still satisfy the autoscaler's schema; a file that
+        was pushed directly with `git` may be invalid, in which case the
+        autoscaler ignores it. Requires org membership.
+      responses:
+        "200":
+          description: current config (possibly absent)
+          headers:
+            ETag:
+              description: Quoted blob SHA of runner-config.yaml. Echo as If-Match on PUT.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunnerConfig" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+    put:
+      summary: Commit the org's GitOps runner-config.yaml
+      description: |
+        Validates the payload with the autoscaler's own parser and, only if it
+        passes, commits it to the root of the config repo's default branch as
+        the calling user. Creates the config project and repo when missing.
+        Requires maintainer or above.
+
+        Optimistic concurrency is mandatory: send `base_blob_sha` (or an
+        `If-Match` header) carrying the `blob_sha` from a prior GET, or the
+        empty string to assert the file does not exist yet. A mismatch returns
+        409 with `details.current_blob_sha`.
+      parameters:
+        - in: header
+          name: If-Match
+          required: false
+          schema: { type: string }
+          description: Quoted blob SHA. Alternative to `base_blob_sha`; supplying both requires them to agree.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PutRunnerConfigRequest" }
+      responses:
+        "200":
+          description: committed (or unchanged)
+          headers:
+            ETag:
+              description: Quoted blob SHA of the newly committed file.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunnerConfig" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+        "409": { $ref: "#/components/responses/ConflictError" }
+        "503":
+          description: server built without the libgit2 backend
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
   /api/v1/runner/register:
     post:
       summary: Redeem a registration token and create a runner
@@ -3998,6 +4065,41 @@ components:
       properties:
         token: { type: string }
         expires_in: { type: integer, minimum: 1 }
+
+    RunnerConfig:
+      type: object
+      required: [content, exists, blob_sha, commit_sha, branch, path, project_slug, repo_slug, valid, warnings]
+      properties:
+        content: { type: string, description: Raw YAML. Comments are preserved verbatim — the server never re-serialises the parsed struct. }
+        exists: { type: boolean, description: false when the config project, repo, or file is absent. }
+        blob_sha: { type: string, description: Git blob OID of runner-config.yaml; the optimistic-concurrency token. Empty when absent. }
+        commit_sha: { type: string, description: Tip commit of the config repo's default branch. Informational. }
+        branch: { type: string }
+        path: { type: string, example: runner-config.yaml }
+        project_slug: { type: string }
+        repo_slug: { type: string }
+        updated_at: { type: string, format: date-time }
+        updated_by: { type: string }
+        valid: { type: boolean, description: Whether `content` parses under the autoscaler schema. }
+        parse_error: { type: string }
+        warnings:
+          type: array
+          description: Non-blocking advisories (missing credentials_secret, unimplemented provider, unknown version).
+          items: { type: string }
+        created_project: { type: boolean, description: PUT only — the config project was auto-created. }
+        created_repo: { type: boolean, description: PUT only — the config repo was auto-created. }
+        unchanged: { type: boolean, description: PUT only — content matched the committed bytes, so no commit was made. }
+
+    PutRunnerConfigRequest:
+      type: object
+      required: [content]
+      properties:
+        content: { type: string, maxLength: 262144 }
+        message: { type: string, maxLength: 512, description: "Git commit message. Defaults to \"Update runner-config.yaml\"." }
+        base_blob_sha:
+          type: string
+          pattern: "^([0-9a-fA-F]{40})?$"
+          description: blob_sha from a prior GET; the empty string asserts the file does not exist yet. Required unless If-Match is sent.
 
     RegisterRunnerRequest:
       type: object

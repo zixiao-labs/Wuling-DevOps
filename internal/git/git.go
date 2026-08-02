@@ -35,6 +35,10 @@ import (
 var (
 	initOnce sync.Once
 	initErr  error
+
+	// ErrCGOUnsupported is never returned by the cgo build; it exists so
+	// callers can errors.Is against it in both build modes.
+	ErrCGOUnsupported = errors.New("internal/git: built without cgo; libgit2 backend unavailable")
 )
 
 // Init brings up libgit2. Safe to call repeatedly.
@@ -345,6 +349,19 @@ func IsConflict(err error) bool {
 		return false
 	}
 	return contains(err.Error(), "conflict:")
+}
+
+// IsStaleTip reports whether err is libgit2 refusing to move a ref because
+// another writer advanced it between our parent lookup and the commit:
+// "failed to create commit: current tip is not the first parent"
+// (GIT_EMODIFIED). Callers map it to apperr.Conflict — it is the
+// cross-process backstop for optimistic concurrency on CommitFile/DeleteFile,
+// which the in-process mutex cannot provide.
+func IsStaleTip(err error) bool {
+	if err == nil {
+		return false
+	}
+	return contains(err.Error(), "current tip is not the first parent")
 }
 
 // ----------------------------------------------------------------------------
