@@ -2,43 +2,47 @@
 
 本文档记录 Stack #45 上**尚未交付**的工作流，供后续 agent 接续，避免重复阅读设计与 stack 纪律。
 
-## Stack 纪律（Graphite Stack #45）
+## Stack 纪律（`gh stack` Stack #45）
 
-- 使用 **Graphite** 管理 stacked PR：`gt stack add` 将新分支叠在当前栈顶；提交前 **`gt stack stop`** 停止自动 restack（若正在运行）。
-- 每个 PR 对应一个 focused branch；合并顺序从栈底到栈顶。
+- 使用 **`gh stack`**（见 `gh stack --help`）管理 stacked PR。
+- 新分支叠在栈顶：`gh stack add <branch>`；本地改完后 **不要代跑** `gh stack submit`，就绪时停下通知操作者执行。
+- 每个 PR 对应一个 focused branch；合并顺序从栈底（靠近 `main`）到栈顶。
+- 同步远端：`gh stack sync` / `gh stack rebase` 按需使用。
 - 设计文档路径：`~/.claude/projects/-Users-logos-WebstormProjects-Wuling-DevOps/designs/`
 
-## 已交付栈分支（参考）
+## 已交付栈分支（bottom → top）
 
 | 分支 | 领域 |
 |------|------|
-| `feat/pipeline-strategy-matrix` | 流水线 matrix 策略 |
-| `feat/setup-actions` | setup-node / setup-rust 内置 action |
-| `feat/gitops-runner-config` | GET/PUT org runner-config GitOps 写回 |
-| `feat/aliyun-resource-limits` | 阿里云 RunInstances + 作业资源限制 |
-| `feat/help-center-ssr` | `/help` SSR 帮助中心（本 PR） |
-| `User-experience-optimization` / `opt-ux` | 品牌资产、Service Worker 修复等 UX |
+| `User-experience-optimization` | logo / SW / brand CI guard（#41） |
+| `feat/aliyun-userdata-provider-aware` | Aliyun Windows user-data（#42） |
+| `feat/pipeline-strategy-matrix` | strategy.matrix（#43） |
+| `docs/github-app-integration` | GitHub App operator runbook（#44） |
+| `feat/aliyun-resource-limits` | Aliyun RunInstances + 容器资源限制（待 submit） |
+| `feat/setup-actions` | setup-node / setup-rust + toolcache（待 submit） |
+| `feat/gitops-runner-config` | GET/PUT org runner-config（待 submit） |
+| `feat/help-center-ssr` | `/help` SSR 帮助中心 + 本文档（待 submit） |
 
-（具体栈顺序以 `gt log` / `gh pr list` 为准。）
+（以 `gh stack view` 为准。）
 
 ---
 
 ## 工作流 4：Autoscale UI
 
-**状态：** 后端/API 面已在 `feat/aliyun-resource-limits` 等分支落地；**前端 autoscale 配置 UI 未做**。
+**状态：** 写回 API 已在 `feat/gitops-runner-config`（`GET/PUT /api/v1/orgs/{org_slug}/runner-config` + `frontend/src/api/endpoints.ts` 的 `runnerConfig` helpers）；**前端编辑页未做**。
 
 **设计参考：**
 
-- `~/.claude/projects/-Users-logos-WebstormProjects-Wuling-DevOps/designs/design-aliyun.json`
-- `critique-aliyun.json`（实现时注意 critique 中的约束）
+- GitOps API 契约：`api/openapi.yaml` 的 `RunnerConfig` / `PutRunnerConfigRequest`
+- Aliyun 池字段：`design-aliyun.json` + `critique-aliyun.json`（UI 只编辑 YAML 亦可）
 
-**待做：**
+**待做（建议最小切片）：**
 
-- 组织/项目设置页：展示与编辑 autoscale provider、实例规格、容量上下限
-- 与现有 GitOps runner-config API 联动（`feat/gitops-runner-config`）
-- 表单校验、权限（org admin）、空状态与错误提示
+- Org 设置页：YAML textarea + GET/PUT + `base_blob_sha`/`If-Match` 冲突提示 + parse_error/warnings 展示
+- 改 UI 前用 **heroui-react MCP**（`list_components` → `get_component_docs`）核对 v3 复合组件（TextArea / Button / Alert）；禁止 v2 Provider 模式
+- 权限：读 member / 写 maintainer+（与 API 一致）
 
-**建议分支名：** `feat/autoscale-ui`
+**建议分支名：** `feat/autoscale-ui`（叠在 `feat/help-center-ssr` 或 submit 后的栈顶之上）
 
 ---
 
