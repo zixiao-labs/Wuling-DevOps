@@ -20,6 +20,7 @@ import (
 	"github.com/zixiao-labs/wuling-devops/internal/config"
 	"github.com/zixiao-labs/wuling-devops/internal/db"
 	"github.com/zixiao-labs/wuling-devops/internal/githttp"
+	"github.com/zixiao-labs/wuling-devops/internal/githubapp"
 	"github.com/zixiao-labs/wuling-devops/internal/githubwebhook"
 	"github.com/zixiao-labs/wuling-devops/internal/httpapi"
 	"github.com/zixiao-labs/wuling-devops/internal/insighthttp"
@@ -187,8 +188,10 @@ func New(d Deps) http.Handler {
 			InviteLinkBase: deriveInviteLinkBase(d.Cfg),
 		}).Mount(api)
 
+		githubLinks := &githubwebhook.LinkStore{Pool: d.Pool}
 		(&repohttp.Handler{
 			Store: d.Store, Layout: d.Layout, Verifier: verifier, OAT: oauthH,
+			GithubLinks: githubLinks,
 		}).Mount(api)
 
 		(&issuehttp.Handler{
@@ -245,11 +248,36 @@ func New(d Deps) http.Handler {
 		// GitHub App webhooks — HMAC-authenticated, no JWT. Mount only when
 		// the operator has configured a webhook secret (empty = disabled).
 		if secret := d.Cfg.GithubApp.WebhookSecret; secret != "" {
-			(&githubwebhook.Handler{
+			whLog := d.Log.With("component", "github-webhook")
+			wh := &githubwebhook.Handler{
 				Secret: secret,
 				Store:  &githubwebhook.Store{Pool: d.Pool},
-				Log:    d.Log.With("component", "github-webhook"),
-			}).Mount(api)
+				Log:    whLog,
+			}
+			var trigger *pipelinetrigger.Service
+			if d.Pipelines != nil {
+				trigger = &pipelinetrigger.Service{
+					Pipelines:   d.Pipelines,
+					Log:         d.Log.With("component", "ci-trigger"),
+					DefaultTier: model.TierMedium,
+				}
+			}
+			proc := &githubwebhook.Processor{
+				AppID:         d.Cfg.GithubApp.AppID,
+				Links:         githubLinks,
+				Layout:        d.Layout,
+				Trigger:       trigger,
+				PublicBaseURL: d.Cfg.OAuth.PublicBaseURL,
+			}
+			if key, kerr := githubapp.LoadPrivateKey(d.Cfg.GithubApp.PrivateKey, d.Cfg.GithubApp.PrivateKeyPath); kerr != nil {
+				d.Log.Warn("github-webhook: app private key unavailable; sync/checks disabled", "err", kerr)
+			} else if d.Cfg.GithubApp.AppID == 0 {
+				d.Log.Warn("github-webhook: WULING_GITHUB_APP_ID unset; sync/checks disabled")
+			} else {
+				proc.App = githubapp.New(d.Cfg.GithubApp.AppID, key, nil)
+			}
+			wh.Process = proc.Handle
+			wh.Mount(api)
 		}
 	})
 

@@ -110,9 +110,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Log:        log,
 	}); err != nil {
 		log.Error("github-webhook: process failed", "err", err)
-		// Return 500 so GitHub redelivers; ClaimDelivery already recorded the
-		// id — on redelivery we must NOT short-circuit as duplicate if we
-		// failed. MVP keeps claim-before-process; events branch can refine.
+		// Release the claim so GitHub's redelivery can retry the work.
+		if h.Store != nil {
+			_ = h.Store.ReleaseClaim(r.Context(), deliveryID)
+		}
 		httpapi.WriteJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": "process failed"})
 		return
 	}

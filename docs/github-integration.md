@@ -134,8 +134,20 @@ HMAC-SHA256 校验并**常量时间**比较；校验不过一律 401。
 | 变量 | 值 |
 |----|----|
 | `WULING_GITHUB_APP_ID` | `3713023` |
-| `WULING_GITHUB_APP_PRIVATE_KEY` | §2 下载的 PEM 全文（或 `..._PATH` 指向文件） |
+| `WULING_GITHUB_APP_PRIVATE_KEY` | §2 下载的 PEM 全文（或 `WULING_GITHUB_APP_PRIVATE_KEY_PATH` 指向文件） |
 | `WULING_GITHUB_WEBHOOK_SECRET` | §3 里填的那串 secret |
+
+控制面在 `WULING_GITHUB_WEBHOOK_SECRET` 非空时挂载
+`POST /api/v1/webhooks/github`（HMAC 验签 + `X-GitHub-Delivery` 幂等）。
+要对某个武陵仓库处理 `push` / `pull_request` / Checks，还需用维护者身份调用：
+
+`PUT /api/v1/orgs/{org}/projects/{project}/repos/{repo}/github-link`
+
+```json
+{ "owner": "acme", "name": "app", "installation_id": 12345678 }
+```
+
+未绑定的 GitHub 仓库事件会被忽略（不 5xx）。
 
 `WULING_OAUTH_GITHUB_CLIENT_ID` / `..._SECRET` 保持不变——**登录走的仍然是同一个 App 的 OAuth 凭据**，
 这里新增的是 App 自身的身份（JWT 私钥），两者并存、互不影响。

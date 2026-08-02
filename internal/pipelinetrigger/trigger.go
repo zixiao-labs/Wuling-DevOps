@@ -9,6 +9,7 @@ package pipelinetrigger
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -21,17 +22,74 @@ import (
 	"github.com/zixiao-labs/wuling-devops/internal/pipelinestore"
 )
 
-// Service implements githttp.PushTrigger.
+// Service implements githttp.PushTrigger and GitHub pull_request triggers.
 type Service struct {
 	Pipelines   *pipelinestore.Store
 	Log         *slog.Logger
 	DefaultTier string
 }
 
+// PullRequestEvent is the subset of a GitHub pull_request webhook we need to
+// start matching workflow runs.
+type PullRequestEvent struct {
+	Number        int
+	HeadSHA       string
+	BaseBranch    string
+	HeadBranch    string
+	CommitMessage string
+}
+
 // OnPush handles branch updates asynchronously so the push response is never
 // blocked on workflow discovery / run creation.
 func (s *Service) OnPush(repoID, projectID, orgID uuid.UUID, repoPath string, updates []githttp.RefUpdate) {
 	go s.handle(repoID, projectID, orgID, repoPath, updates)
+}
+
+// OnPullRequest discovers workflows matching pull_request and creates runs at
+// the PR head SHA. Async, same contract as OnPush.
+func (s *Service) OnPullRequest(repoID, projectID, orgID uuid.UUID, repoPath string, ev PullRequestEvent) {
+	go s.handlePullRequest(repoID, projectID, orgID, repoPath, ev)
+}
+
+func (s *Service) handlePullRequest(repoID, projectID, orgID uuid.UUID, repoPath string, ev PullRequestEvent) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	discovered, err := pipeline.Discover(repoPath, ev.HeadSHA)
+	if err != nil {
+		s.log().Warn("ci-trigger: PR discover failed", "repo_id", repoID, "sha", ev.HeadSHA, "err", err)
+		return
+	}
+	msg := firstLine(ev.CommitMessage)
+	if msg == "" {
+		msg = firstLine(commitMessage(repoPath, ev.HeadSHA))
+	}
+	for _, dw := range discovered {
+		if dw.ParseErr != nil {
+			s.log().Warn("ci-trigger: PR workflow parse error",
+				"repo_id", repoID, "path", dw.Path, "err", dw.ParseErr)
+			continue
+		}
+		if !dw.Workflow.MatchEvent("pull_request", ev.BaseBranch) {
+			continue
+		}
+		_, err := s.Pipelines.CreateRun(ctx, pipelinestore.CreateRunParams{
+			OrgID:         orgID,
+			ProjectID:     projectID,
+			RepoID:        repoID,
+			WorkflowPath:  dw.Path,
+			Event:         "pull_request",
+			GitRef:        fmt.Sprintf("refs/pull/%d/head", ev.Number),
+			CommitSHA:     ev.HeadSHA,
+			CommitMessage: msg,
+			Workflow:      dw.Workflow,
+			DefaultTier:   s.DefaultTier,
+		})
+		if err != nil {
+			s.log().Error("ci-trigger: PR create run failed",
+				"repo_id", repoID, "path", dw.Path, "err", err)
+		}
+	}
 }
 
 func (s *Service) handle(repoID, projectID, orgID uuid.UUID, repoPath string, updates []githttp.RefUpdate) {

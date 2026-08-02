@@ -1233,6 +1233,63 @@ paths:
         "401": { $ref: "#/components/responses/UnauthorizedError" }
         "404": { $ref: "#/components/responses/NotFoundError" }
 
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/repos/{repo_slug}/github-link:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - $ref: "#/components/parameters/RepoSlug"
+    get:
+      summary: Read the GitHub App repo link for this Wuling repo
+      description: |
+        Returns whether this repo is linked to a GitHub repository for webhook
+        sync / Checks. Unlinked repos cause webhook handlers to skip events.
+      responses:
+        "200":
+          description: link status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  linked: { type: boolean }
+                  owner: { type: string }
+                  name: { type: string }
+                  full_name: { type: string }
+                  installation_id: { type: integer, format: int64 }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+    put:
+      summary: Bind this Wuling repo to a GitHub App installation repository
+      description: Requires maintainer or above. Webhook push/PR handling only runs for linked repos.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [owner, name, installation_id]
+              properties:
+                owner: { type: string }
+                name: { type: string }
+                installation_id: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: linked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  linked: { type: boolean }
+                  owner: { type: string }
+                  name: { type: string }
+                  full_name: { type: string }
+                  installation_id: { type: integer, format: int64 }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
   # ---------------- issues ----------------
 
   /api/v1/orgs/{org_slug}/projects/{project_slug}/issues:
