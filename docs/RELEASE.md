@@ -43,10 +43,15 @@ git push origin "$TAG"
 | macOS amd64 二进制 | `wuling-api-darwin-amd64.tar.gz` |
 | macOS arm64 二进制 | `wuling-api-darwin-arm64.tar.gz` |
 | migrate 工具（同上 4 平台） | `wuling-migrate-<os>-<arch>.tar.gz` |
+| Runner Linux (musl) | `wuling-runner-linux-amd64.tar.gz` / `…-arm64.tar.gz` |
+| Runner macOS | `wuling-runner-darwin-amd64.tar.gz` / `…-arm64.tar.gz` |
+| Runner Windows zip | `wuling-runner-windows-amd64.zip` |
+| Runner Windows 安装器 | `wuling-runner-windows-amd64-setup.exe`（Inno Setup） |
 | 前端 bundle | `wuling-frontend-dist-vX.Y.Z.tar.gz` |
 | 每个的 SHA256 | `<filename>.sha256` |
 | API 镜像 | `ghcr.io/zixiao-labs/wuling-api:vX.Y.Z` |
 | 前端镜像 | `ghcr.io/zixiao-labs/wuling-frontend:vX.Y.Z` |
+| Help SSR 镜像 | `ghcr.io/zixiao-labs/wuling-help:vX.Y.Z` |
 | Nix flake | `github:zixiao-labs/Wuling-DevOps/vX.Y.Z#wuling-api` 等 |
 
 ## 校验产物

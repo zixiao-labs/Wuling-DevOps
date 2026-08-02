@@ -1,6 +1,6 @@
 # 剩余工作流交接
 
-本文档记录 Stack #45 上**尚未交付**的工作流，供后续 agent 接续，避免重复阅读设计与 stack 纪律。
+本文档记录 Stack #45 上**尚未交付 / 已交付**的工作流，供后续 agent 接续。
 
 ## Stack 纪律（`gh stack` Stack #45）
 
@@ -18,11 +18,14 @@
 | `feat/aliyun-userdata-provider-aware` | Aliyun Windows user-data（#42） |
 | `feat/pipeline-strategy-matrix` | strategy.matrix（#43） |
 | `docs/github-app-integration` | GitHub App operator runbook（#44） |
-| `feat/aliyun-resource-limits` | Aliyun RunInstances + 容器资源限制（待 submit） |
-| `feat/setup-actions` | setup-node / setup-rust + toolcache（待 submit） |
-| `feat/gitops-runner-config` | GET/PUT org runner-config（待 submit） |
-| `feat/help-center-ssr` | `/help` SSR 帮助中心（待 submit） |
-| `feat/autoscale-ui` | Org runner-config YAML 编辑页（待 submit） |
+| `feat/aliyun-resource-limits` | Aliyun RunInstances + 容器资源限制 |
+| `feat/setup-actions` | setup-node / setup-rust + toolcache |
+| `feat/gitops-runner-config` | GET/PUT org runner-config |
+| `feat/help-center-ssr` | `/help` SSR 帮助中心 |
+| `feat/autoscale-ui` | Org runner-config YAML 编辑页 |
+| `feat/github-webhooks` | Webhook MVP：HMAC + ping + delivery 幂等 |
+| `feat/github-webhooks-events` | repo links + fetch + PR trigger + Checks |
+| `feat/runner-installers` | Windows Inno Setup + release 附件 + 安装文档 |
 
 （以 `gh stack view` 为准。）
 
@@ -30,49 +33,31 @@
 
 ## 工作流 4：Autoscale UI
 
-**状态：** **已交付（本分支 `feat/autoscale-ui`）** — Org 侧栏「自动扩缩容」页：YAML textarea + GET/PUT + `base_blob_sha` 冲突提示 + parse_error/warnings + maintainer+ 写权限门控。
-
-**页面：** `frontend/src/pages/orgs/[org_slug]/runner-config.tsx`
+**状态：** 已交付（`feat/autoscale-ui`）。
 
 ---
 
 ## 工作流 5：Runner 镜像与 Inno Setup
 
-**状态：** Runner 客户端与 setup action 已有基础；**多 OS 安装包、Windows Inno Setup 安装器、发布流水线**未完整交付。
+**状态：** 已交付（`feat/runner-installers`）。
 
-**设计参考：**
+- Inno Setup：`runners/packaging/windows/wuling-runner.iss` + `run.cmd`
+- CI：`release.yml` Windows 矩阵编译 setup.exe + sha256，Release 附件含 `*.exe`
+- 文档：`docs/RELEASE.md`、`runners/runner-clients/README.md`
 
-- 仓库内 `feat/multi-os-runners` 分支（若仍存在）及相关 runner 文档
-- release.yml 中 runner 制品模式（`build-runner` job）
-
-**待做：**
-
-- 统一 Linux/macOS/Windows runner 构建矩阵
-- Windows：Inno Setup `.iss` + CI 产出安装包
-- 文档：安装、注册、升级路径
-- GH Release 附件与 checksum
-
-**建议分支名：** `feat/runner-installers`（叠在 `feat/autoscale-ui` 或 submit 后的栈顶之上）
+镜像 bake 脚本（`runners/images/*/setup.*`）保持 zip/tar 路径，与 GUI 安装器并存。
 
 ---
 
 ## 工作流 7：Webhook 实现
 
-**状态：** `docs/github-app-integration` / runbook 已有文档；**GitHub App webhook 接收、验签、事件分发与 PR check 联动**需完整实现或硬化。
+**状态：** 已交付（`feat/github-webhooks` + `feat/github-webhooks-events`）。
 
-**设计参考：**
+- MVP：`POST /api/v1/webhooks/github`，`X-Hub-Signature-256`，`ping`，`github_webhook_deliveries`
+- Events：`github_repo_links`、installation token、`git fetch`、push/PR → pipelinetrigger、check_suite/check_run
+- 绑定 API：`PUT .../repos/{repo}/github-link`（maintainer+）
 
-- 仓库 `docs/` 下 GitHub App 集成说明
-- API 侧 webhook handler 占位（搜索 `webhook` / `github app`）
-
-**待做：**
-
-- POST webhook endpoint + HMAC 验签
-- 处理 `push`、`pull_request`、`check_run` 等事件 → 触发流水线 / 同步仓库
-- Idempotency、重试、可观测性（结构化日志）
-- 与 GitOps 仓库同步路径对齐
-
-**建议分支名：** `feat/github-webhooks`
+后续可增强：check run `external_id` ↔ pipeline run 终态自动 PATCH、annotations 分批、仓库改名自动改 link。
 
 ---
 
@@ -80,12 +65,12 @@
 
 ```
 designs/
-  design-aliyun.json          # 阿里云 autoscale + 资源限制
-  design-gitops-write.json    # runner-config GitOps
-  design-help-center-ssr.json # 帮助中心 SSR（已实施）
-  design-setup-actions.json   # setup-node/rust
-  design-matrix.json          # strategy.matrix
-  design-logo.json            # 品牌资产
+  design-aliyun.json
+  design-gitops-write.json
+  design-help-center-ssr.json
+  design-setup-actions.json
+  design-matrix.json
+  design-logo.json
 ```
 
 ## 验证清单（接续 agent）
@@ -98,4 +83,4 @@ designs/
 
 ---
 
-*最后更新：feat/autoscale-ui 交付时。*
+*最后更新：feat/runner-installers 交付时。*

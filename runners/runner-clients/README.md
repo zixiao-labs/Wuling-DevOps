@@ -50,6 +50,43 @@ wuling-runner
 
 All flags have `WULING_RUNNER_*` env equivalents (run `wuling-runner --help`).
 
+## Install / upgrade (multi-OS)
+
+Release artifacts (see `docs/RELEASE.md`):
+
+| Platform | Artifact |
+|----------|----------|
+| Linux amd64/arm64 | `wuling-runner-linux-<arch>.tar.gz` (static musl) |
+| macOS amd64/arm64 | `wuling-runner-darwin-<arch>.tar.gz` |
+| Windows amd64 | `wuling-runner-windows-amd64.zip` **or** `wuling-runner-windows-amd64-setup.exe` |
+
+Verify with the adjacent `.sha256` file before installing.
+
+**Linux / macOS image bake:** set `WULING_RUNNER_VERSION=<tag>` and run
+`runners/images/<os>/setup.*` — downloads the release binary, no Rust toolchain.
+
+**Windows (static machine):**
+
+1. Download `wuling-runner-windows-amd64-setup.exe` from the GitHub Release.
+2. Run the installer (admin). Default install dir: `C:\wuling-runner\`.
+   Optionally register the `wuling-runner` Scheduled Task (AtStartup / SYSTEM).
+3. Mint a registration token in the org UI → Runners.
+4. Write `C:\ProgramData\wuling-runner\runner.env`:
+
+   ```
+   WULING_RUNNER_SERVER_URL=https://wuling.example.com
+   WULING_RUNNER_REGISTRATION_TOKEN=wlreg_...
+   ```
+
+5. Start: `schtasks /Run /TN wuling-runner`
+
+**Upgrade:** re-run the newer setup.exe over the same directory (Inno Setup
+overwrites `wuling-runner.exe` + `run.cmd`). Re-registering the scheduled task
+is idempotent. Autoscaled Windows images keep using
+`runners/images/windows/setup.ps1` (zip download), not the GUI installer.
+
+The Inno Setup source lives at `runners/packaging/windows/wuling-runner.iss`.
+
 ## Behaviour notes
 
 - **Concurrency**: `--concurrency N` runs N jobs in parallel, each in its own
