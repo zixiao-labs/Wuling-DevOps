@@ -115,8 +115,13 @@ self.addEventListener('fetch', (event) => {
     try {
       const res = await fetch(req);
       if (res && res.status === 200 && res.type === 'basic') {
-        const copy = res.clone();
-        (await caches.open(CACHE)).put(req, copy);
+        const cache = await caches.open(CACHE);
+        cache.put(req, res.clone());
+        // Navigations serve the SPA shell. Also store it under the canonical
+        // /index.html key so offline fallbacks for unvisited routes work.
+        if (req.mode === 'navigate') {
+          cache.put('/index.html', res.clone());
+        }
       }
       return res;
     } catch (err) {
