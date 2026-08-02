@@ -103,7 +103,7 @@ export default function RunnersPage() {
     <PageContainer>
       <PageHeader
         title="Runners"
-        description="本组织的 CI 执行器。手动注册一台静态 runner，或在 config 仓库的 runner-config.yaml 里配置云自动扩缩容（AWS / 阿里云访问密钥需在「设置 → Secrets」里按 credentials_secret 的名称配置）。"
+        description="本组织的 CI 执行器。手动注册一台静态 runner，或在「自动扩缩容」里编辑 runner-config.yaml（AWS / 阿里云访问密钥需在「机密」里按 credentials_secret 的名称配置）。"
       />
 
       <Surface className="mb-4">

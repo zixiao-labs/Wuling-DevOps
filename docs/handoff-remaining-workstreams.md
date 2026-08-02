@@ -21,7 +21,8 @@
 | `feat/aliyun-resource-limits` | Aliyun RunInstances + 容器资源限制（待 submit） |
 | `feat/setup-actions` | setup-node / setup-rust + toolcache（待 submit） |
 | `feat/gitops-runner-config` | GET/PUT org runner-config（待 submit） |
-| `feat/help-center-ssr` | `/help` SSR 帮助中心 + 本文档（待 submit） |
+| `feat/help-center-ssr` | `/help` SSR 帮助中心（待 submit） |
+| `feat/autoscale-ui` | Org runner-config YAML 编辑页（待 submit） |
 
 （以 `gh stack view` 为准。）
 
@@ -29,20 +30,9 @@
 
 ## 工作流 4：Autoscale UI
 
-**状态：** 写回 API 已在 `feat/gitops-runner-config`（`GET/PUT /api/v1/orgs/{org_slug}/runner-config` + `frontend/src/api/endpoints.ts` 的 `runnerConfig` helpers）；**前端编辑页未做**。
+**状态：** **已交付（本分支 `feat/autoscale-ui`）** — Org 侧栏「自动扩缩容」页：YAML textarea + GET/PUT + `base_blob_sha` 冲突提示 + parse_error/warnings + maintainer+ 写权限门控。
 
-**设计参考：**
-
-- GitOps API 契约：`api/openapi.yaml` 的 `RunnerConfig` / `PutRunnerConfigRequest`
-- Aliyun 池字段：`design-aliyun.json` + `critique-aliyun.json`（UI 只编辑 YAML 亦可）
-
-**待做（建议最小切片）：**
-
-- Org 设置页：YAML textarea + GET/PUT + `base_blob_sha`/`If-Match` 冲突提示 + parse_error/warnings 展示
-- 改 UI 前用 **heroui-react MCP**（`list_components` → `get_component_docs`）核对 v3 复合组件（TextArea / Button / Alert）；禁止 v2 Provider 模式
-- 权限：读 member / 写 maintainer+（与 API 一致）
-
-**建议分支名：** `feat/autoscale-ui`（叠在 `feat/help-center-ssr` 或 submit 后的栈顶之上）
+**页面：** `frontend/src/pages/orgs/[org_slug]/runner-config.tsx`
 
 ---
 
@@ -62,7 +52,7 @@
 - 文档：安装、注册、升级路径
 - GH Release 附件与 checksum
 
-**建议分支名：** `feat/runner-installers`
+**建议分支名：** `feat/runner-installers`（叠在 `feat/autoscale-ui` 或 submit 后的栈顶之上）
 
 ---
 
@@ -100,12 +90,12 @@ designs/
 
 ## 验证清单（接续 agent）
 
-1. `gt log` 确认当前栈顶与 base branch
+1. `gh stack view` 确认当前栈顶与 base branch
 2. 阅读对应 `design-*.json` 的 `currentState` + `design` + `risks`
-3. 新分支：`gt create -a feat/...` 或 `git checkout -b feat/...`
+3. 新分支：`gh stack add feat/...`
 4. PR 前：`npm run typecheck` / 对应语言测试 / CI green
-5. **`gt stack stop`** 后再 `gt submit`（或 `gh pr create`），避免 restack 冲突
+5. **不要代跑** `gh stack submit`；就绪后通知操作者执行
 
 ---
 
-*最后更新：feat/help-center-ssr 交付时创建。*
+*最后更新：feat/autoscale-ui 交付时。*
