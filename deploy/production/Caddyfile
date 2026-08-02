@@ -69,6 +69,18 @@ http://{$WULING_DOMAIN} {
         }
     }
 
+    # ---- Help center (SSR) ---------------------------------------------
+    # /help/* is server-rendered by the `help` container for SEO + first paint.
+    @help path /help /help/*
+    handle @help {
+        reverse_proxy help:8081 {
+            header_up X-Forwarded-Host {host}
+            header_up X-Forwarded-Proto {scheme}
+            fail_duration 10s
+            max_fails 1
+        }
+    }
+
     # ---- Static frontend (Nasti build output) --------------------------
     # Catch-all: anything that didn't match the API/git handlers above.
     handle {
@@ -78,11 +90,19 @@ http://{$WULING_DOMAIN} {
             precompressed gzip
         }
 
-        # Cache hashed assets aggressively, never cache index.html
-        @assets path /assets/* /icon-*.png /favicon.svg /manifest.webmanifest /sw.js
-        header @assets Cache-Control "public, max-age=31536000, immutable"
+        # Only /assets/* is content-hashed by Nasti, so only it may be cached
+        # immutably. Brand files keep stable names (they are referenced from
+        # index.html and the manifest) — revalidate those daily instead.
+        @hashed path /assets/*
+        header @hashed Cache-Control "public, max-age=31536000, immutable"
 
-        @noCache path /index.html / /
+        @brand path /favicon.ico /favicon-32.png /apple-touch-icon.png /icon-*.png /brand-wordmark.png /og-image.png
+        header @brand Cache-Control "public, max-age=86400"
+
+        # The service worker and the manifest must never be cached hard, or a
+        # client pins itself to a stale build forever. (Nasti emits the manifest
+        # as manifest.json — there is no .webmanifest.)
+        @noCache path /index.html / /sw.js /manifest.json
         header @noCache Cache-Control "no-cache"
     }
 
@@ -94,9 +114,23 @@ http://{$WULING_DOMAIN} {
         X-Content-Type-Options "nosniff"
         Referrer-Policy "strict-origin-when-cross-origin"
         Permissions-Policy "interest-cohort=()"
-        # CSP is intentionally loose — Wiki HTML comes server-sanitized but
-        # contains user-authored markup. Tighten this when you can.
         Content-Security-Policy "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; font-src 'self' data:"
+    }
+
+    # ---- Graceful degradation for /help --------------------------------
+    handle_errors {
+        @helpDown {
+            expression {err.status_code} >= 500
+            path /help /help/*
+        }
+        handle @helpDown {
+            root * /srv/wuling-frontend
+            try_files {path}/index.html {path}.html /help/index.html
+            file_server
+        }
+        handle {
+            respond "{err.status_code} {err.text}" {err.status_code}
+        }
     }
 
     log {

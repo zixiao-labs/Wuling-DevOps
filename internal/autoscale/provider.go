@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/google/uuid"
 )
 
 // Instance is a launched runner VM, identified by the provider-specific id the
@@ -20,13 +22,32 @@ type LaunchSpec struct {
 	// UserData is the cloud-init / startup script that injects the server URL
 	// and the runner's wlrt_ token so the VM self-configures on boot.
 	UserData string
+
+	// OrgID and RunnerID identify the runner row this VM backs. RunnerID
+	// doubles as the provider idempotency key: a RunInstances retried after a
+	// client timeout returns the FIRST call's instance id instead of launching
+	// — and billing — a second VM.
+	OrgID    uuid.UUID
+	RunnerID uuid.UUID
 }
+
+// IdempotencyKey is the ≤64-ASCII-char token providers pass as their
+// idempotency parameter (Aliyun ClientToken, AWS ClientToken).
+func (s LaunchSpec) IdempotencyKey() string { return s.RunnerID.String() }
 
 // Provider launches and terminates ephemeral runner instances on one backend.
 type Provider interface {
 	Name() string
 	Launch(ctx context.Context, spec LaunchSpec) (Instance, error)
 	Terminate(ctx context.Context, externalID string) error
+}
+
+// ProviderSecrets holds the decrypted org secrets one pool needs. Credentials
+// is the JSON blob named by credentials_secret; WindowsPassword is the raw
+// value of password_secret (Aliyun Windows pools only).
+type ProviderSecrets struct {
+	Credentials     string
+	WindowsPassword string
 }
 
 // Credential shapes, decoded from the JSON stored in the org secret named by
@@ -69,22 +90,22 @@ func (p Pool) CredentialSecretName() string {
 	return ""
 }
 
-// NewProvider builds a Provider for a pool from its decrypted credentials JSON.
-func NewProvider(pool Pool, credsJSON string) (Provider, error) {
+// NewProvider builds a Provider for a pool from its decrypted credentials.
+func NewProvider(pool Pool, secrets ProviderSecrets) (Provider, error) {
 	switch pool.Provider {
-	case "aliyun":
+	case ProviderAliyun:
 		var c aliyunCreds
-		if err := decodeCreds(credsJSON, &c); err != nil {
+		if err := decodeCreds(secrets.Credentials, &c); err != nil {
 			return nil, err
 		}
-		return newAliyunProvider(pool, c)
-	case "aws":
+		return newAliyunProvider(pool, c, secrets.WindowsPassword)
+	case ProviderAWS:
 		var c awsCreds
-		if err := decodeCreds(credsJSON, &c); err != nil {
+		if err := decodeCreds(secrets.Credentials, &c); err != nil {
 			return nil, err
 		}
 		return newAWSProvider(pool, c)
-	case "proxmox", "vcenter":
+	case ProviderProxmox, ProviderVCenter:
 		// Provisioning for these is a placeholder (see proxmox.go / vcenter.go):
 		// cloud-init/snippet and govmomi/SOAP injection are deployment-specific
 		// and untestable without real infrastructure. Reject at creation time so

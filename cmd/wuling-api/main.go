@@ -27,6 +27,7 @@ import (
 	"github.com/zixiao-labs/wuling-devops/internal/insightstore"
 	"github.com/zixiao-labs/wuling-devops/internal/issuestore"
 	"github.com/zixiao-labs/wuling-devops/internal/mrstore"
+	"github.com/zixiao-labs/wuling-devops/internal/orgconfig"
 	"github.com/zixiao-labs/wuling-devops/internal/pipelinestore"
 	"github.com/zixiao-labs/wuling-devops/internal/repostore"
 	"github.com/zixiao-labs/wuling-devops/internal/runnerstore"
@@ -94,6 +95,7 @@ func run() error {
 	issues := issuestore.New(pool)
 	mrs := mrstore.New(pool)
 	layout := repostore.New(cfg.Storage.RepoRoot)
+	orgConfig := orgconfig.New(store, layout, cfg.Runner.ConfigProject, cfg.Runner.ConfigRepo)
 	wikis := wikistore.New(layout)
 	insights := insightstore.New(pool, log.With("component", "insights"))
 
@@ -147,6 +149,7 @@ func run() error {
 		Pipelines: pipelines,
 		Stage2:    stage2,
 		Artifacts: artifacts,
+		OrgConfig: orgConfig,
 	})
 
 	srv := &http.Server{
@@ -168,11 +171,8 @@ func run() error {
 			Pipelines:          pipelines,
 			Runners:            runners,
 			Secrets:            secrets,
-			Users:              store,
-			Layout:             layout,
 			Log:                log.With("component", "autoscaler"),
-			ConfigProject:      cfg.Runner.ConfigProject,
-			ConfigRepo:         cfg.Runner.ConfigRepo,
+			OrgConfig:          orgConfig,
 			ServerURL:          cfg.OAuth.PublicBaseURL,
 			DefaultIdleTimeout: cfg.Autoscale.DefaultIdleTimeout,
 			Interval:           cfg.Autoscale.Interval,

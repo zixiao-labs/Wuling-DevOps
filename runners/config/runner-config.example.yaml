@@ -53,9 +53,10 @@ pools:
       region: cn-hangzhou
       zone_id: cn-hangzhou-i
       image_id: m-xxxxxxxx              # 预装容器运行时 + 武陵 runner 客户端的镜像（构建见 docs/pipelines.md §7.1）
-      instance_type: ecs.g7.large       # 应与 tier 规格相称
+      instance_type: ecs.g7.large       # 应与 tier 规格相称；也可用 instance_types 按序回退规避售罄
       vswitch_id: vsw-xxxxxxxx
       security_group_id: sg-xxxxxxxx
+      system_disk_category: cloud_essd  # 不填 system_disk_size 则取 tiers.<tier>.storage
       internet_max_bandwidth_out: 5      # Mbps；0 = 不分配公网
       spot: true                         # 竞价实例进一步降本（可选）
       credentials_secret: ALIYUN_CREDS   # org Secret，JSON: {"access_key_id":"…","access_key_secret":"…"}
@@ -93,6 +94,33 @@ pools:
       security_group_ids: [sg-xxxxxxxx]
       spot: false
       credentials_secret: AWS_CREDS
+
+  # --- 阿里云 ECS（Windows Server 2022；宿主 pwsh + 可选 Windows 容器） --------
+  # 阿里云 Windows 自定义数据首行必须是 [powershell]（Vminit 插件），AWS 是
+  # <powershell>（EC2Launch v2）；base64 前 ≤32 KB；只能半角 ASCII 字符；
+  # labels 与 pool name 必须是 ASCII；不能写 C:\Users。
+  # 镜像必须是 Sysprep 泛化过的自定义镜像，否则 Vminit 认为不是首次启动、不执行 user-data。
+  - name: aliyun-windows
+    provider: aliyun
+    tier: medium
+    os: windows
+    labels: [windows]                      # labels 必须是半角 ASCII
+    min: 0
+    max: 3
+    aliyun:
+      region: cn-hangzhou
+      zone_id: cn-hangzhou-i
+      image_id: m-xxxxxxxx                 # Windows Server 2022 自定义镜像（runners/images/windows/setup.ps1）
+      instance_types: [ecs.g8i.xlarge, ecs.g7.xlarge]   # 按序回退，规避某一规格售罄
+      vswitch_id: vsw-xxxxxxxx
+      security_group_id: sg-xxxxxxxx
+      system_disk_size: 120Gi              # 不填则取 tiers.<tier>.storage
+      system_disk_category: cloud_essd
+      instance_charge_type: PostPaid
+      auto_release_hours: 24               # 兜底自毁，防控制面异常时实例泄漏
+      # ⚠️ Windows 必填：阿里云在 Windows 实例上**忽略** key_pair_name，只认 Password。
+      password_secret: ALIYUN_WIN_PASSWORD  # org Secret，存明文登录密码
+      credentials_secret: ALIYUN_CREDS
 
   # --- 本地 Proxmox VE（REST API，克隆模板） ---------------------------------
   - name: proxmox-low

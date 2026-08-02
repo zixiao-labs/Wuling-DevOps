@@ -17,6 +17,7 @@ import (
 	"github.com/zixiao-labs/wuling-devops/internal/apperr"
 	"github.com/zixiao-labs/wuling-devops/internal/auth"
 	"github.com/zixiao-labs/wuling-devops/internal/git"
+	"github.com/zixiao-labs/wuling-devops/internal/githubwebhook"
 	"github.com/zixiao-labs/wuling-devops/internal/httpapi"
 	"github.com/zixiao-labs/wuling-devops/internal/model"
 	"github.com/zixiao-labs/wuling-devops/internal/repostore"
@@ -32,6 +33,9 @@ type Handler struct {
 	// OAuth clients can read/write repos with a bearer. When nil, OAT-shaped
 	// bearers are rejected with the standard 401.
 	OAT auth.OATResolver
+	// GithubLinks binds Wuling repos to GitHub App installation repos.
+	// When nil, github-link routes return 503.
+	GithubLinks *githubwebhook.LinkStore
 }
 
 // Permission is the access level required by a resolveAndCheck call.
@@ -54,6 +58,8 @@ func (h *Handler) Mount(r chi.Router) {
 			r.Get("/commits", h.listCommits)
 			r.Get("/tree", h.readTree)
 			r.Get("/blob", h.readBlob)
+			r.Get("/github-link", h.getGithubLink)
+			r.Put("/github-link", h.putGithubLink)
 		})
 	})
 }

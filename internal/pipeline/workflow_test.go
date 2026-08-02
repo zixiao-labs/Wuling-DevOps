@@ -161,6 +161,60 @@ func TestValidationErrors(t *testing.T) {
 	}
 }
 
+// TestParseJobNameAndStrategy pins the dialect widening: `name:` and
+// `strategy:` inside a job used to be hard KnownFields parse errors
+// ("field strategy not found in type pipeline.Job"). Everything else unknown
+// must still be rejected — TestValidationErrors' `step:` case covers that.
+func TestParseJobNameAndStrategy(t *testing.T) {
+	const src = `
+name: CI
+on: push
+jobs:
+  build:
+    name: Build ${{ matrix.os }} / node ${{ matrix.node }}
+    runs-on: ["${{ matrix.os }}"]
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        os: [linux, windows]
+        node: [18, 20]
+        exclude:
+          - os: windows
+            node: 18
+    steps:
+      - run: node --version
+`
+	w, err := Parse([]byte(src))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	job := w.Jobs["build"]
+	if job.Name == "" || job.Strategy == nil || job.Strategy.Matrix == nil {
+		t.Fatalf("job = %+v", job)
+	}
+	legs, err := w.Expand("medium")
+	if err != nil {
+		t.Fatalf("Expand: %v", err)
+	}
+	if len(legs) != 3 {
+		t.Fatalf("want 3 legs after exclude, got %d", len(legs))
+	}
+	want := []string{
+		"Build linux / node 18",
+		"Build linux / node 20",
+		"Build windows / node 20",
+	}
+	for i, leg := range legs {
+		if leg.Name != want[i] {
+			t.Errorf("leg %d name = %q want %q", i, leg.Name, want[i])
+		}
+		if leg.Key != "build" {
+			t.Errorf("leg %d key = %q, every leg shares the YAML job id", i, leg.Key)
+		}
+	}
+}
+
 func TestOnScalarAndList(t *testing.T) {
 	w, err := Parse([]byte("name: x\non: push\njobs:\n  a:\n    steps: [{run: echo}]\n"))
 	if err != nil {
@@ -175,5 +229,66 @@ func TestOnScalarAndList(t *testing.T) {
 	}
 	if w2.On.Push == nil || w2.On.PullRequest == nil {
 		t.Error("list `on` did not set both triggers")
+	}
+}
+
+func TestSupportedSetupActions(t *testing.T) {
+	const src = `
+name: CI
+on: push
+jobs:
+  a:
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+      - uses: actions/setup-rust
+        with:
+          toolchain: file
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10"
+`
+	if _, err := Parse([]byte(src)); err != nil {
+		t.Fatalf("Parse setup actions: %v", err)
+	}
+}
+
+func TestValidateActionInputsRejectsUnknownKey(t *testing.T) {
+	const src = `
+name: CI
+on: push
+jobs:
+  a:
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          fetch-depth: "1"
+`
+	if _, err := Parse([]byte(src)); err == nil {
+		t.Fatal("expected unknown with key to fail validation")
+	}
+}
+
+func TestCheckoutWithExtraWithKeysStillValid(t *testing.T) {
+	const src = `
+name: CI
+on: push
+jobs:
+  a:
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: "1"
+          submodules: "true"
+`
+	if _, err := Parse([]byte(src)); err != nil {
+		t.Fatalf("checkout with extra with keys should parse: %v", err)
 	}
 }

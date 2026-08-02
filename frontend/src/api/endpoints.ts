@@ -78,6 +78,8 @@ import type {
   Runner,
   CreateRegistrationTokenRequest,
   RegistrationTokenResponse,
+  RunnerConfig,
+  PutRunnerConfigRequest,
   ArtifactPackage,
   ArtifactsConfigurationTestResult,
   CreateIterationRequest,
@@ -629,6 +631,12 @@ export const runners = {
     apiPost<RegistrationTokenResponse>(`${orgBase(org)}/runners/registration-tokens`, body),
   delete: (org: string, id: string) =>
     apiDelete(`${orgBase(org)}/runners/${enc(id)}`),
+};
+
+export const runnerConfig = {
+  get: (org: string) => apiGet<RunnerConfig>(`${orgBase(org)}/runner-config`),
+  put: (org: string, body: PutRunnerConfigRequest) =>
+    apiPut<RunnerConfig>(`${orgBase(org)}/runner-config`, body),
 };
 
 // ---------------- Stage 2 project suite ----------------

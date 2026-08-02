@@ -97,6 +97,24 @@ services:
     command: ["sh", "-c", "cp -r /app/dist/. /dist/ && echo built"]
     restart: "no"
 
+  help:
+    image: ghcr.io/zixiao-labs/wuling-help:${WULING_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      frontend-build:
+        condition: service_completed_successfully
+    environment:
+      WULING_HELP_PORT: "8081"
+      WULING_HELP_STATIC_ROOT: /srv/wuling-frontend
+      WULING_HELP_BASE_URL: "https://${WULING_DOMAIN}"
+    volumes:
+      - wuling-frontend:/srv/wuling-frontend:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8081/_healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
   artifacts:
     image: ghcr.io/zixiao-labs/wuling-api:${WULING_TAG:-latest}
     entrypoint: ["/usr/local/bin/wuling-artifacts"]

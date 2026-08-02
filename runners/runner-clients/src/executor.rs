@@ -1,10 +1,6 @@
 //! Job execution: check out the repo, run each step via the selected backend
 //! (container or host shell) while streaming logs, then report step/job status
 //! to the control plane.
-//!
-//! checkout / upload-artifact / cache are host-side filesystem operations and
-//! run the same regardless of backend; only `run:` steps are dispatched to the
-//! container or the host shell (see backend.rs).
 
 use std::path::{Path, PathBuf};
 
@@ -12,8 +8,12 @@ use anyhow::{Context, Result, anyhow};
 use tokio::process::Command;
 use tracing::{info, warn};
 
+use crate::actions::{self, ActionCtx};
 use crate::api::{AcquiredJob, ApiClient, StepSpec};
-use crate::backend::{Backend, ContainerBackend, HostBackend, RunnerOS, StepTimeout};
+use crate::backend::{
+    Backend, ContainerBackend, HostBackend, JobEnv, Platform, ResourceLimits, RunnerOS, StepTimeout,
+};
+use crate::toolcache::ToolCache;
 
 /// Executes jobs in a container or on the host shell, chosen per job from the
 /// runner's OS and whether the job requests a `container:`.
@@ -22,32 +22,46 @@ pub struct Executor {
     api: ApiClient,
     work_dir: PathBuf,
     cache_dir: PathBuf,
+    tools: ToolCache,
+    state_dir: PathBuf,
     default_image: String,
     token: String,
     os: RunnerOS,
+    limits: ResourceLimits,
+}
+
+struct StepCtx {
+    cache_saves: Vec<(String, String)>,
+    platform: Option<Platform>,
+    temp_files: Vec<PathBuf>,
 }
 
 impl Executor {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         api: ApiClient,
         work_dir: PathBuf,
+        tools_dir: PathBuf,
+        state_dir: PathBuf,
         default_image: String,
         token: String,
         os: RunnerOS,
+        limits: ResourceLimits,
     ) -> Self {
         let cache_dir = work_dir.join("_cache");
         Self {
             api,
             work_dir,
             cache_dir,
+            tools: ToolCache::new(tools_dir),
+            state_dir,
             default_image,
             token,
             os,
+            limits,
         }
     }
 
-    /// run_job executes a job end to end and always reports a terminal
-    /// conclusion to the control plane (failed on any internal error).
     pub async fn run_job(&self, job: AcquiredJob) {
         let job_id = job.job_id.clone();
         info!(job_id, name = %job.job_name, run = job.run_number, "starting job");
@@ -74,13 +88,10 @@ impl Executor {
         if let Err(e) = self.api.complete(&job_id, conclusion).await {
             warn!(job_id, error = %e, "failed to report completion");
         }
-        // Best-effort cleanup of the job workspace.
         let _ = tokio::fs::remove_dir_all(self.job_dir(&job_id)).await;
         info!(job_id, conclusion, "job finished");
     }
 
-    /// execute returns Ok(job_failed). A returned Err is an infrastructure
-    /// failure (docker down, shell missing, etc.) which run_job maps to failed.
     async fn execute(&self, job: &AcquiredJob) -> Result<bool> {
         let job_id = &job.job_id;
         let workspace = self.job_dir(job_id).join("workspace");
@@ -89,9 +100,6 @@ impl Executor {
             .context("create workspace")?;
         let workspace_abs = tokio::fs::canonicalize(&workspace).await?;
 
-        // Base env = job env + secrets. Step env overrides per-step (applied by
-        // the backend). Carried as pairs so the host backend can set them on the
-        // child process and the container backend can format them as KEY=VALUE.
         let mut base_env: Vec<(String, String)> = Vec::new();
         for (k, v) in &job.spec.env {
             base_env.push((k.clone(), v.clone()));
@@ -99,10 +107,9 @@ impl Executor {
         for (k, v) in &job.secrets {
             base_env.push((k.clone(), v.clone()));
         }
+        let mut job_env = JobEnv::new(base_env);
+        let env_pairs = job_env.pairs();
 
-        // Backend choice: Linux always containerizes; Windows containerizes only
-        // when the job sets `container:`; macOS always runs on the host (no
-        // containers exist there).
         let use_container = match self.os {
             RunnerOS::Linux => true,
             RunnerOS::Windows => !job.spec.container.is_empty(),
@@ -116,6 +123,9 @@ impl Executor {
             .await;
         }
 
+        let tools_abs = self.tools.root().to_path_buf();
+        let state_abs = self.state_dir.clone();
+
         let backend = if use_container {
             let image = if job.spec.container.is_empty() {
                 self.default_image.clone()
@@ -128,18 +138,30 @@ impl Executor {
                     job_id,
                     &image,
                     &workspace_abs,
-                    &base_env,
+                    &tools_abs,
+                    &state_abs,
+                    &env_pairs,
                     self.os,
+                    self.limits,
                 )
                 .await
                 .context("start container")?,
             )
         } else {
-            Backend::Host(HostBackend::new(workspace_abs.clone(), base_env, self.os))
+            Backend::Host(HostBackend::new(
+                workspace_abs.clone(),
+                tools_abs.clone(),
+                state_abs.clone(),
+                self.os,
+            ))
         };
 
         let mut job_failed = false;
-        let mut cache_saves: Vec<(String, String)> = Vec::new();
+        let mut step_ctx = StepCtx {
+            cache_saves: Vec::new(),
+            platform: None,
+            temp_files: Vec::new(),
+        };
 
         for (i, step) in job.spec.steps.iter().enumerate() {
             let number = i + 1;
@@ -158,7 +180,14 @@ impl Executor {
             .await;
 
             let step_result = self
-                .run_step(job, &backend, step, &workspace, &mut cache_saves)
+                .run_step(
+                    job,
+                    &backend,
+                    step,
+                    &workspace_abs,
+                    &mut job_env,
+                    &mut step_ctx,
+                )
                 .await;
 
             match step_result {
@@ -176,66 +205,83 @@ impl Executor {
                         .await;
                     let _ = self.api.patch_step(job_id, number, "failed").await;
                     if timed_out {
-                        // The step's container/process tree was killed; running
-                        // more steps (incl. always()) against it is pointless.
                         break;
                     }
                 }
             }
         }
 
-        // Persist caches requested by cache steps (best-effort).
-        for (key, path) in cache_saves {
-            if let Err(e) = self.save_cache(&key, &workspace, &path).await {
+        for (key, path) in step_ctx.cache_saves {
+            if let Err(e) = self.save_cache(&key, &workspace_abs, &path).await {
                 warn!(error = %e, key, "cache save failed");
             }
         }
+        for path in step_ctx.temp_files {
+            let _ = tokio::fs::remove_file(&path).await;
+        }
 
-        // Dropping the backend force-removes a container (if any); the host
-        // backend has nothing to release.
         drop(backend);
         Ok(job_failed)
     }
 
-    /// run_step dispatches by step kind. Returns Ok(success_bool). The built-in
-    /// actions are host-side; a plain `run:` goes to the execution backend.
     async fn run_step(
         &self,
         job: &AcquiredJob,
         backend: &Backend,
         step: &StepSpec,
         workspace: &Path,
-        cache_saves: &mut Vec<(String, String)>,
+        env: &mut JobEnv,
+        ctx: &mut StepCtx,
     ) -> Result<bool> {
         if !step.uses.is_empty() {
-            let action = step.uses.split('@').next().unwrap_or("");
-            return match action {
-                "actions/checkout" => self.do_checkout(&job.job_id, workspace, job).await,
-                "actions/upload-artifact" => {
-                    self.do_upload_artifact(&job.job_id, workspace, step).await
+            let (action, uses_ref) = match step.uses.split_once('@') {
+                Some((a, r)) => (a, r),
+                None => (step.uses.as_str(), ""),
+            };
+
+            if action == "actions/checkout" {
+                return self.do_checkout(&job.job_id, workspace, job).await;
+            }
+            if action == "actions/upload-artifact" {
+                return self.do_upload_artifact(&job.job_id, workspace, step).await;
+            }
+            if action == "actions/cache" {
+                let restored = self.do_cache_restore(&job.job_id, workspace, step).await?;
+                if let (Some(key), Some(path)) = (step.with.get("key"), step.with.get("path")) {
+                    ctx.cache_saves.push((key.clone(), path.clone()));
                 }
-                "actions/cache" => {
-                    let restored = self.do_cache_restore(&job.job_id, workspace, step).await?;
-                    if let (Some(key), Some(path)) = (step.with.get("key"), step.with.get("path")) {
-                        cache_saves.push((key.clone(), path.clone()));
-                    }
-                    let _ = restored;
-                    Ok(true)
-                }
-                other => Err(anyhow!("unsupported action {other}")),
+                let _ = restored;
+                return Ok(true);
+            }
+
+            if ctx.platform.is_none() {
+                ctx.platform = Some(backend.probe().await?);
+            }
+            let platform = ctx.platform.as_ref().unwrap();
+
+            let mut actx = ActionCtx {
+                api: &self.api,
+                job_id: &job.job_id,
+                step,
+                uses_ref,
+                backend,
+                workspace,
+                tools: &self.tools,
+                state: &self.state_dir,
+                env,
+                platform,
+            };
+
+            return match actions::dispatch(action, &mut actx).await {
+                Some(r) => r,
+                None => Err(anyhow!("unsupported action {action}")),
             };
         }
-        // A `run` step: execute the script via the selected backend.
-        backend.run_script(&self.api, &job.job_id, step).await
+        backend.run_script(&self.api, &job.job_id, step, env).await
     }
 
-    // ---- built-in actions (host-side, backend-independent) ------------------
-
-    /// do_checkout clones the repo at the dispatched SHA into the workspace,
-    /// authenticating with this runner's own token (read-only, org-scoped).
     async fn do_checkout(&self, job_id: &str, workspace: &Path, job: &AcquiredJob) -> Result<bool> {
         let url = inject_basic_auth(&job.checkout.clone_url, "x-runner", &self.token);
-        // Fresh clone into the (empty) workspace, then hard-checkout the sha.
         let ws = workspace.to_string_lossy().to_string();
         let ok1 = self
             .run_host_git(job_id, &["clone", "--quiet", &url, &ws])
@@ -262,14 +308,11 @@ impl Executor {
             let _ = self.api.append_log(job_id, out.stdout.clone()).await;
         }
         if !out.stderr.is_empty() {
-            // git prints progress to stderr; surface it but don't treat as fatal.
             let _ = self.api.append_log(job_id, redact(&out.stderr)).await;
         }
         Ok(out.status.success())
     }
 
-    /// do_upload_artifact tars `with.path` (relative to workspace) and uploads
-    /// it under `with.name`.
     async fn do_upload_artifact(
         &self,
         job_id: &str,
@@ -330,10 +373,6 @@ impl Executor {
         };
         let cache_file = self.cache_dir.join(format!("{}.tar", sanitize(&key)));
         if tokio::fs::try_exists(&cache_file).await.unwrap_or(false) {
-            // tar_path stored the directory under its own basename, so restore
-            // into the PARENT of dest to land contents back at workspace/<path>
-            // (not the old workspace/<path>/<path> double-nest). Clamp to the
-            // workspace so a top-level path never extracts above it.
             let into = match dest.parent() {
                 Some(p) if p.starts_with(workspace) => p.to_path_buf(),
                 _ => workspace.to_path_buf(),
@@ -356,8 +395,6 @@ impl Executor {
         tokio::fs::write(&cache_file, tar).await?;
         Ok(())
     }
-
-    // ---- helpers ------------------------------------------------------------
 
     fn job_dir(&self, job_id: &str) -> PathBuf {
         self.work_dir.join(job_id)
@@ -387,7 +424,6 @@ fn display_name(step: &StepSpec) -> String {
     step.run.lines().next().unwrap_or("step").trim().to_string()
 }
 
-/// inject_basic_auth rewrites https://host/… into https://user:pass@host/….
 fn inject_basic_auth(url: &str, user: &str, pass: &str) -> String {
     if let Some(rest) = url.strip_prefix("https://") {
         return format!("https://{user}:{pass}@{rest}");
@@ -398,8 +434,6 @@ fn inject_basic_auth(url: &str, user: &str, pass: &str) -> String {
     url.to_string()
 }
 
-/// redact masks anything that looks like a wlrt_ token in git's stderr so a
-/// clone URL with embedded credentials never lands in the public log.
 fn redact(bytes: &[u8]) -> Vec<u8> {
     let s = String::from_utf8_lossy(bytes);
     let mut out = String::with_capacity(s.len());
@@ -425,10 +459,6 @@ fn sanitize(key: &str) -> String {
         .collect()
 }
 
-/// resolve_in_workspace joins a user-supplied relative path onto the workspace,
-/// rejecting anything that escapes it (absolute paths or `..` traversal). The
-/// check is lexical so it also works for paths that don't exist yet (e.g. a
-/// cache restore target).
 fn resolve_in_workspace(workspace: &Path, rel: &str) -> Result<PathBuf> {
     use std::path::Component;
     let mut out = PathBuf::new();
@@ -449,8 +479,6 @@ fn resolve_in_workspace(workspace: &Path, rel: &str) -> Result<PathBuf> {
     Ok(workspace.join(out))
 }
 
-/// tar_path builds an uncompressed tar of a file or directory in memory. Runs
-/// the synchronous tar work on a blocking thread.
 async fn tar_path(path: &Path) -> Result<Vec<u8>> {
     let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {

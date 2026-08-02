@@ -3,6 +3,7 @@
 package git
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -81,6 +82,12 @@ func TestCommitFile_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(commits), 4, "expected at least 4 commits in log")
 	assert.Equal(t, "rm Home", strings.TrimSpace(commits[0].Message))
+}
+
+func TestIsStaleTip(t *testing.T) {
+	assert.True(t, IsStaleTip(errors.New("commit config: failed to create commit: current tip is not the first parent (rc=-15)")))
+	assert.False(t, IsStaleTip(errors.New("something else")))
+	assert.False(t, IsStaleTip(nil))
 }
 
 func entryNames(entries []TreeEntry) []string {

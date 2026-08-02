@@ -97,6 +97,10 @@ func IsNotFound(error) bool { return false }
 // IsConflict returns false in the stub build.
 func IsConflict(error) bool { return false }
 
+// IsStaleTip returns false in the stub build — without libgit2 no commit is
+// ever attempted.
+func IsStaleTip(error) bool { return false }
+
 // Author mirrors the cgo type.
 type Author struct {
 	Name  string

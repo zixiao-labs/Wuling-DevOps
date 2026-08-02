@@ -3,10 +3,12 @@
 //! them in a container runtime. On SIGTERM/SIGINT it stops acquiring new work
 //! and lets in-flight jobs finish (graceful drain).
 
+mod actions;
 mod api;
 mod backend;
 mod config;
 mod executor;
+mod toolcache;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -18,7 +20,7 @@ use clap::Parser;
 use tracing::{info, warn};
 
 use crate::api::ApiClient;
-use crate::backend::RunnerOS;
+use crate::backend::{ResourceLimits, RunnerOS};
 use crate::config::Config;
 use crate::executor::Executor;
 
@@ -60,14 +62,35 @@ async fn main() -> Result<()> {
     };
 
     let api = ApiClient::new(api_base, token.clone())?;
-    let work_dir = PathBuf::from(&cfg.work_dir);
+    let mut work_dir = PathBuf::from(&cfg.work_dir);
     tokio::fs::create_dir_all(&work_dir).await?;
+    work_dir = tokio::fs::canonicalize(&work_dir).await?;
+
+    let tools_dir = if cfg.tools_dir.is_empty() {
+        work_dir.join("_tools")
+    } else {
+        PathBuf::from(&cfg.tools_dir)
+    };
+    let state_dir = if cfg.state_dir.is_empty() {
+        work_dir.join("_toolstate")
+    } else {
+        PathBuf::from(&cfg.state_dir)
+    };
+    tokio::fs::create_dir_all(&tools_dir).await?;
+    tokio::fs::create_dir_all(&state_dir).await?;
+    let tools_dir = tokio::fs::canonicalize(&tools_dir).await?;
+    let state_dir = tokio::fs::canonicalize(&state_dir).await?;
+
+    let limits = ResourceLimits::from_config(cfg.cpus, &cfg.memory, cfg.pids_limit);
     let executor = Executor::new(
         api.clone(),
         work_dir,
+        tools_dir,
+        state_dir,
         cfg.default_image.clone(),
         token,
         RunnerOS::parse(&os),
+        limits,
     );
 
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -102,6 +125,9 @@ async fn main() -> Result<()> {
     info!(
         concurrency,
         poll_interval = cfg.poll_interval,
+        cpus = limits.cpus,
+        memory_bytes = limits.memory_bytes,
+        pids_limit = limits.pids_limit,
         "runner ready"
     );
     let poll = Duration::from_secs(cfg.poll_interval.max(1));

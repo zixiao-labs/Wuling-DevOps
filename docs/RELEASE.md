@@ -26,7 +26,7 @@ git push origin "$TAG"
 
 1. **`.github/workflows/release.yml`** 触发，跑 5 个 job：
    - `build-binaries` —— 跨编译 Linux/amd64+arm64, macOS/amd64+arm64 四份 `wuling-api` + `wuling-migrate`，含 SHA256
-   - `build-frontend` —— `npm run build` 出 `frontend/dist/`，打成 tar.gz + SHA256
+   - `build-frontend` —— `npm run build` + `help:smoke`（预渲染 `dist/help/**`）出 `frontend/dist/`，打成 tar.gz + SHA256
    - `build-images` —— 推 multi-arch docker 镜像到 `ghcr.io/zixiao-labs/wuling-api:<tag>` 和 `ghcr.io/zixiao-labs/wuling-frontend:<tag>`
    - `nix-check` —— 跑 `nix flake check`，保证 flake 没烂
    - `publish-release` —— 等上面 4 个都过了，建 GitHub Release 并挂上全部产物
@@ -43,10 +43,15 @@ git push origin "$TAG"
 | macOS amd64 二进制 | `wuling-api-darwin-amd64.tar.gz` |
 | macOS arm64 二进制 | `wuling-api-darwin-arm64.tar.gz` |
 | migrate 工具（同上 4 平台） | `wuling-migrate-<os>-<arch>.tar.gz` |
+| Runner Linux (musl) | `wuling-runner-linux-amd64.tar.gz` / `…-arm64.tar.gz` |
+| Runner macOS | `wuling-runner-darwin-amd64.tar.gz` / `…-arm64.tar.gz` |
+| Runner Windows zip | `wuling-runner-windows-amd64.zip` |
+| Runner Windows 安装器 | `wuling-runner-windows-amd64-setup.exe`（Inno Setup） |
 | 前端 bundle | `wuling-frontend-dist-vX.Y.Z.tar.gz` |
 | 每个的 SHA256 | `<filename>.sha256` |
 | API 镜像 | `ghcr.io/zixiao-labs/wuling-api:vX.Y.Z` |
 | 前端镜像 | `ghcr.io/zixiao-labs/wuling-frontend:vX.Y.Z` |
+| Help SSR 镜像 | `ghcr.io/zixiao-labs/wuling-help:vX.Y.Z` |
 | Nix flake | `github:zixiao-labs/Wuling-DevOps/vX.Y.Z#wuling-api` 等 |
 
 ## 校验产物

@@ -35,6 +35,7 @@ irm https://raw.githubusercontent.com/zixiao-labs/Wuling-DevOps/refs/heads/main/
 
 - [`deploy/production/README.md`](deploy/production/README.md) — 生产部署 Runbook（Docker Compose / Nix / k8s）
 - [`docs/auth.md`](docs/auth.md) — 身份认证：GitHub OAuth 登录 + 注册审批工作流的配置和运维
+- [`docs/github-integration.md`](docs/github-integration.md) — GitHub App：Webhook 触发流水线、仓库同步、把 CI 结果回显到 PR 的设置步骤
 - [`docs/artifacts.md`](docs/artifacts.md) — Stage 2 Artifact Service 与对象存储配置
 
 ## 关于项目

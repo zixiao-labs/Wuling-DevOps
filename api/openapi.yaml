@@ -1233,6 +1233,63 @@ paths:
         "401": { $ref: "#/components/responses/UnauthorizedError" }
         "404": { $ref: "#/components/responses/NotFoundError" }
 
+  /api/v1/orgs/{org_slug}/projects/{project_slug}/repos/{repo_slug}/github-link:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+      - $ref: "#/components/parameters/ProjectSlug"
+      - $ref: "#/components/parameters/RepoSlug"
+    get:
+      summary: Read the GitHub App repo link for this Wuling repo
+      description: |
+        Returns whether this repo is linked to a GitHub repository for webhook
+        sync / Checks. Unlinked repos cause webhook handlers to skip events.
+      responses:
+        "200":
+          description: link status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  linked: { type: boolean }
+                  owner: { type: string }
+                  name: { type: string }
+                  full_name: { type: string }
+                  installation_id: { type: integer, format: int64 }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+    put:
+      summary: Bind this Wuling repo to a GitHub App installation repository
+      description: Requires maintainer or above. Webhook push/PR handling only runs for linked repos.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [owner, name, installation_id]
+              properties:
+                owner: { type: string }
+                name: { type: string }
+                installation_id: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: linked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  linked: { type: boolean }
+                  owner: { type: string }
+                  name: { type: string }
+                  full_name: { type: string }
+                  installation_id: { type: integer, format: int64 }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+
   # ---------------- issues ----------------
 
   /api/v1/orgs/{org_slug}/projects/{project_slug}/issues:
@@ -2264,6 +2321,127 @@ paths:
         "401": { $ref: "#/components/responses/UnauthorizedError" }
         "403": { $ref: "#/components/responses/ForbiddenError" }
         "404": { $ref: "#/components/responses/NotFoundError" }
+
+  /api/v1/orgs/{org_slug}/runner-config:
+    parameters:
+      - $ref: "#/components/parameters/OrgSlug"
+    get:
+      summary: Read the org's GitOps runner-config.yaml
+      description: |
+        Reads runner-config.yaml from the root of the org's config repo
+        (`{org}/config/config` by default). Returns 200 with `exists: false`
+        when the org has not opted into autoscaling yet — the config project,
+        repo, or file may all be absent. `valid`/`parse_error` report whether
+        the committed bytes still satisfy the autoscaler's schema; a file that
+        was pushed directly with `git` may be invalid, in which case the
+        autoscaler ignores it. Requires org membership.
+      responses:
+        "200":
+          description: current config (possibly absent)
+          headers:
+            ETag:
+              description: Quoted blob SHA of runner-config.yaml. Echo as If-Match on PUT.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunnerConfig" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+    put:
+      summary: Commit the org's GitOps runner-config.yaml
+      description: |
+        Validates the payload with the autoscaler's own parser and, only if it
+        passes, commits it to the root of the config repo's default branch as
+        the calling user. Creates the config project and repo when missing.
+        Requires maintainer or above.
+
+        Optimistic concurrency is mandatory: send `base_blob_sha` (or an
+        `If-Match` header) carrying the `blob_sha` from a prior GET, or the
+        empty string to assert the file does not exist yet. A mismatch returns
+        409 with `details.current_blob_sha`.
+      parameters:
+        - in: header
+          name: If-Match
+          required: false
+          schema: { type: string }
+          description: Quoted blob SHA. Alternative to `base_blob_sha`; supplying both requires them to agree.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PutRunnerConfigRequest" }
+      responses:
+        "200":
+          description: committed (or unchanged)
+          headers:
+            ETag:
+              description: Quoted blob SHA of the newly committed file.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunnerConfig" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+        "409": { $ref: "#/components/responses/ConflictError" }
+        "503":
+          description: server built without the libgit2 backend
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /api/v1/webhooks/github:
+    post:
+      summary: GitHub App webhook receiver
+      description: |
+        Receives GitHub App deliveries. Authenticated solely by
+        `X-Hub-Signature-256` (HMAC-SHA256 of the raw body) against
+        `WULING_GITHUB_WEBHOOK_SECRET`. Not mounted when the secret is empty.
+        `ping` returns 200; unknown events return 202 until a processor is wired.
+        Duplicate `X-GitHub-Delivery` values return 200 with `duplicate: true`.
+      security: []
+      parameters:
+        - in: header
+          name: X-Hub-Signature-256
+          required: true
+          schema: { type: string }
+          description: "sha256=<hex HMAC of raw body>"
+        - in: header
+          name: X-GitHub-Event
+          required: true
+          schema: { type: string }
+        - in: header
+          name: X-GitHub-Delivery
+          required: false
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: ping handled, or duplicate delivery
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  duplicate: { type: boolean }
+        "202":
+          description: event accepted (no processor / deferred)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  accepted: { type: boolean }
+        "401":
+          description: invalid or missing signature
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/v1/runner/register:
     post:
@@ -3779,7 +3957,26 @@ components:
       properties:
         id: { type: string, format: uuid }
         run_id: { type: string, format: uuid }
-        name: { type: string }
+        job_key:
+          type: string
+          description: >-
+            Logical YAML job id, shared by every leg of a matrix job. `needs`
+            resolves against this, not against `name`.
+        name:
+          type: string
+          description: >-
+            Per-leg display name, unique within the run — the job's `name:` when
+            declared, otherwise `<job_key> (v1, v2)` over the matrix values.
+        ordinal:
+          type: integer
+          minimum: 0
+          description: 1-based position in the run's expanded, topologically ordered job list.
+        matrix:
+          type: object
+          additionalProperties: { type: string }
+          description: Resolved matrix context for this leg; absent for a job with no strategy.matrix.
+        fail_fast: { type: boolean }
+        max_parallel: { type: integer, minimum: 0, description: 0 = unlimited. }
         runs_on:
           type: array
           items: { type: string }
@@ -3787,6 +3984,7 @@ components:
         needs:
           type: array
           items: { type: string }
+          description: Job keys this job depends on; every leg of each must succeed.
         status: { $ref: "#/components/schemas/RunStatus" }
         runner_id: { type: string, format: uuid, nullable: true }
         attempt: { type: integer, minimum: 1 }
@@ -3890,6 +4088,15 @@ components:
         project_slug: { type: string }
         repo_slug: { type: string }
         job_name: { type: string }
+        job_key:
+          type: string
+          description: Logical YAML job id, shared by every leg of a matrix job.
+        matrix:
+          type: object
+          additionalProperties: { type: string }
+          description: >-
+            Resolved matrix context, for runner log context only. `${{ matrix.* }}`
+            is already interpolated into `spec` server-side.
         commit_sha: { type: string }
         git_ref: { type: string }
         event: { $ref: "#/components/schemas/RunEvent" }
@@ -3969,6 +4176,41 @@ components:
       properties:
         token: { type: string }
         expires_in: { type: integer, minimum: 1 }
+
+    RunnerConfig:
+      type: object
+      required: [content, exists, blob_sha, commit_sha, branch, path, project_slug, repo_slug, valid, warnings]
+      properties:
+        content: { type: string, description: Raw YAML. Comments are preserved verbatim — the server never re-serialises the parsed struct. }
+        exists: { type: boolean, description: false when the config project, repo, or file is absent. }
+        blob_sha: { type: string, description: Git blob OID of runner-config.yaml; the optimistic-concurrency token. Empty when absent. }
+        commit_sha: { type: string, description: Tip commit of the config repo's default branch. Informational. }
+        branch: { type: string }
+        path: { type: string, example: runner-config.yaml }
+        project_slug: { type: string }
+        repo_slug: { type: string }
+        updated_at: { type: string, format: date-time }
+        updated_by: { type: string }
+        valid: { type: boolean, description: Whether `content` parses under the autoscaler schema. }
+        parse_error: { type: string }
+        warnings:
+          type: array
+          description: Non-blocking advisories (missing credentials_secret, unimplemented provider, unknown version).
+          items: { type: string }
+        created_project: { type: boolean, description: PUT only — the config project was auto-created. }
+        created_repo: { type: boolean, description: PUT only — the config repo was auto-created. }
+        unchanged: { type: boolean, description: PUT only — content matched the committed bytes, so no commit was made. }
+
+    PutRunnerConfigRequest:
+      type: object
+      required: [content]
+      properties:
+        content: { type: string, maxLength: 262144 }
+        message: { type: string, maxLength: 512, description: "Git commit message. Defaults to \"Update runner-config.yaml\"." }
+        base_blob_sha:
+          type: string
+          pattern: "^([0-9a-fA-F]{40})?$"
+          description: blob_sha from a prior GET; the empty string asserts the file does not exist yet. Required unless If-Match is sent.
 
     RegisterRunnerRequest:
       type: object

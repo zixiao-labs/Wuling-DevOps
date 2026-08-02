@@ -121,13 +121,12 @@ function BrandAndTopBar({
         {!collapsed ? (
           <Link
             to="/orgs"
-            className="flex min-w-0 items-center gap-1.5 rounded-sm px-1.5 py-1 text-fg hover:bg-[var(--surface-secondary)]"
+            className="flex min-w-0 items-center gap-2 rounded-sm px-1.5 py-1 text-fg hover:bg-[var(--surface-secondary)]"
           >
             <BrandMark />
-            <div className="flex min-w-0 flex-col leading-none">
-              <span className="text-[13px] font-semibold tracking-tight">武陵</span>
-              <span className="truncate text-[10px] text-muted">DevOps · 紫霄</span>
-            </div>
+            <span className="truncate text-[10px] leading-none text-muted">
+              DevOps · 紫霄
+            </span>
           </Link>
         ) : null}
       </div>
@@ -160,29 +159,20 @@ function BrandAndTopBar({
   );
 }
 
-/** Brand glyph. Pure SVG so we don't pull a logo asset; intent is a subtle
- *  geometric mark, not the org logo. */
+/** Brand glyph — the 武陵 wordmark itself, so the adjacent label only carries
+ *  the product/instance qualifier. The asset is a transparent trim of the
+ *  master logo (see scripts/gen-brand-assets.sh), sized by height so it sits on
+ *  any theme surface. Fixed brand teal by design: it does not re-tint with
+ *  --accent the way the placeholder mark it replaced did. */
 function BrandMark() {
   return (
-    <svg
-      width="22"
-      height="22"
-      viewBox="0 0 24 24"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden="true"
-      className="shrink-0"
-    >
-      <rect x="2" y="2" width="20" height="20" rx="5" fill="var(--accent)" />
-      <path
-        d="M7 8.5 12 16l5-7.5"
-        stroke="var(--accent-foreground)"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <circle cx="12" cy="6.5" r="1.2" fill="var(--accent-foreground)" />
-    </svg>
+    <img
+      src="/brand-wordmark.png"
+      alt="武陵"
+      width={65}
+      height={30}
+      className="h-[18px] w-auto shrink-0"
+    />
   );
 }
 
@@ -263,13 +253,7 @@ function ContextRail() {
         const active = it.matchPrefix ? pathname.startsWith(it.matchPrefix) : false;
         return <RailButton key={it.to} to={it.to} icon={Icon} label={it.label} active={active} />;
       })}
-      <RailButton
-        to="/orgs"
-        icon={CircleQuestion}
-        label="帮助"
-        active={false}
-        // Help link is a placeholder — points back home for now.
-      />
+      <RailButton to="/help" external icon={CircleQuestion} label="帮助" active={false} />
     </nav>
   );
 }
@@ -279,29 +263,42 @@ function RailButton({
   icon: Icon,
   label,
   active,
+  external,
 }: {
   to: string;
   icon: typeof House;
   label: string;
   active: boolean;
+  external?: boolean;
 }) {
-  return (
-    <Link
-      to={to}
-      title={label}
-      aria-label={label}
-      className={[
-        "group relative grid h-9 w-9 place-items-center rounded-md",
-        "transition-colors duration-75",
-        active
-          ? "bg-[var(--surface)] text-fg shadow-sm"
-          : "text-fg/70 hover:bg-[var(--surface)] hover:text-fg",
-      ].join(" ")}
-    >
+  const className = [
+    "group relative grid h-9 w-9 place-items-center rounded-md",
+    "transition-colors duration-75",
+    active
+      ? "bg-[var(--surface)] text-fg shadow-sm"
+      : "text-fg/70 hover:bg-[var(--surface)] hover:text-fg",
+  ].join(" ");
+
+  const inner = (
+    <>
       {active ? (
         <span aria-hidden className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-full bg-accent" />
       ) : null}
       <Icon width={18} height={18} />
+    </>
+  );
+
+  if (external) {
+    return (
+      <a href={to} title={label} aria-label={label} className={className}>
+        {inner}
+      </a>
+    );
+  }
+
+  return (
+    <Link to={to} title={label} aria-label={label} className={className}>
+      {inner}
     </Link>
   );
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/zixiao-labs/wuling-devops/internal/auth"
 	"github.com/zixiao-labs/wuling-devops/internal/httpapi"
 	"github.com/zixiao-labs/wuling-devops/internal/model"
+	"github.com/zixiao-labs/wuling-devops/internal/orgconfig"
 	"github.com/zixiao-labs/wuling-devops/internal/pipelinestore"
 	"github.com/zixiao-labs/wuling-devops/internal/runnerstore"
 	"github.com/zixiao-labs/wuling-devops/internal/secretstore"
@@ -47,6 +48,10 @@ type Handler struct {
 	// runner-config.yaml in the autoscaler path; used here only as a default
 	// for the registration-token form).
 	DefaultTier string
+
+	// OrgConfig reads/writes the org's GitOps config repo. When nil the
+	// runner-config routes are not mounted.
+	OrgConfig *orgconfig.Store
 }
 
 type runnerCtxKey struct{}
@@ -66,6 +71,12 @@ func (h *Handler) Mount(r chi.Router) {
 			r.Post("/registration-tokens", h.createRegistrationToken)
 			r.Delete("/{runner_id}", h.deleteRunner)
 		})
+		if h.OrgConfig != nil {
+			r.Route("/orgs/{org_slug}/runner-config", func(r chi.Router) {
+				r.Get("/", h.getRunnerConfig)
+				r.Put("/", h.putRunnerConfig)
+			})
+		}
 	})
 
 	// Runner protocol surface. register authenticates via the body token; every

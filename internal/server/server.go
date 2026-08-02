@@ -20,6 +20,8 @@ import (
 	"github.com/zixiao-labs/wuling-devops/internal/config"
 	"github.com/zixiao-labs/wuling-devops/internal/db"
 	"github.com/zixiao-labs/wuling-devops/internal/githttp"
+	"github.com/zixiao-labs/wuling-devops/internal/githubapp"
+	"github.com/zixiao-labs/wuling-devops/internal/githubwebhook"
 	"github.com/zixiao-labs/wuling-devops/internal/httpapi"
 	"github.com/zixiao-labs/wuling-devops/internal/insighthttp"
 	"github.com/zixiao-labs/wuling-devops/internal/insightstore"
@@ -30,6 +32,7 @@ import (
 	"github.com/zixiao-labs/wuling-devops/internal/mrstore"
 	"github.com/zixiao-labs/wuling-devops/internal/oauthhttp"
 	"github.com/zixiao-labs/wuling-devops/internal/oauthstore"
+	"github.com/zixiao-labs/wuling-devops/internal/orgconfig"
 	"github.com/zixiao-labs/wuling-devops/internal/orghttp"
 	"github.com/zixiao-labs/wuling-devops/internal/pipelinehttp"
 	"github.com/zixiao-labs/wuling-devops/internal/pipelinestore"
@@ -63,6 +66,7 @@ type Deps struct {
 	Pipelines *pipelinestore.Store
 	Stage2    *stage2store.Store
 	Artifacts *artifactclient.Client
+	OrgConfig *orgconfig.Store
 }
 
 // New returns a router fully wired with all current Stage-1 domains.
@@ -184,8 +188,10 @@ func New(d Deps) http.Handler {
 			InviteLinkBase: deriveInviteLinkBase(d.Cfg),
 		}).Mount(api)
 
+		githubLinks := &githubwebhook.LinkStore{Pool: d.Pool}
 		(&repohttp.Handler{
 			Store: d.Store, Layout: d.Layout, Verifier: verifier, OAT: oauthH,
+			GithubLinks: githubLinks,
 		}).Mount(api)
 
 		(&issuehttp.Handler{
@@ -228,6 +234,7 @@ func New(d Deps) http.Handler {
 				RegistrationTTL: d.Cfg.Runner.RegistrationTTL,
 				CloneBaseURL:    d.Cfg.OAuth.PublicBaseURL,
 				DefaultTier:     model.TierMedium,
+				OrgConfig:       d.OrgConfig,
 			}).Mount(api)
 		}
 		if d.Stage2 != nil {
@@ -236,6 +243,41 @@ func New(d Deps) http.Handler {
 				Artifacts: d.Artifacts, MaxUploadBytes: d.Cfg.Artifacts.MaxUploadBytes,
 				UploadReadTimeout: d.Cfg.Artifacts.RequestTimeout,
 			}).Mount(api)
+		}
+
+		// GitHub App webhooks — HMAC-authenticated, no JWT. Mount only when
+		// the operator has configured a webhook secret (empty = disabled).
+		if secret := d.Cfg.GithubApp.WebhookSecret; secret != "" {
+			whLog := d.Log.With("component", "github-webhook")
+			wh := &githubwebhook.Handler{
+				Secret: secret,
+				Store:  &githubwebhook.Store{Pool: d.Pool},
+				Log:    whLog,
+			}
+			var trigger *pipelinetrigger.Service
+			if d.Pipelines != nil {
+				trigger = &pipelinetrigger.Service{
+					Pipelines:   d.Pipelines,
+					Log:         d.Log.With("component", "ci-trigger"),
+					DefaultTier: model.TierMedium,
+				}
+			}
+			proc := &githubwebhook.Processor{
+				AppID:         d.Cfg.GithubApp.AppID,
+				Links:         githubLinks,
+				Layout:        d.Layout,
+				Trigger:       trigger,
+				PublicBaseURL: d.Cfg.OAuth.PublicBaseURL,
+			}
+			if key, kerr := githubapp.LoadPrivateKey(d.Cfg.GithubApp.PrivateKey, d.Cfg.GithubApp.PrivateKeyPath); kerr != nil {
+				d.Log.Warn("github-webhook: app private key unavailable; sync/checks disabled", "err", kerr)
+			} else if d.Cfg.GithubApp.AppID == 0 {
+				d.Log.Warn("github-webhook: WULING_GITHUB_APP_ID unset; sync/checks disabled")
+			} else {
+				proc.App = githubapp.New(d.Cfg.GithubApp.AppID, key, nil)
+			}
+			wh.Process = proc.Handle
+			wh.Mount(api)
 		}
 	})
 

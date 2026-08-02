@@ -3,17 +3,15 @@ package autoscale
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 
-	"github.com/zixiao-labs/wuling-devops/internal/apperr"
-	"github.com/zixiao-labs/wuling-devops/internal/git"
+	"github.com/zixiao-labs/wuling-devops/internal/orgconfig"
 	"github.com/zixiao-labs/wuling-devops/internal/pipelinestore"
-	"github.com/zixiao-labs/wuling-devops/internal/repostore"
 	"github.com/zixiao-labs/wuling-devops/internal/runnerstore"
 	"github.com/zixiao-labs/wuling-devops/internal/secretstore"
-	"github.com/zixiao-labs/wuling-devops/internal/userstore"
 )
 
 // ConfigFileName is the runner config blob read from each org's config repo.
@@ -28,19 +26,89 @@ type Reconciler struct {
 	Pipelines *pipelinestore.Store
 	Runners   *runnerstore.Store
 	Secrets   *secretstore.Store
-	Users     *userstore.Store
-	Layout    *repostore.Layout
 	Log       *slog.Logger
 
-	// ConfigProject/ConfigRepo locate each org's config repo.
-	ConfigProject string
-	ConfigRepo    string
+	// OrgConfig reads each org's runner-config.yaml from its config repo.
+	OrgConfig *orgconfig.Store
 	// ServerURL is injected into runner user-data (the control-plane origin).
 	ServerURL string
 	// DefaultIdleTimeout applies when runner-config.yaml omits idle_timeout.
 	DefaultIdleTimeout time.Duration
 	// Interval between reconcile passes.
 	Interval time.Duration
+
+	// LaunchBackoff is the cooldown applied to a pool after a failed launch,
+	// doubled per consecutive failure up to MaxLaunchBackoff.
+	LaunchBackoff    time.Duration // default 1m
+	MaxLaunchBackoff time.Duration // default 15m
+
+	mu       sync.Mutex
+	cooldown map[poolKey]coolState
+}
+
+type poolKey struct {
+	Org  uuid.UUID
+	Pool string
+}
+
+type coolState struct {
+	Until   time.Time
+	Strikes int
+}
+
+func (r *Reconciler) launchBackoff() time.Duration {
+	if r.LaunchBackoff > 0 {
+		return r.LaunchBackoff
+	}
+	return time.Minute
+}
+
+func (r *Reconciler) maxLaunchBackoff() time.Duration {
+	if r.MaxLaunchBackoff > 0 {
+		return r.MaxLaunchBackoff
+	}
+	return 15 * time.Minute
+}
+
+func (r *Reconciler) poolReady(k poolKey, now time.Time) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cooldown == nil {
+		return true
+	}
+	st, ok := r.cooldown[k]
+	return !ok || !now.Before(st.Until)
+}
+
+func (r *Reconciler) penalizeLaunch(k poolKey, now time.Time, outOfCapacity bool) time.Duration {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cooldown == nil {
+		r.cooldown = map[poolKey]coolState{}
+	}
+	st := r.cooldown[k]
+	st.Strikes++
+	var d time.Duration
+	if outOfCapacity {
+		d = r.maxLaunchBackoff()
+	} else {
+		d = r.launchBackoff() << (st.Strikes - 1)
+		if d > r.maxLaunchBackoff() {
+			d = r.maxLaunchBackoff()
+		}
+	}
+	st.Until = now.Add(d)
+	r.cooldown[k] = st
+	return d
+}
+
+func (r *Reconciler) clearLaunchPenalty(k poolKey) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cooldown == nil {
+		return
+	}
+	delete(r.cooldown, k)
 }
 
 // Run drives the reconcile loop until ctx is canceled.
@@ -151,7 +219,16 @@ func (r *Reconciler) reconcilePool(
 			r.Log.Warn("pool credentials unavailable", "pool", pool.Name, "err", err)
 			return nil
 		}
-		p, err := NewProvider(pool, creds)
+		secrets := ProviderSecrets{Credentials: creds}
+		if pwdName := pool.PasswordSecretName(); pwdName != "" {
+			pwd, err := r.Secrets.GetOrgValue(ctx, orgID, pwdName)
+			if err != nil {
+				r.Log.Warn("pool password secret unavailable", "pool", pool.Name, "secret", pwdName, "err", err)
+				return nil
+			}
+			secrets.WindowsPassword = pwd
+		}
+		p, err := NewProvider(pool, secrets)
 		if err != nil {
 			r.Log.Warn("build provider failed", "pool", pool.Name, "err", err)
 			return nil
@@ -159,6 +236,8 @@ func (r *Reconciler) reconcilePool(
 		provider = p
 		return provider
 	}
+
+	pk := poolKey{Org: orgID, Pool: pool.Name}
 
 	now := time.Now()
 	var idle, offline, busy int
@@ -195,14 +274,19 @@ func (r *Reconciler) reconcilePool(
 	}
 	toLaunch := desired - inFlight
 	for k := 0; k < toLaunch; k++ {
+		if !r.poolReady(pk, now) {
+			break
+		}
 		p := getProvider()
 		if p == nil {
 			break
 		}
 		if err := r.launchOne(ctx, orgID, cfg, pool, p); err != nil {
-			r.Log.Warn("launch failed", "pool", pool.Name, "err", err)
+			cd := r.penalizeLaunch(pk, now, IsAliyunOutOfCapacity(err))
+			r.Log.Warn("launch failed", "pool", pool.Name, "err", err, "cooldown", cd)
 			break
 		}
+		r.clearLaunchPenalty(pk)
 		r.Log.Info("launched runner", "pool", pool.Name, "provider", pool.Provider)
 	}
 
@@ -246,16 +330,22 @@ func (r *Reconciler) reconcilePool(
 // the provider to start a VM. On provider failure the half-created row is
 // removed so it doesn't linger as phantom capacity.
 func (r *Reconciler) launchOne(ctx context.Context, orgID uuid.UUID, cfg *Config, pool Pool, p Provider) error {
+	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+
 	runner, err := r.Runners.CreateEphemeralRunner(ctx, orgID, "", pool.Labels, pool.Tier, pool.Provider, pool.Name, pool.OS)
 	if err != nil {
 		return err
 	}
-	userData := BuildUserDataForPool(r.ServerURL, runner.Token, pool, runner.Name)
+	tier := cfg.TierSpecFor(pool.Tier)
+	userData := BuildUserDataForPool(r.ServerURL, runner.Token, pool, tier, runner.Name)
 	inst, err := p.Launch(ctx, LaunchSpec{
 		Pool:       pool,
-		TierSpec:   cfg.TierSpecFor(pool.Tier),
+		TierSpec:   tier,
 		RunnerName: runner.Name,
 		UserData:   userData,
+		OrgID:      orgID,
+		RunnerID:   runner.ID,
 	})
 	if err != nil {
 		_ = r.Runners.Delete(ctx, orgID, runner.ID)
@@ -279,47 +369,17 @@ func (r *Reconciler) launchOne(ctx context.Context, orgID uuid.UUID, cfg *Config
 // repo. Returns (nil, nil) when the org has no config repo / file (i.e. it
 // hasn't opted into autoscaling), and an error only on a real parse/IO fault.
 func (r *Reconciler) loadOrgConfig(ctx context.Context, orgID uuid.UUID) (*Config, error) {
-	project, err := r.Users.GetProjectBySlug(ctx, orgID, r.ConfigProject)
-	if err != nil {
-		if isNotFound(err) {
-			return nil, nil
-		}
-		return nil, err
+	if r.OrgConfig == nil {
+		return nil, nil
 	}
-	repo, err := r.Users.GetRepoBySlug(ctx, project.ID, r.ConfigRepo)
-	if err != nil {
-		if isNotFound(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	repoPath := r.Layout.Path(orgID, project.ID, repo.ID)
-	sha, err := git.Resolve(repoPath, repo.DefaultBranch)
-	if err != nil {
-		if git.IsNotFound(err) {
-			return nil, nil // empty repo
-		}
-		return nil, err
-	}
-	entries, err := git.ReadTree(repoPath, sha)
+	f, err := r.OrgConfig.Read(ctx, orgID, orgconfig.RunnerConfigPath)
 	if err != nil {
 		return nil, err
 	}
-	var blobOID string
-	for _, e := range entries {
-		if e.Kind == "blob" && e.Name == ConfigFileName {
-			blobOID = e.OID
-			break
-		}
+	if !f.Exists() {
+		return nil, nil
 	}
-	if blobOID == "" {
-		return nil, nil // repo exists but no runner-config.yaml
-	}
-	blob, err := git.ReadBlob(repoPath, blobOID)
-	if err != nil {
-		return nil, err
-	}
-	return Parse(blob.Data)
+	return Parse(f.Content)
 }
 
 // ---- helpers ---------------------------------------------------------------
@@ -374,11 +434,4 @@ func idleSince(rn runnerstore.AutoscaleRunner, now time.Time) time.Duration {
 		since = *rn.LastJobAt
 	}
 	return now.Sub(since)
-}
-
-func isNotFound(err error) bool {
-	if ae := apperr.As(err); ae != nil {
-		return ae.Code == apperr.CodeNotFound
-	}
-	return false
 }

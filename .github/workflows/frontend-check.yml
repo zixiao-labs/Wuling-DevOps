@@ -25,3 +25,8 @@ jobs:
       - name: Build
         working-directory: frontend
         run: npm run build
+      - name: Help SSR smoke
+        working-directory: frontend
+        run: npm run typecheck:help && npm run help:smoke
+      - name: Verify brand assets survived the build
+        run: ./scripts/verify-brand-assets.sh

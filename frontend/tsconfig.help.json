@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "noEmit": true
+  },
+  "include": [
+    "src/help/entry-server.tsx",
+    "src/help/server.ts",
+    "src/help/prerender.ts",
+    "src/help/help-modules.d.ts",
+    "src/help/help-types.ts",
+    "src/lib/markdown-core.d.ts"
+  ],
+  "exclude": []
+}

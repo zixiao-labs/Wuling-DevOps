@@ -135,6 +135,7 @@ function OrgSidebar({ orgSlug }: { orgSlug: string }) {
       </SidebarSection>
       <SidebarSection label="持续集成">
         <NavItem to={`${base}/runners`} icon={Cpu} label="Runners" />
+        <NavItem to={`${base}/runner-config`} icon={Gear} label="自动扩缩容" />
         <NavItem to={`${base}/secrets`} icon={Key} label="机密" />
       </SidebarSection>
       <SidebarSection label="快捷">

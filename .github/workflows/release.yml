@@ -164,6 +164,28 @@ jobs:
           Compress-Archive -Path "target/${{ matrix.target }}/release/wuling-runner.exe" -DestinationPath "out/$f.zip" -Force
           "$((Get-FileHash "out/$f.zip" -Algorithm SHA256).Hash.ToLower())  $f.zip" | Out-File -Encoding ascii "out/$f.zip.sha256"
 
+      - name: Build Inno Setup installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { $iscc = "${env:ProgramFiles}\Inno Setup 6\ISCC.exe" }
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found after installing Inno Setup" }
+          $exe = (Resolve-Path "target/${{ matrix.target }}/release/wuling-runner.exe").Path
+          $outDir = (Resolve-Path "out").Path
+          $ver = "${{ github.ref_name }}".TrimStart('v')
+          $iss = (Resolve-Path "../packaging/windows/wuling-runner.iss").Path
+          & $iscc /Q `
+            "/DMyAppVersion=$ver" `
+            "/DRunnerExe=$exe" `
+            "/DOutDir=$outDir" `
+            $iss
+          $setup = Join-Path $outDir "wuling-runner-windows-amd64-setup.exe"
+          if (-not (Test-Path $setup)) { throw "installer not produced: $setup" }
+          "$((Get-FileHash $setup -Algorithm SHA256).Hash.ToLower())  wuling-runner-windows-amd64-setup.exe" |
+            Out-File -Encoding ascii (Join-Path $outDir "wuling-runner-windows-amd64-setup.exe.sha256")
+
       - uses: actions/upload-artifact@v4
         with:
           name: runner-${{ matrix.os }}-${{ matrix.arch }}
@@ -191,6 +213,17 @@ jobs:
           npm ci
           npm run api:types
           npm run build
+
+      # Tag releases never run frontend-check.yml, so prerender here too —
+      # otherwise the shipped tar lacks dist/help/** that Caddy/nginx fall back to.
+      - name: Prerender help pages into dist
+        working-directory: frontend
+        run: npm run help:smoke
+
+      # The PR gate in frontend-check.yml never runs on a tag, so without this
+      # the artifact that actually ships is the one bundle nothing checks.
+      - name: Verify brand assets survived the build
+        run: ./scripts/verify-brand-assets.sh
 
       - name: Tar + checksum
         run: |
@@ -252,12 +285,26 @@ jobs:
         with:
           context: .
           file: deploy/production/Dockerfile.frontend
+          target: static
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/wuling-frontend:${{ steps.meta.outputs.version }}
             ghcr.io/${{ github.repository_owner }}/wuling-frontend:latest
             ghcr.io/${{ github.repository_owner }}/wuling-frontend:sha-${{ steps.meta.outputs.sha }}
+
+      - name: Build & push help (SSR) image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/production/Dockerfile.frontend
+          target: help
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/wuling-help:${{ steps.meta.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/wuling-help:latest
+            ghcr.io/${{ github.repository_owner }}/wuling-help:sha-${{ steps.meta.outputs.sha }}
 
   # ─────────────────────────────────────────────────────────────────────────
   # 4. Nix flake check (cheap smoke test that the flake still builds).
@@ -310,6 +357,7 @@ jobs:
 
           - \`ghcr.io/${{ github.repository_owner }}/wuling-api:${GITHUB_REF_NAME}\`
           - \`ghcr.io/${{ github.repository_owner }}/wuling-frontend:${GITHUB_REF_NAME}\`
+          - \`ghcr.io/${{ github.repository_owner }}/wuling-help:${GITHUB_REF_NAME}\`
 
           ### Binaries
 
@@ -322,9 +370,10 @@ jobs:
 
           ### Runner clients
 
-          \`wuling-runner-<os>-<arch>\` for Linux (static musl), Windows (\`.zip\`),
-          and macOS. Build a custom runner image by dropping the prebuilt binary
-          in with \`runners/images/<os>/setup.*\` — no Rust toolchain required.
+          \`wuling-runner-<os>-<arch>\` for Linux (static musl), Windows (\`.zip\`
+          + Inno Setup \`wuling-runner-windows-amd64-setup.exe\`), and macOS.
+          Build a custom runner image by dropping the prebuilt binary in with
+          \`runners/images/<os>/setup.*\` — no Rust toolchain required.
 
           ### Frontend
 
@@ -348,6 +397,7 @@ jobs:
           files: |
             release/*.tar.gz
             release/*.zip
+            release/*.exe
             release/*.sha256
           fail_on_unmatched_files: true
           generate_release_notes: true

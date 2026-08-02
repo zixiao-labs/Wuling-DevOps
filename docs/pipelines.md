@@ -80,13 +80,11 @@ jobs:
       CI: "true"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4     # Stage 1 仅特判 checkout（克隆到工作区）
+        uses: actions/checkout@v4     # 内置 checkout + setup-node/setup-rust 等
       - name: Install & build
         run: |
           npm ci
-          npm run build
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}   # 见 §4
+          npm run build   # 机密以进程环境变量注入，脚本里直接写 $NPM_TOKEN（见 §4）
   test:
     needs: [build]              # DAG 依赖；build 成功后才跑
     runs-on: [linux]
@@ -98,11 +96,16 @@ jobs:
 **Stage 1 支持的字段**
 
 - 顶层：`name`、`on`（`push.branches`、`pull_request`、`workflow_dispatch`）。
-- `jobs.<id>`：`runs-on`（字符串或字符串数组）、`resource`、`container`、`needs`、`env`、`steps`。
-- `steps[]`：`name`、`run`（shell 脚本）、`uses`（仅 `actions/checkout[@x]`）、`with`、`env`、
+- `jobs.<id>`：`name`、`runs-on`（字符串或字符串数组）、`resource`、`container`、`needs`、
+  `strategy`、`env`、`steps`。
+- `jobs.<id>.strategy`：`matrix`（任意命名轴 + `include` / `exclude`）、`fail-fast`（缺省 `true`）、
+  `max-parallel`（缺省 `0`，即不限）。
+- `steps[]`：`name`、`run`（shell 脚本）、`uses`（内置 action，见下）、`with`、`env`、
   `if`（仅 `always()` / `success()` / `failure()` 三种谓词，默认 `success()`）、`timeout-minutes`。
 
-**校验**：`needs` 必须无环且指向同文件内已存在的 job；`resource` 必须是合法档位；标签非空。
+**校验**：`needs` 必须无环且指向同文件内已存在的 job；`resource` 必须是合法档位（除非它是
+`${{ matrix.* }}` 表达式，此时在展开后再校验）；标签非空；矩阵至少展开出一个组合，单个 job
+不超过 256 个组合、单次 run 不超过 1024 个 job。
 
 `resource` 与标签的关系：`resource` 决定 Autoscaler 该用哪个 tier 的机器；`runs-on` 标签用于
 把 job 派给“声明了这些标签”的 runner。Autoscaler 拉起的 runner 会自动带上
@@ -113,8 +116,66 @@ jobs:
 执行方式随 OS：Linux 始终在容器内（`sh -ec`）；Windows 缺省在宿主 `pwsh` 跑，job 声明 `container:`
 时才用 Windows 容器；macOS 只在宿主 `bash` 跑（`container:` 被忽略，macOS 无容器）。
 
-`${{ secrets.X }}` 与 `${{ env.X }}` 的插值**在 Runner 端**完成，机密通过已鉴权的
-acquire 响应下发——明文绝不进 git，也不写进 run 的解析快照。
+**内置 setup actions**（runner 在宿主机下载/解压工具链，通过 bind mount + PATH 前缀注入容器/宿主）：
+
+| `uses` | 说明 |
+|--------|------|
+| `actions/setup-node[@v]` | 安装 Node.js（nodejs.org），可选 `cache: npm\|pnpm\|yarn` 将包管理器缓存重定向到 `<work>/_toolstate` |
+| `pnpm/action-setup[@v]` | 仅安装 pnpm（若无 Node 则隐式安装最新 LTS） |
+| `actions/setup-rust` | 安装 Rust 工具链（rustup）；别名：`dtolnay/rust-toolchain@<ch>`、`actions-rust-lang/setup-rust-toolchain` |
+
+工具缓存目录（跨 job 持久，job 清理时不删除）：
+
+- `<work-dir>/_tools` — 不可变分发包，容器内只读挂载于 `/opt/wuling/tools`（Windows：`C:\wuling\tools`）
+- `<work-dir>/_toolstate` — 可变状态（`CARGO_HOME`、pnpm/npm 缓存等），读写挂载于 `/opt/wuling/state`
+
+可通过 `WULING_RUNNER_TOOLS_DIR` / `WULING_RUNNER_STATE_DIR` 覆盖路径。
+
+### 3.1 矩阵（`strategy.matrix`）
+
+语法与 GitHub Actions 一致：
+
+```yaml
+jobs:
+  build:
+    name: Build ${{ matrix.os }} / node ${{ matrix.node }}   # 可选；写了就不再自动加后缀
+    runs-on: [ "${{ matrix.os }}" ]
+    strategy:
+      fail-fast: false       # 缺省 true：一条腿失败即取消同组其余腿
+      max-parallel: 2        # 缺省 0（不限）：同组同时 running 的腿数上限
+      matrix:
+        os: [linux, windows]
+        node: [18, 20]
+        exclude:
+          - os: windows
+            node: 18
+        include:
+          - os: linux
+            npm: 6
+    steps:
+      - run: node --version
+```
+
+**展开时机：创建 run 时（服务端），不是派发时。** 每个组合落成一行 `pipeline_jobs`，
+`${{ matrix.* }}` 已经就地插值进 `runs-on` / `resource` / `container` / `env` / `steps`，
+所以调度依旧只看行上的 `runs_on` / `resource_tier` 两列，Runner 侧零改动。
+
+- **组合顺序**：笛卡尔积，最后一个轴变化最快；`exclude` 先于 `include` 生效（因此 `include`
+  可以把被排掉的组合加回来）；`include` 能命中已有组合就合并（不覆盖轴本身的值），命中不了
+  就单独追加一条。只声明 `include` 不声明轴时，正好产出 `len(include)` 条。
+- **显示名**：job 写了 `name:` 就原样用它；否则是 `<job id> (值1, 值2)`。重名会自动补
+  ` #2`、` #3`（`pipeline_jobs` 上有 `UNIQUE (run_id, name)`）。
+- **`needs` 认的是 job id，不是显示名**：`pipeline_jobs.job_key` 保存 YAML 里的 job id，
+  一个矩阵 job 的所有腿共用同一个 `job_key`；`needs: [build]` 要求 `build` 的**每一条腿**
+  都成功。
+- **值类型**：字符串、整数、布尔、对象、数组都行。插值时用 YAML 里的**原始文本**
+  （`18` 就是 `"18"`，`1.10` 不会变成 `1.1`）；对象/数组按紧凑 JSON 渲染，子字段可以用
+  `${{ matrix.cfg.arch }}` 直接取。
+
+`${{ matrix.X }}` 的插值**在服务端展开时**完成；`${{ secrets.X }}` 与 `${{ env.X }}` 保持
+**原样字节不变**交给 Runner——机密通过已鉴权的 acquire 响应下发，明文绝不进 git，也不写进
+run 的解析快照。（注意：Runner 侧的 `secrets` / `env` 表达式插值目前**尚未实装**，机密是以
+进程环境变量的形式注入的，脚本里请直接写 `$NPM_TOKEN`。）
 
 ---
 
@@ -170,7 +231,14 @@ acquire 响应下发——明文绝不进 git，也不写进 run 的解析快照
 **约定**：每个 org 维护一个 **config 仓库**——默认 `项目 slug = config`、`仓库 slug = config`
 （即 `{org}/config/config`，二者均可用 `WULING_RUNNER_CONFIG_PROJECT` /
 `WULING_RUNNER_CONFIG_REPO` 改名）。仓库默认分支根目录下的 `runner-config.yaml` 即该 org 的
-Runner/Autoscaler 配置。控制面用 libgit2 直接读该 blob（带 TTL 缓存）。
+Runner/Autoscaler 配置。控制面在每次 autoscaler reconcile 循环中通过 libgit2 直接读取该 blob
+（无 TTL 缓存；写入后通常在一个 reconcile 周期内生效，默认 ≤20s）。
+
+维护者及以上可通过 **`GET/PUT /api/v1/orgs/{org_slug}/runner-config`** 读写该文件：PUT 会先用
+autoscaler 同一套解析器校验 YAML，通过后以当前用户身份直接提交到 config 仓库默认分支（不走 MR）。
+若 org 尚无 config 项目/仓库，PUT 会自动创建 `{org}/config/config`。乐观并发：GET 返回的
+`blob_sha`（或 `ETag`）须在 PUT 的 `base_blob_sha`（或 `If-Match`）中原样回传；空字符串表示
+断言文件尚不存在。GET 对 org 成员开放；PUT 需 maintainer+。
 
 把配置放进 git（而非全局 server 配置）满足三点：**组织级**、**可走 MR 评审**、**可审计**。
 完整字段见 `runners/config/runner-config.example.yaml`。要点：
@@ -191,12 +259,27 @@ Runner/Autoscaler 配置。控制面用 libgit2 直接读该 blob（带 TTL 缓�
 控制面内的一个协调 goroutine（`WULING_AUTOSCALER_ENABLED`，默认开），周期
 `WULING_AUTOSCALER_INTERVAL`（默认 `20s`）对每个 org 执行 reconcile：
 
-1. 读该 org `config` 仓库的 `runner-config.yaml`（缓存）。
+1. 读该 org `config` 仓库的 `runner-config.yaml`（每次 reconcile 从 git 重新读取）。
 2. 统计每个 (tier, labels) 维度上**当前没有合适在线 runner 承接**的 queued job 数。
 3. **扩容**：匹配的 pool 若未达 `max`，调用 `Provider.Launch(spec)` 拉起实例，并通过 user-data
-   注入「服务端地址 + 持久 runner token + labels/tier」，新机自举后上线。引导脚本随 `pool.os` 而变：
-   Linux 走 cloud-init（写 `runner.env` + `systemctl enable --now`），Windows 走 `<powershell>`
-   （写 `runner.env` + 计划任务 `schtasks /Run`，见 `BuildWindowsUserData`）；macOS 不参与扩容。
+   注入「服务端地址 + 持久 runner token + labels/tier」，新机自举后上线。引导脚本随 `pool.os`
+   **和 `pool.provider`** 而变：Linux 走 cloud-init（写 `runner.env` + `systemctl enable --now`，
+   首行 `#!`，两朵云通用）；Windows 写 `runner.env` + 计划任务 `schtasks /Run`，但**外层包装各云不同**
+   （见 `BuildWindowsUserData` / `windowsUserDataWrapper`）；macOS 不参与扩容。
+
+   | Provider | Windows 引导代理 | 包装形式 |
+   |----|----|----|
+   | AWS EC2 | EC2Launch v2 | `<powershell>` … `</powershell>` 标签对 |
+   | 阿里云 ECS | Vminit（`Plugin_Main_CloudinitUserData`） | 首行裸标记 `[powershell]`，**无闭合标记** |
+
+   ⚠️ 两者**不可互换**：阿里云不认 `<powershell>` 标签，且失败是**静默**的——Vminit 只是不把这段数据
+   当脚本，实例照常起来但 runner 永远不上线，表现为「池一直拉不起机器」。另有两条阿里云硬约束：
+   `[powershell]` 必须是第一行且行首无空格；user-data **只能是半角字符**；并且初始化阶段**不能往
+   `C:\Users` 下写**（那时还没有用户登录、profile 未挂载）——所以 `runner.env` 一律放
+   `C:\ProgramData\wuling-runner\`。Base64 编码前原文上限 32 KB。
+
+   阿里云 Windows 自定义镜像必须是 **Sysprep 泛化**过的，否则 Vminit 认为实例不是首次启动、
+   不会执行 user-data（症状与包装错误相同：实例起来但 runner 永远不上线）。
 4. **缩容**：`ephemeral` 且 `provider==该池` 的 runner，若**空闲（无运行中 job）时长 > `idle_timeout`**
    且池内存活数 > `min`，调用 `Provider.Terminate(externalID)` 释放并删除 runner 行。
 5. `min` 维持热备：池内存活不足 `min` 时补足（即便当前无排队）。
@@ -206,7 +289,7 @@ Provider 接口（`internal/autoscale`）：
 ```go
 type Provider interface {
     Name() string
-    Launch(ctx context.Context, spec LaunchSpec) (InstanceRef, error)
+    Launch(ctx context.Context, spec LaunchSpec) (Instance, error)
     Terminate(ctx context.Context, externalID string) error
 }
 ```
@@ -225,8 +308,15 @@ type Provider interface {
 > 时即返回 “not supported” 错误，Autoscaler 记录告警并**跳过该池**（不影响 aws/aliyun 池），在置备
 > 补齐前不会拉起任何实例。
 
-每个从 `LaunchSpec`（tier→CPU/内存/存储、镜像/模板、网络、注入脚本）创建一台临时机。
-凭证从 org Secret（`credentials_secret`）解密注入，不落盘、不出网。
+每个从 `LaunchSpec` 创建一台临时机。`tiers` 字段与各 provider 的映射：
+
+| tier 字段 | 阿里云 ECS | 容器限制（runner.env） |
+|----|----|----|
+| `storage` | `SystemDisk.Size`（GiB）；池级 `system_disk_size` 可覆盖 | —（VM 根盘即存储边界，不做 per-container `--storage-opt`） |
+| `cpu` / `memory` | 池级 `instance_type` 或 `instance_types`（按序回退，售罄时试下一个） | `WULING_RUNNER_CPUS` / `WULING_RUNNER_MEMORY`（内存预留 15% 或至少 1Gi 给 runner 与 OS） |
+| — | — | `WULING_RUNNER_PIDS_LIMIT=4096`（fork-bomb 防护，Linux 容器生效） |
+
+凭证从 org Secret（`credentials_secret`；阿里云 Windows 另需 `password_secret`）解密注入，不落盘、不出网。
 
 > 注意：云 provider 的真实调用需各自的账号/镜像模板/网络资源，**无法在本地无凭证集成测试**。
 > 仓库内附带的是契约 + 单元测试（config 解析/校验、调度数学、签名拼装）；真机验证需在目标云上做。
@@ -275,11 +365,28 @@ Autoscaler 注入的 `runner.env`（Linux 在 `/etc/wuling-runner/`、`chmod 600
 | `WULING_RUNNER_NAME` | Autoscaler 生成的 runner 名 |
 | `WULING_RUNNER_LABELS` | 池的 `labels` |
 | `WULING_RUNNER_CONCURRENCY` | 固定 `1`（一机一并发，便于按需伸缩） |
+| `WULING_RUNNER_CPUS` | 池 tier 的 vCPU 上限（注入 job 容器 `--cpus`；0/缺省 = 不限） |
+| `WULING_RUNNER_MEMORY` | 池 tier 内存上限减 host 预留（15% 或至少 1Gi）；注入 job 容器 |
+| `WULING_RUNNER_PIDS_LIMIT` | 固定 `4096`（Linux 容器 fork-bomb 防护；Windows 容器/宿主执行不适用） |
+
+宿主直接执行的 job（macOS、未声明 `container:` 的 Windows）不受上述容器限制约束。
 
 runner 二进制还认 `WULING_RUNNER_OS`（默认取构建目标：win/mac 构建自识别）、`WULING_RUNNER_DEFAULT_IMAGE`
-（容器执行且 job 未声明 `container:` 时的默认镜像）、`WULING_RUNNER_WORK_DIR`、`WULING_RUNNER_POLL_INTERVAL`
-等开关（`wuling-runner --help` 有全量列表）。**手动注册的 static runner** 同理备机，只是改用
-`--registration-token`（UI 生成）换取 token，而非由 Autoscaler 注入。
+（容器执行且 job 未声明 `container:` 时的默认镜像）、`WULING_RUNNER_WORK_DIR`、`WULING_RUNNER_TOOLS_DIR`、
+`WULING_RUNNER_STATE_DIR`、`WULING_RUNNER_POLL_INTERVAL`
+等开关（`wuling-runner --help` 有全量列表）。Autoscaler 注入的 `WULING_RUNNER_CPUS` /
+`WULING_RUNNER_MEMORY` / `WULING_RUNNER_PIDS_LIMIT` 仅在有 tier 定义的池生效。**手动注册的 static runner**
+同理备机，只是改用 `--registration-token`（UI 生成）换取 token，而非由 Autoscaler 注入。
+
+### 7.2 限流与重试
+
+阿里云 ECS provider 对可幂等的 RPC（`RunInstances` 带 `ClientToken`、`DeleteInstance`）做有限次重试：
+
+- **ClientToken 幂等**：`ClientToken = runner UUID`。客户端超时后重试会返回**第一次**调用创建的实例 id，避免重复计费。
+- **可重试错误**：HTTP 429 `Throttling.*`、5xx `InternalError` / `ServiceUnavailable`、网络无响应。退避为全抖动指数退避（500ms 起，上限 8s）。
+- **不可重试 / 库存拒绝**：`OperationDenied.NoStock` 等库存/配额错误不会在同一次 launch 内无限重试；若池配置了 `instance_types` 则按序试下一个规格，全部失败后 reconciler 对该池施加**冷却**（默认 1m 起，指数翻倍至 15m；库存拒绝直接 15m），避免每 20s tick 打满 ECS 限流。
+- **签名_nonce 必须变、业务参数必须不变**：重试时只刷新 `SignatureNonce` / `Timestamp` / `Signature`；`ClientToken` 与其它 RunInstances 参数必须字节级一致，否则 ECS 返回 `IdempotentParameterMismatch`。
+- **单次 launch 预算 90s**：含最多 3 次 RPC 尝试（每次 HTTP 超时 20s），避免一个 org 的 retry 链阻塞其它 org 的缩容。
 
 ---
 
@@ -287,7 +394,8 @@ runner 二进制还认 `WULING_RUNNER_OS`（默认取构建目标：win/mac 构�
 
 - Runner token / 注册令牌：随机 32B，argon2id 存哈希（同 PAT）；注册令牌短期且一次性。
 - Secrets 主密钥仅在内存；密文 + nonce 落库；GCM 提供机密性 + 完整性。
-- 工作流插值在 runner 端做，明文机密不进 git、不进解析快照、不进普通 API 响应。
+- `${{ matrix.* }}` 在服务端展开时插值；`${{ secrets.* }}` / `${{ env.* }}` 原样留给 runner，
+  明文机密不进 git、不进解析快照、不进普通 API 响应。
 - 派发给 runner 的仓库检出 token 为**最小权限、短期**（仅该 repo 读）。
 - 云凭证以 Secret 名引用，GitOps 配置可公开评审。
 
@@ -316,7 +424,10 @@ runner 二进制还认 `WULING_RUNNER_OS`（默认取构建目标：win/mac 构�
   cloud-init；vCenter 需 govmomi + guest 定制）。与 K8s provider 一并推进。
 - **多 OS runner**：**已实现**——Windows（宿主 `pwsh` 与 Windows 容器两种执行模型，AWS EC2 / 阿里云
   ECS 可 autoscale，最低 Server 2022）、macOS（手动注册物理机，宿主执行）。详见 §3 / §7 / §7.1。
-- **matrix**（`strategy.matrix` + `include`/`exclude` + `fail-fast`/`max-parallel`）：下一切片。
+- **matrix**（`strategy.matrix` + `include`/`exclude` + `fail-fast`/`max-parallel`）：**已实现**——
+  创建 run 时在服务端展开，一个组合一行 job，`needs` 按 `job_key` 解析。详见 §3.1。
+- **`${{ secrets.* }}` / `${{ env.* }}` 表达式插值**：尚未实装。机密目前以进程环境变量注入，
+  脚本里写 `$NPM_TOKEN` 即可；把字面量写进 `env:` 的值不会被展开。
 - step 级 `uses` 第三方 action 生态、可复用 workflow、环境/审批门禁 → Stage 2+。
 - 日志/artifact 转对象存储（当前落盘）。
 - 基于 WebSocket 的实时日志推送（当前 SSE + 轮询）。
