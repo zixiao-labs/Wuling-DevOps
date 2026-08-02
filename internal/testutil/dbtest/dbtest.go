@@ -64,6 +64,7 @@ func Reset(t *testing.T, pool *db.Pool) {
 	defer cancel()
 	if _, err := pool.Exec(ctx, `
 		TRUNCATE TABLE
+			github_webhook_deliveries,
 			repo_commit_index,
 			user_ssh_keys,
 			access_tokens,

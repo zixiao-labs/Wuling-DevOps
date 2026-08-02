@@ -20,6 +20,7 @@ import (
 	"github.com/zixiao-labs/wuling-devops/internal/config"
 	"github.com/zixiao-labs/wuling-devops/internal/db"
 	"github.com/zixiao-labs/wuling-devops/internal/githttp"
+	"github.com/zixiao-labs/wuling-devops/internal/githubwebhook"
 	"github.com/zixiao-labs/wuling-devops/internal/httpapi"
 	"github.com/zixiao-labs/wuling-devops/internal/insighthttp"
 	"github.com/zixiao-labs/wuling-devops/internal/insightstore"
@@ -238,6 +239,16 @@ func New(d Deps) http.Handler {
 				Users: d.Store, Stage2: d.Stage2, Verifier: verifier, OAT: oauthH,
 				Artifacts: d.Artifacts, MaxUploadBytes: d.Cfg.Artifacts.MaxUploadBytes,
 				UploadReadTimeout: d.Cfg.Artifacts.RequestTimeout,
+			}).Mount(api)
+		}
+
+		// GitHub App webhooks — HMAC-authenticated, no JWT. Mount only when
+		// the operator has configured a webhook secret (empty = disabled).
+		if secret := d.Cfg.GithubApp.WebhookSecret; secret != "" {
+			(&githubwebhook.Handler{
+				Secret: secret,
+				Store:  &githubwebhook.Store{Pool: d.Pool},
+				Log:    d.Log.With("component", "github-webhook"),
 			}).Mount(api)
 		}
 	})

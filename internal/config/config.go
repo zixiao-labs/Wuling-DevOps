@@ -31,6 +31,18 @@ type Config struct {
 	Artifacts ArtifactServiceConfig
 	Runner    RunnerConfig
 	Autoscale AutoscaleConfig
+	GithubApp GithubAppConfig
+}
+
+// GithubAppConfig is the GitHub App identity used for webhooks, repo sync,
+// and Checks. Distinct from OAuthConfig (login): same App, different secrets.
+//
+// Webhook routes mount only when WebhookSecret is non-empty.
+type GithubAppConfig struct {
+	AppID             int64  `env:"WULING_GITHUB_APP_ID"`
+	PrivateKey        string `env:"WULING_GITHUB_APP_PRIVATE_KEY"`
+	PrivateKeyPath    string `env:"WULING_GITHUB_APP_PRIVATE_KEY_PATH"`
+	WebhookSecret     string `env:"WULING_GITHUB_WEBHOOK_SECRET"`
 }
 
 // HTTPConfig configures the public HTTP listener.

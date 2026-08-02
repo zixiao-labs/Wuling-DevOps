@@ -2332,6 +2332,60 @@ paths:
           description: server built without the libgit2 backend
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
 
+  /api/v1/webhooks/github:
+    post:
+      summary: GitHub App webhook receiver
+      description: |
+        Receives GitHub App deliveries. Authenticated solely by
+        `X-Hub-Signature-256` (HMAC-SHA256 of the raw body) against
+        `WULING_GITHUB_WEBHOOK_SECRET`. Not mounted when the secret is empty.
+        `ping` returns 200; unknown events return 202 until a processor is wired.
+        Duplicate `X-GitHub-Delivery` values return 200 with `duplicate: true`.
+      security: []
+      parameters:
+        - in: header
+          name: X-Hub-Signature-256
+          required: true
+          schema: { type: string }
+          description: "sha256=<hex HMAC of raw body>"
+        - in: header
+          name: X-GitHub-Event
+          required: true
+          schema: { type: string }
+        - in: header
+          name: X-GitHub-Delivery
+          required: false
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: ping handled, or duplicate delivery
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  duplicate: { type: boolean }
+        "202":
+          description: event accepted (no processor / deferred)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  accepted: { type: boolean }
+        "401":
+          description: invalid or missing signature
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   /api/v1/runner/register:
     post:
       summary: Redeem a registration token and create a runner
