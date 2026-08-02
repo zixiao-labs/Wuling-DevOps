@@ -44,6 +44,16 @@ pub struct Config {
     #[arg(long, env = "WULING_RUNNER_WORK_DIR", default_value = "./_work")]
     pub work_dir: String,
 
+    /// Directory for downloaded toolchains, bind-mounted read-only into containers.
+    /// Defaults to <work-dir>/_tools.
+    #[arg(long, env = "WULING_RUNNER_TOOLS_DIR", default_value = "")]
+    pub tools_dir: String,
+
+    /// Mutable tool state (CARGO_HOME, package-manager stores). Bind-mounted
+    /// read-write. Defaults to <work-dir>/_toolstate.
+    #[arg(long, env = "WULING_RUNNER_STATE_DIR", default_value = "")]
+    pub state_dir: String,
+
     /// Default container image when a job sets no `container:`.
     #[arg(
         long,

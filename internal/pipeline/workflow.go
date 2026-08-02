@@ -225,7 +225,10 @@ func (w *Workflow) Validate() error {
 				return fmt.Errorf("job %q step %d: exactly one of `run` or `uses` is required", name, i+1)
 			}
 			if st.Uses != "" && !isSupportedUses(st.Uses) {
-				return fmt.Errorf("job %q step %d: unsupported action %q (Stage 1 supports actions/checkout, actions/upload-artifact, actions/cache)", name, i+1, st.Uses)
+				return fmt.Errorf("job %q step %d: unsupported action %q (supported: actions/checkout, actions/upload-artifact, actions/cache, actions/setup-node, actions/setup-rust, dtolnay/rust-toolchain, actions-rust-lang/setup-rust-toolchain, pnpm/action-setup)", name, i+1, st.Uses)
+			}
+			if err := validateActionInputs(st.Uses, st.With); err != nil {
+				return fmt.Errorf("job %q step %d: %w", name, i+1, err)
 			}
 			if st.If != "" && !isSupportedIf(st.If) {
 				return fmt.Errorf("job %q step %d: unsupported `if` %q (supported: success()|failure()|always())", name, i+1, st.If)
@@ -425,9 +428,72 @@ func isJobName(s string) bool {
 // supportedActions are the built-in `uses` actions a runner knows how to
 // execute in Stage 1. Keep this in sync with the Rust runner's executor.
 var supportedActions = map[string]bool{
-	"actions/checkout":        true,
-	"actions/upload-artifact": true,
-	"actions/cache":           true,
+	"actions/checkout":                       true,
+	"actions/upload-artifact":                true,
+	"actions/cache":                          true,
+	"actions/setup-node":                     true,
+	"actions/setup-rust":                     true,
+	"dtolnay/rust-toolchain":                 true,
+	"actions-rust-lang/setup-rust-toolchain": true,
+	"pnpm/action-setup":                      true,
+}
+
+// actionInputs are the `with:` keys each built-in setup action accepts.
+// Only actions whose inputs we fully own are strict; checkout/cache/
+// upload-artifact stay permissive so existing workflows keep parsing.
+var actionInputs = map[string]map[string]bool{
+	"actions/setup-node": {
+		"node-version":           true,
+		"node-version-file":      true,
+		"architecture":           true,
+		"cache":                  true,
+		"cache-dependency-path":  true,
+		"package-manager":        true,
+		"registry-url":           true,
+		"scope":                  true,
+		"always-auth":            true,
+	},
+	"pnpm/action-setup": {
+		"version": true,
+	},
+	"actions/setup-rust": {
+		"toolchain":  true,
+		"targets":    true,
+		"components": true,
+		"profile":    true,
+		"cache":      true,
+		"rustflags":  true,
+	},
+	"dtolnay/rust-toolchain": {
+		"toolchain":  true,
+		"targets":    true,
+		"components": true,
+		"profile":    true,
+		"cache":      true,
+		"rustflags":  true,
+	},
+	"actions-rust-lang/setup-rust-toolchain": {
+		"toolchain":  true,
+		"targets":    true,
+		"components": true,
+		"profile":    true,
+		"cache":      true,
+		"rustflags":  true,
+	},
+}
+
+func validateActionInputs(uses string, with map[string]string) error {
+	base, _, _ := strings.Cut(uses, "@")
+	allowed, ok := actionInputs[base]
+	if !ok {
+		return nil
+	}
+	for k := range with {
+		if !allowed[k] {
+			return fmt.Errorf("action %q does not accept input %q", base, k)
+		}
+	}
+	return nil
 }
 
 // isSupportedUses accepts a known built-in action, with or without a @ref.

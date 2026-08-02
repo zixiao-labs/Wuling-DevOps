@@ -80,7 +80,7 @@ jobs:
       CI: "true"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4     # Stage 1 仅特判 checkout（克隆到工作区）
+        uses: actions/checkout@v4     # 内置 checkout + setup-node/setup-rust 等
       - name: Install & build
         run: |
           npm ci
@@ -100,7 +100,7 @@ jobs:
   `strategy`、`env`、`steps`。
 - `jobs.<id>.strategy`：`matrix`（任意命名轴 + `include` / `exclude`）、`fail-fast`（缺省 `true`）、
   `max-parallel`（缺省 `0`，即不限）。
-- `steps[]`：`name`、`run`（shell 脚本）、`uses`（仅 `actions/checkout[@x]`）、`with`、`env`、
+- `steps[]`：`name`、`run`（shell 脚本）、`uses`（内置 action，见下）、`with`、`env`、
   `if`（仅 `always()` / `success()` / `failure()` 三种谓词，默认 `success()`）、`timeout-minutes`。
 
 **校验**：`needs` 必须无环且指向同文件内已存在的 job；`resource` 必须是合法档位（除非它是
@@ -115,6 +115,21 @@ jobs:
 `linux` 既有约定），所以 `runs-on: [windows]`、`[macos]` 直接命中对应机器，调度的标签匹配逻辑不变。
 执行方式随 OS：Linux 始终在容器内（`sh -ec`）；Windows 缺省在宿主 `pwsh` 跑，job 声明 `container:`
 时才用 Windows 容器；macOS 只在宿主 `bash` 跑（`container:` 被忽略，macOS 无容器）。
+
+**内置 setup actions**（runner 在宿主机下载/解压工具链，通过 bind mount + PATH 前缀注入容器/宿主）：
+
+| `uses` | 说明 |
+|--------|------|
+| `actions/setup-node[@v]` | 安装 Node.js（nodejs.org），可选 `cache: npm\|pnpm\|yarn` 将包管理器缓存重定向到 `<work>/_toolstate` |
+| `pnpm/action-setup[@v]` | 仅安装 pnpm（若无 Node 则隐式安装最新 LTS） |
+| `actions/setup-rust` | 安装 Rust 工具链（rustup）；别名：`dtolnay/rust-toolchain@<ch>`、`actions-rust-lang/setup-rust-toolchain` |
+
+工具缓存目录（跨 job 持久，job 清理时不删除）：
+
+- `<work-dir>/_tools` — 不可变分发包，容器内只读挂载于 `/opt/wuling/tools`（Windows：`C:\wuling\tools`）
+- `<work-dir>/_toolstate` — 可变状态（`CARGO_HOME`、pnpm/npm 缓存等），读写挂载于 `/opt/wuling/state`
+
+可通过 `WULING_RUNNER_TOOLS_DIR` / `WULING_RUNNER_STATE_DIR` 覆盖路径。
 
 ### 3.1 矩阵（`strategy.matrix`）
 
@@ -350,7 +365,8 @@ Autoscaler 注入的 `runner.env`（Linux 在 `/etc/wuling-runner/`、`chmod 600
 宿主直接执行的 job（macOS、未声明 `container:` 的 Windows）不受上述容器限制约束。
 
 runner 二进制还认 `WULING_RUNNER_OS`（默认取构建目标：win/mac 构建自识别）、`WULING_RUNNER_DEFAULT_IMAGE`
-（容器执行且 job 未声明 `container:` 时的默认镜像）、`WULING_RUNNER_WORK_DIR`、`WULING_RUNNER_POLL_INTERVAL`
+（容器执行且 job 未声明 `container:` 时的默认镜像）、`WULING_RUNNER_WORK_DIR`、`WULING_RUNNER_TOOLS_DIR`、
+`WULING_RUNNER_STATE_DIR`、`WULING_RUNNER_POLL_INTERVAL`
 等开关（`wuling-runner --help` 有全量列表）。Autoscaler 注入的 `WULING_RUNNER_CPUS` /
 `WULING_RUNNER_MEMORY` / `WULING_RUNNER_PIDS_LIMIT` 仅在有 tier 定义的池生效。**手动注册的 static runner**
 同理备机，只是改用 `--registration-token`（UI 生成）换取 token，而非由 Autoscaler 注入。

@@ -27,7 +27,8 @@ use tokio::process::Command;
 
 use crate::api::{ApiClient, StepSpec};
 
-const STEP_TIMEOUT_DEFAULT_MINS: u64 = 60;
+pub(crate) const STEP_TIMEOUT_DEFAULT_MINS: u64 = 60;
+pub(crate) const INTERNAL_INSTALL_TIMEOUT_MINS: u64 = 90;
 
 /// Upper bound on a container image pull. `start` runs before any per-step
 /// timeout, so without this a wedged registry would hang the job forever.
@@ -51,6 +52,158 @@ impl RunnerOS {
             "macos" => RunnerOS::MacOS,
             _ => RunnerOS::Linux,
         }
+    }
+}
+
+/// JobEnv is the environment a job accumulates as it runs.
+#[derive(Clone, Debug, Default)]
+pub struct JobEnv {
+    base: Vec<(String, String)>,
+    exported: Vec<(String, String)>,
+    path_prefix: Vec<String>,
+}
+
+impl JobEnv {
+    pub fn new(base: Vec<(String, String)>) -> Self {
+        Self {
+            base,
+            exported: Vec::new(),
+            path_prefix: Vec::new(),
+        }
+    }
+
+    pub fn export(&mut self, key: impl Into<String>, value: impl Into<String>) {
+        let key = key.into();
+        let value = value.into();
+        if let Some(entry) = self.exported.iter_mut().find(|(k, _)| k == &key) {
+            entry.1 = value;
+        } else {
+            self.exported.push((key, value));
+        }
+    }
+
+    pub fn get(&self, key: &str) -> Option<&str> {
+        self.exported
+            .iter()
+            .rev()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+            .or_else(|| {
+                self.base
+                    .iter()
+                    .rev()
+                    .find(|(k, _)| k == key)
+                    .map(|(_, v)| v.as_str())
+            })
+    }
+
+    pub fn prepend_path(&mut self, dir: impl Into<String>) {
+        self.path_prefix.insert(0, dir.into());
+    }
+
+    pub fn pairs(&self) -> Vec<(String, String)> {
+        let mut out = self.base.clone();
+        for (k, v) in &self.exported {
+            if let Some(entry) = out.iter_mut().find(|(ek, _)| ek == k) {
+                entry.1 = v.clone();
+            } else {
+                out.push((k.clone(), v.clone()));
+            }
+        }
+        out
+    }
+
+    pub fn path_preamble(&self, os: RunnerOS) -> String {
+        if self.path_prefix.is_empty() {
+            return String::new();
+        }
+        match os {
+            RunnerOS::Windows => {
+                let parts: Vec<String> = self
+                    .path_prefix
+                    .iter()
+                    .map(|d| d.replace('\'', "''"))
+                    .collect();
+                format!(
+                    "$env:PATH = '{}' + ';' + $env:PATH\n",
+                    parts.join("' + ';' + '")
+                )
+            }
+            _ => {
+                let quoted: Vec<String> = self
+                    .path_prefix
+                    .iter()
+                    .map(|d| format!("'{}'", d.replace('\'', "'\\''")))
+                    .collect();
+                format!("PATH={}:\"$PATH\"\nexport PATH\n", quoted.join(":"))
+            }
+        }
+    }
+}
+
+/// Platform is the OS/arch/libc a step's process will actually see.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Platform {
+    pub os: RunnerOS,
+    pub arch: String,
+    pub libc: String,
+}
+
+impl Platform {
+    pub fn node_tag(&self) -> Result<String> {
+        if self.libc == "musl" && self.os == RunnerOS::Linux {
+            anyhow::bail!(
+                "setup-node 不支持 musl 镜像（nodejs.org 无 musl 构建），请改用 glibc 镜像或镜像内自带 Node"
+            );
+        }
+        let os_part = match self.os {
+            RunnerOS::Linux => "linux",
+            RunnerOS::MacOS => "darwin",
+            RunnerOS::Windows => "win",
+        };
+        Ok(format!("{}-{}", os_part, self.arch))
+    }
+
+    pub fn rust_triple(&self) -> String {
+        match (self.os, self.arch.as_str(), self.libc.as_str()) {
+            (RunnerOS::Linux, "x64", "musl") => "x86_64-unknown-linux-musl".into(),
+            (RunnerOS::Linux, "arm64", "musl") => "aarch64-unknown-linux-musl".into(),
+            (RunnerOS::Linux, "x64", _) => "x86_64-unknown-linux-gnu".into(),
+            (RunnerOS::Linux, "arm64", _) => "aarch64-unknown-linux-gnu".into(),
+            (RunnerOS::MacOS, "arm64", _) => "aarch64-apple-darwin".into(),
+            (RunnerOS::MacOS, "x64", _) => "x86_64-apple-darwin".into(),
+            (RunnerOS::Windows, "arm64", _) => "aarch64-pc-windows-msvc".into(),
+            (RunnerOS::Windows, _, _) => "x86_64-pc-windows-msvc".into(),
+            _ => "x86_64-unknown-linux-gnu".into(),
+        }
+    }
+
+    pub fn cache_slug(&self) -> String {
+        format!("{}-{}", self.arch, self.libc)
+    }
+}
+
+/// detect_libc probes the host filesystem for musl vs gnu.
+pub fn detect_libc() -> String {
+    if glob_exists("/lib/ld-musl-*") {
+        "musl".into()
+    } else {
+        "gnu".into()
+    }
+}
+
+fn glob_exists(pattern: &str) -> bool {
+    glob::glob(pattern)
+        .ok()
+        .map(|paths| paths.flatten().next().is_some())
+        .unwrap_or(false)
+}
+
+fn map_arch(raw: &str) -> String {
+    match raw {
+        "x86_64" | "x86" | "amd64" => "x64".into(),
+        "aarch64" | "arm64" => "arm64".into(),
+        other => other.into(),
     }
 }
 
@@ -159,12 +312,68 @@ pub enum Backend {
 
 impl Backend {
     /// run_script executes one `run:` step and returns Ok(true) on exit code 0.
-    /// A returned Err of kind StepTimeout means the step exceeded its timeout
-    /// and its process/container was killed — the caller should abort the job.
-    pub async fn run_script(&self, api: &ApiClient, job_id: &str, step: &StepSpec) -> Result<bool> {
+    pub async fn run_script(
+        &self,
+        api: &ApiClient,
+        job_id: &str,
+        step: &StepSpec,
+        env: &JobEnv,
+    ) -> Result<bool> {
         match self {
-            Backend::Container(c) => c.run_script(api, job_id, step).await,
-            Backend::Host(h) => h.run_script(api, job_id, step).await,
+            Backend::Container(c) => c.run_script(api, job_id, step, env).await,
+            Backend::Host(h) => h.run_script(api, job_id, step, env).await,
+        }
+    }
+
+    /// run_internal executes a runner-synthesized script with streaming logs.
+    pub async fn run_internal(
+        &self,
+        api: &ApiClient,
+        job_id: &str,
+        label: &str,
+        script: &str,
+        env: &JobEnv,
+        timeout_minutes: u64,
+    ) -> Result<bool> {
+        match self {
+            Backend::Container(c) => {
+                c.run_internal(api, job_id, label, script, env, timeout_minutes)
+                    .await
+            }
+            Backend::Host(h) => {
+                h.run_internal(api, job_id, label, script, env, timeout_minutes)
+                    .await
+            }
+        }
+    }
+
+    /// capture runs `script` and returns (success, trimmed stdout) without streaming.
+    #[allow(dead_code)]
+    pub async fn capture(&self, script: &str, env: &JobEnv) -> Result<(bool, String)> {
+        match self {
+            Backend::Container(c) => c.capture(script, env).await,
+            Backend::Host(h) => h.capture(script, env).await,
+        }
+    }
+
+    pub fn tool_mount(&self) -> &Path {
+        match self {
+            Backend::Container(c) => &c.tool_mount,
+            Backend::Host(h) => &h.tools,
+        }
+    }
+
+    pub fn state_mount(&self) -> &Path {
+        match self {
+            Backend::Container(c) => &c.state_mount,
+            Backend::Host(h) => &h.state,
+        }
+    }
+
+    pub async fn probe(&self) -> Result<Platform> {
+        match self {
+            Backend::Container(c) => c.probe().await,
+            Backend::Host(h) => h.probe().await,
         }
     }
 }
@@ -180,16 +389,21 @@ pub struct ContainerBackend {
     docker: Docker,
     container_id: String,
     os: RunnerOS,
+    tool_mount: PathBuf,
+    state_mount: PathBuf,
 }
 
 impl ContainerBackend {
     /// start connects to Docker, pulls the image, and launches an idle
     /// container with the workspace bind-mounted and the base env applied.
+    #[allow(clippy::too_many_arguments)]
     pub async fn start(
         api: &ApiClient,
         job_id: &str,
         image: &str,
         workspace_abs: &Path,
+        tools_abs: &Path,
+        state_abs: &Path,
         base_env: &[(String, String)],
         os: RunnerOS,
         limits: ResourceLimits,
@@ -206,9 +420,6 @@ impl ContainerBackend {
             from_image: image.to_string(),
             ..Default::default()
         };
-        // Bound the pull: create_image streams layers and would otherwise block
-        // start() forever on a wedged registry — and start() runs before any
-        // per-step timeout, so nothing else would interrupt it.
         let pull = async {
             let mut stream = docker.create_image(Some(opts), None, None);
             while let Some(item) = stream.next().await {
@@ -221,9 +432,15 @@ impl ContainerBackend {
             .context("timed out pulling container image")??;
 
         let mount = container_mount(os);
-        let bind = format!("{}:{mount}", workspace_abs.display());
+        let tool_m = container_tool_mount(os);
+        let state_m = container_state_mount(os);
+        let binds = vec![
+            format!("{}:{mount}", bind_path(workspace_abs)),
+            format!("{}:{tool_m}:ro", bind_path(tools_abs)),
+            format!("{}:{state_m}", bind_path(state_abs)),
+        ];
         let mut host_config = bollard::models::HostConfig {
-            binds: Some(vec![bind]),
+            binds: Some(binds),
             ..Default::default()
         };
         limits.apply(&mut host_config, os);
@@ -250,20 +467,117 @@ impl ContainerBackend {
             docker,
             container_id: created.id,
             os,
+            tool_mount: PathBuf::from(tool_m),
+            state_mount: PathBuf::from(state_m),
         })
     }
 
-    /// run_script execs the step's script inside the container, streaming
-    /// combined stdout/stderr to the job log. Ok(true) on exit code 0.
-    async fn run_script(&self, api: &ApiClient, job_id: &str, step: &StepSpec) -> Result<bool> {
-        let env: Vec<String> = step.env.iter().map(|(k, v)| format!("{k}={v}")).collect();
+    async fn run_script(
+        &self,
+        api: &ApiClient,
+        job_id: &str,
+        step: &StepSpec,
+        env: &JobEnv,
+    ) -> Result<bool> {
+        self.exec(api, job_id, &step.run, env, step, step_timeout(step))
+            .await
+    }
+
+    async fn run_internal(
+        &self,
+        api: &ApiClient,
+        job_id: &str,
+        label: &str,
+        script: &str,
+        env: &JobEnv,
+        timeout_minutes: u64,
+    ) -> Result<bool> {
+        let _ = api
+            .append_log(job_id, format!("[runner] {label}\n").into_bytes())
+            .await;
+        let mins = if timeout_minutes > 0 {
+            timeout_minutes
+        } else {
+            INTERNAL_INSTALL_TIMEOUT_MINS
+        };
+        let fake_step = internal_step(label, mins);
+        self.exec(
+            api,
+            job_id,
+            script,
+            env,
+            &fake_step,
+            Duration::from_secs(60 * mins),
+        )
+        .await
+    }
+
+    async fn capture(&self, script: &str, env: &JobEnv) -> Result<(bool, String)> {
+        let preamble = env.path_preamble(self.os);
+        let wrapped = wrap_script(self.os, &preamble, script);
+        let empty = internal_step("capture", 5);
         let exec = self
             .docker
             .create_exec(
                 &self.container_id,
                 CreateExecOptions::<String> {
-                    cmd: Some(container_exec_argv(self.os, &step.run)),
-                    env: Some(env),
+                    cmd: Some(container_exec_argv(self.os, "", &wrapped)),
+                    env: Some(format_env(env, &empty)),
+                    working_dir: Some(container_mount(self.os).to_string()),
+                    attach_stdout: Some(true),
+                    attach_stderr: Some(false),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        let start = self.docker.start_exec(&exec.id, None).await?;
+        let mut out = String::new();
+        if let StartExecResults::Attached { mut output, .. } = start {
+            while let Some(item) = output.next().await {
+                let msg = item?;
+                if let LogOutput::StdOut { message } = msg {
+                    out.push_str(&String::from_utf8_lossy(&message));
+                }
+            }
+        }
+        let inspect = self.docker.inspect_exec(&exec.id).await?;
+        Ok((inspect.exit_code.unwrap_or(1) == 0, out.trim().to_string()))
+    }
+
+    async fn probe(&self) -> Result<Platform> {
+        let script = "uname -m\nif [ -n \"$(ls /lib/ld-musl-* 2>/dev/null)\" ]; then echo musl; else echo gnu; fi\n";
+        let (ok, out) = self.capture(script, &JobEnv::default()).await?;
+        if !ok {
+            anyhow::bail!("platform probe failed");
+        }
+        let mut lines = out.lines();
+        let arch_raw = lines.next().unwrap_or("x86_64");
+        let libc = lines.next().unwrap_or("gnu");
+        Ok(Platform {
+            os: self.os,
+            arch: map_arch(arch_raw),
+            libc: libc.to_string(),
+        })
+    }
+
+    async fn exec(
+        &self,
+        api: &ApiClient,
+        job_id: &str,
+        script: &str,
+        env: &JobEnv,
+        step: &StepSpec,
+        timeout: Duration,
+    ) -> Result<bool> {
+        let preamble = env.path_preamble(self.os);
+        let env_pairs = format_env(env, step);
+        let exec = self
+            .docker
+            .create_exec(
+                &self.container_id,
+                CreateExecOptions::<String> {
+                    cmd: Some(container_exec_argv(self.os, &preamble, script)),
+                    env: Some(env_pairs),
                     working_dir: Some(container_mount(self.os).to_string()),
                     attach_stdout: Some(true),
                     attach_stderr: Some(true),
@@ -272,14 +586,9 @@ impl ContainerBackend {
             )
             .await?;
 
-        let drained =
-            tokio::time::timeout(step_timeout(step), self.drain(api, job_id, &exec.id)).await;
+        let drained = tokio::time::timeout(timeout, self.drain(api, job_id, &exec.id)).await;
         match drained {
             Err(_) => {
-                // Docker has no "kill exec" API and the process keeps running in
-                // the container after the timeout future is dropped. Kill the
-                // whole container to stop it now; StepTimeout tells the caller to
-                // abort remaining steps (a dead container can't run them).
                 let _ = api
                     .append_log(
                         job_id,
@@ -353,23 +662,127 @@ impl Drop for ContainerBackend {
 /// are intentionally unlimited — there is no cgroup; the VM size is the bound.
 pub struct HostBackend {
     workspace: PathBuf,
-    base_env: Vec<(String, String)>,
+    tools: PathBuf,
+    state: PathBuf,
     os: RunnerOS,
 }
 
 impl HostBackend {
-    pub fn new(workspace: PathBuf, base_env: Vec<(String, String)>, os: RunnerOS) -> Self {
+    pub fn new(workspace: PathBuf, tools: PathBuf, state: PathBuf, os: RunnerOS) -> Self {
         Self {
             workspace,
-            base_env,
+            tools,
+            state,
             os,
         }
     }
 
-    /// run_script spawns the step's script in the host shell, streams its
-    /// stdout+stderr to the job log, and kills the whole process tree on
-    /// timeout. Ok(true) on exit code 0.
-    async fn run_script(&self, api: &ApiClient, job_id: &str, step: &StepSpec) -> Result<bool> {
+    async fn run_script(
+        &self,
+        api: &ApiClient,
+        job_id: &str,
+        step: &StepSpec,
+        env: &JobEnv,
+    ) -> Result<bool> {
+        let preamble = env.path_preamble(self.os);
+        self.spawn_and_wait(
+            api,
+            job_id,
+            &wrap_script(self.os, &preamble, &step.run),
+            env,
+            step,
+        )
+        .await
+    }
+
+    async fn run_internal(
+        &self,
+        api: &ApiClient,
+        job_id: &str,
+        label: &str,
+        script: &str,
+        env: &JobEnv,
+        timeout_minutes: u64,
+    ) -> Result<bool> {
+        let _ = api
+            .append_log(job_id, format!("[runner] {label}\n").into_bytes())
+            .await;
+        let mins = if timeout_minutes > 0 {
+            timeout_minutes
+        } else {
+            INTERNAL_INSTALL_TIMEOUT_MINS
+        };
+        let step = internal_step(label, mins);
+        let preamble = env.path_preamble(self.os);
+        self.spawn_and_wait(
+            api,
+            job_id,
+            &wrap_script(self.os, &preamble, script),
+            env,
+            &step,
+        )
+        .await
+    }
+
+    #[allow(dead_code)]
+    async fn capture(&self, script: &str, env: &JobEnv) -> Result<(bool, String)> {
+        let preamble = env.path_preamble(self.os);
+        let wrapped = wrap_script(self.os, &preamble, script);
+        let step = internal_step("capture", 5);
+        let programs: &[&str] = match self.os {
+            RunnerOS::Windows => &["pwsh", "powershell"],
+            RunnerOS::MacOS => &["bash"],
+            RunnerOS::Linux => &["sh"],
+        };
+        for prog in programs {
+            if let Ok(out) = self
+                .build_command(prog, &wrapped, env, &step)
+                .output()
+                .await
+            {
+                let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                return Ok((out.status.success(), stdout));
+            }
+        }
+        Ok((false, String::new()))
+    }
+
+    async fn probe(&self) -> Result<Platform> {
+        match self.os {
+            RunnerOS::Windows => {
+                let arch =
+                    std::env::var("PROCESSOR_ARCHITECTURE").unwrap_or_else(|_| "AMD64".into());
+                let arch = match arch.as_str() {
+                    "ARM64" => "arm64",
+                    _ => "x64",
+                };
+                Ok(Platform {
+                    os: RunnerOS::Windows,
+                    arch: arch.into(),
+                    libc: "msvc".into(),
+                })
+            }
+            RunnerOS::MacOS => Ok(Platform {
+                os: RunnerOS::MacOS,
+                arch: crate::toolcache::runner_arch().to_string(),
+                libc: "darwin".into(),
+            }),
+            RunnerOS::Linux => Ok(Platform {
+                os: RunnerOS::Linux,
+                arch: crate::toolcache::runner_arch().to_string(),
+                libc: detect_libc(),
+            }),
+        }
+    }
+
+    async fn spawn_and_wait(
+        &self,
+        api: &ApiClient,
+        job_id: &str,
+        script: &str,
+        env: &JobEnv,
+        step: &StepSpec,
+    ) -> Result<bool> {
         // Windows prefers pwsh (PowerShell 7); fall back to the built-in
         // powershell if pwsh isn't installed. Other OSes have a single shell.
         let programs: &[&str] = match self.os {
@@ -381,7 +794,7 @@ impl HostBackend {
         let mut child = None;
         let mut last_err = None;
         for prog in programs {
-            match self.build_command(prog, step).spawn() {
+            match self.build_command(prog, script, env, step).spawn() {
                 Ok(c) => {
                     child = Some(c);
                     break;
@@ -435,17 +848,14 @@ impl HostBackend {
         }
     }
 
-    /// build_command assembles a fresh tokio Command for one spawn attempt:
-    /// shell + script, cwd = workspace, env = base (job env + secrets) then step
-    /// env overrides. The runner's own environment is inherited (PATH, etc.).
-    fn build_command(&self, program: &str, step: &StepSpec) -> Command {
+    fn build_command(&self, program: &str, script: &str, env: &JobEnv, step: &StepSpec) -> Command {
         let mut cmd = Command::new(program);
         for arg in shell_args(self.os) {
             cmd.arg(arg);
         }
-        cmd.arg(wrap_script(self.os, &step.run));
+        cmd.arg(script);
         cmd.current_dir(&self.workspace);
-        for (k, v) in &self.base_env {
+        for (k, v) in env.pairs() {
             cmd.env(k, v);
         }
         for (k, v) in &step.env {
@@ -454,8 +864,6 @@ impl HostBackend {
         cmd.stdin(Stdio::null());
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
-        // Own process group so a timeout can kill the step's whole subtree
-        // (the shell plus anything it spawned), not just the shell.
         #[cfg(unix)]
         cmd.process_group(0);
         cmd
@@ -561,19 +969,59 @@ fn idle_cmd(os: RunnerOS) -> Vec<String> {
     }
 }
 
-/// container_exec_argv is the argv that runs `script` inside the container.
-fn container_exec_argv(os: RunnerOS, script: &str) -> Vec<String> {
+fn container_tool_mount(os: RunnerOS) -> &'static str {
     match os {
-        // PowerShell (present in the servercore base images, like idle_cmd's
-        // cmd) with the same stop-on-error preamble the host backend uses, so a
-        // failing command aborts the step instead of running on like `cmd /C`.
+        RunnerOS::Windows => "C:\\wuling\\tools",
+        _ => "/opt/wuling/tools",
+    }
+}
+
+fn container_state_mount(os: RunnerOS) -> &'static str {
+    match os {
+        RunnerOS::Windows => "C:\\wuling\\state",
+        _ => "/opt/wuling/state",
+    }
+}
+
+fn bind_path(p: &Path) -> String {
+    let s = p.display().to_string();
+    s.strip_prefix(r"\\?\").unwrap_or(&s).to_string()
+}
+
+fn format_env(env: &JobEnv, step: &StepSpec) -> Vec<String> {
+    let mut pairs = env.pairs();
+    for (k, v) in &step.env {
+        if let Some(entry) = pairs.iter_mut().find(|(ek, _)| ek == k) {
+            entry.1 = v.clone();
+        } else {
+            pairs.push((k.clone(), v.clone()));
+        }
+    }
+    pairs.iter().map(|(k, v)| format!("{k}={v}")).collect()
+}
+
+fn internal_step(label: &str, timeout_minutes: u64) -> StepSpec {
+    StepSpec {
+        name: label.to_string(),
+        run: String::new(),
+        uses: String::new(),
+        with: Default::default(),
+        env: Default::default(),
+        if_: String::new(),
+        timeout_minutes,
+    }
+}
+
+/// container_exec_argv is the argv that runs `script` inside the container.
+fn container_exec_argv(os: RunnerOS, preamble: &str, script: &str) -> Vec<String> {
+    match os {
         RunnerOS::Windows => {
             let mut argv = vec!["powershell".to_string()];
             argv.extend(shell_args(os).iter().map(|s| s.to_string()));
-            argv.push(wrap_script(os, script));
+            argv.push(wrap_script(os, preamble, script));
             argv
         }
-        _ => vec!["sh".into(), "-ec".into(), script.to_string()],
+        _ => vec!["sh".into(), "-ec".into(), wrap_script(os, preamble, script)],
     }
 }
 
@@ -586,12 +1034,11 @@ fn shell_args(os: RunnerOS) -> &'static [&'static str] {
     }
 }
 
-/// wrap_script adapts the user's script for the host shell. PowerShell needs an
-/// explicit stop-on-error preamble to behave like `set -e`.
-fn wrap_script(os: RunnerOS, script: &str) -> String {
+/// wrap_script adapts the user's script for the host shell.
+fn wrap_script(os: RunnerOS, preamble: &str, script: &str) -> String {
     match os {
-        RunnerOS::Windows => format!("$ErrorActionPreference = 'Stop';\n{script}"),
-        _ => script.to_string(),
+        RunnerOS::Windows => format!("$ErrorActionPreference = 'Stop';\n{preamble}{script}"),
+        _ => format!("{preamble}{script}"),
     }
 }
 

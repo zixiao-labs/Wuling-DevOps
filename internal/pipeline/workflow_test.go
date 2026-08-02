@@ -231,3 +231,64 @@ func TestOnScalarAndList(t *testing.T) {
 		t.Error("list `on` did not set both triggers")
 	}
 }
+
+func TestSupportedSetupActions(t *testing.T) {
+	const src = `
+name: CI
+on: push
+jobs:
+  a:
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+      - uses: actions/setup-rust
+        with:
+          toolchain: file
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10"
+`
+	if _, err := Parse([]byte(src)); err != nil {
+		t.Fatalf("Parse setup actions: %v", err)
+	}
+}
+
+func TestValidateActionInputsRejectsUnknownKey(t *testing.T) {
+	const src = `
+name: CI
+on: push
+jobs:
+  a:
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          fetch-depth: "1"
+`
+	if _, err := Parse([]byte(src)); err == nil {
+		t.Fatal("expected unknown with key to fail validation")
+	}
+}
+
+func TestCheckoutWithExtraWithKeysStillValid(t *testing.T) {
+	const src = `
+name: CI
+on: push
+jobs:
+  a:
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: "1"
+          submodules: "true"
+`
+	if _, err := Parse([]byte(src)); err != nil {
+		t.Fatalf("checkout with extra with keys should parse: %v", err)
+	}
+}
