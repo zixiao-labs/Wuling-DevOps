@@ -61,6 +61,20 @@ pub struct Config {
     /// target, so it rarely needs setting by hand.
     #[arg(long, env = "WULING_RUNNER_OS", default_value = "")]
     pub os: String,
+
+    /// vCPU cap applied to each job container (docker --cpus). 0 = unlimited.
+    /// Injected by the autoscaler from the pool's tier.
+    #[arg(long, env = "WULING_RUNNER_CPUS", default_value_t = 0.0)]
+    pub cpus: f64,
+
+    /// Memory cap for each job container: "8Gi" / "512Mi" / "2g" / raw bytes.
+    /// Empty = unlimited.
+    #[arg(long, env = "WULING_RUNNER_MEMORY", default_value = "")]
+    pub memory: String,
+
+    /// Max PIDs per job container (fork-bomb guard). 0 = daemon default.
+    #[arg(long, env = "WULING_RUNNER_PIDS_LIMIT", default_value_t = 0)]
+    pub pids_limit: i64,
 }
 
 /// default_os reports the OS this binary was compiled for, used when --os is

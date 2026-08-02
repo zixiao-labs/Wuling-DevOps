@@ -255,6 +255,9 @@ Runner/Autoscaler 配置。控制面用 libgit2 直接读该 blob（带 TTL 缓�
    `[powershell]` 必须是第一行且行首无空格；user-data **只能是半角字符**；并且初始化阶段**不能往
    `C:\Users` 下写**（那时还没有用户登录、profile 未挂载）——所以 `runner.env` 一律放
    `C:\ProgramData\wuling-runner\`。Base64 编码前原文上限 32 KB。
+
+   阿里云 Windows 自定义镜像必须是 **Sysprep 泛化**过的，否则 Vminit 认为实例不是首次启动、
+   不会执行 user-data（症状与包装错误相同：实例起来但 runner 永远不上线）。
 4. **缩容**：`ephemeral` 且 `provider==该池` 的 runner，若**空闲（无运行中 job）时长 > `idle_timeout`**
    且池内存活数 > `min`，调用 `Provider.Terminate(externalID)` 释放并删除 runner 行。
 5. `min` 维持热备：池内存活不足 `min` 时补足（即便当前无排队）。
@@ -264,7 +267,7 @@ Provider 接口（`internal/autoscale`）：
 ```go
 type Provider interface {
     Name() string
-    Launch(ctx context.Context, spec LaunchSpec) (InstanceRef, error)
+    Launch(ctx context.Context, spec LaunchSpec) (Instance, error)
     Terminate(ctx context.Context, externalID string) error
 }
 ```
@@ -283,8 +286,15 @@ type Provider interface {
 > 时即返回 “not supported” 错误，Autoscaler 记录告警并**跳过该池**（不影响 aws/aliyun 池），在置备
 > 补齐前不会拉起任何实例。
 
-每个从 `LaunchSpec`（tier→CPU/内存/存储、镜像/模板、网络、注入脚本）创建一台临时机。
-凭证从 org Secret（`credentials_secret`）解密注入，不落盘、不出网。
+每个从 `LaunchSpec` 创建一台临时机。`tiers` 字段与各 provider 的映射：
+
+| tier 字段 | 阿里云 ECS | 容器限制（runner.env） |
+|----|----|----|
+| `storage` | `SystemDisk.Size`（GiB）；池级 `system_disk_size` 可覆盖 | —（VM 根盘即存储边界，不做 per-container `--storage-opt`） |
+| `cpu` / `memory` | 池级 `instance_type` 或 `instance_types`（按序回退，售罄时试下一个） | `WULING_RUNNER_CPUS` / `WULING_RUNNER_MEMORY`（内存预留 15% 或至少 1Gi 给 runner 与 OS） |
+| — | — | `WULING_RUNNER_PIDS_LIMIT=4096`（fork-bomb 防护，Linux 容器生效） |
+
+凭证从 org Secret（`credentials_secret`；阿里云 Windows 另需 `password_secret`）解密注入，不落盘、不出网。
 
 > 注意：云 provider 的真实调用需各自的账号/镜像模板/网络资源，**无法在本地无凭证集成测试**。
 > 仓库内附带的是契约 + 单元测试（config 解析/校验、调度数学、签名拼装）；真机验证需在目标云上做。
@@ -333,11 +343,27 @@ Autoscaler 注入的 `runner.env`（Linux 在 `/etc/wuling-runner/`、`chmod 600
 | `WULING_RUNNER_NAME` | Autoscaler 生成的 runner 名 |
 | `WULING_RUNNER_LABELS` | 池的 `labels` |
 | `WULING_RUNNER_CONCURRENCY` | 固定 `1`（一机一并发，便于按需伸缩） |
+| `WULING_RUNNER_CPUS` | 池 tier 的 vCPU 上限（注入 job 容器 `--cpus`；0/缺省 = 不限） |
+| `WULING_RUNNER_MEMORY` | 池 tier 内存上限减 host 预留（15% 或至少 1Gi）；注入 job 容器 |
+| `WULING_RUNNER_PIDS_LIMIT` | 固定 `4096`（Linux 容器 fork-bomb 防护；Windows 容器/宿主执行不适用） |
+
+宿主直接执行的 job（macOS、未声明 `container:` 的 Windows）不受上述容器限制约束。
 
 runner 二进制还认 `WULING_RUNNER_OS`（默认取构建目标：win/mac 构建自识别）、`WULING_RUNNER_DEFAULT_IMAGE`
 （容器执行且 job 未声明 `container:` 时的默认镜像）、`WULING_RUNNER_WORK_DIR`、`WULING_RUNNER_POLL_INTERVAL`
-等开关（`wuling-runner --help` 有全量列表）。**手动注册的 static runner** 同理备机，只是改用
-`--registration-token`（UI 生成）换取 token，而非由 Autoscaler 注入。
+等开关（`wuling-runner --help` 有全量列表）。Autoscaler 注入的 `WULING_RUNNER_CPUS` /
+`WULING_RUNNER_MEMORY` / `WULING_RUNNER_PIDS_LIMIT` 仅在有 tier 定义的池生效。**手动注册的 static runner**
+同理备机，只是改用 `--registration-token`（UI 生成）换取 token，而非由 Autoscaler 注入。
+
+### 7.2 限流与重试
+
+阿里云 ECS provider 对可幂等的 RPC（`RunInstances` 带 `ClientToken`、`DeleteInstance`）做有限次重试：
+
+- **ClientToken 幂等**：`ClientToken = runner UUID`。客户端超时后重试会返回**第一次**调用创建的实例 id，避免重复计费。
+- **可重试错误**：HTTP 429 `Throttling.*`、5xx `InternalError` / `ServiceUnavailable`、网络无响应。退避为全抖动指数退避（500ms 起，上限 8s）。
+- **不可重试 / 库存拒绝**：`OperationDenied.NoStock` 等库存/配额错误不会在同一次 launch 内无限重试；若池配置了 `instance_types` 则按序试下一个规格，全部失败后 reconciler 对该池施加**冷却**（默认 1m 起，指数翻倍至 15m；库存拒绝直接 15m），避免每 20s tick 打满 ECS 限流。
+- **签名_nonce 必须变、业务参数必须不变**：重试时只刷新 `SignatureNonce` / `Timestamp` / `Signature`；`ClientToken` 与其它 RunInstances 参数必须字节级一致，否则 ECS 返回 `IdempotentParameterMismatch`。
+- **单次 launch 预算 90s**：含最多 3 次 RPC 尝试（每次 HTTP 超时 20s），避免一个 org 的 retry 链阻塞其它 org 的缩容。
 
 ---
 

@@ -54,6 +54,103 @@ impl RunnerOS {
     }
 }
 
+/// ResourceLimits caps one job container's CPU, memory and process count.
+/// Values come from the pool's tier (injected as WULING_RUNNER_CPUS /
+/// WULING_RUNNER_MEMORY by the autoscaler's user-data), so a runaway job can't
+/// starve the runner process it shares the VM with. Zero fields mean "no
+/// limit" — a hand-registered static runner keeps its Stage-1 behavior.
+///
+/// Host-backend jobs (macOS always, Windows without `container:`) are NOT
+/// limited: there is no cgroup to attach to. The VM's own size is the bound.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ResourceLimits {
+    pub cpus: f64,
+    pub memory_bytes: i64,
+    pub pids_limit: i64,
+}
+
+impl ResourceLimits {
+    /// from_config builds limits from the parsed CLI/env config, ignoring
+    /// values that don't parse rather than refusing to start.
+    pub fn from_config(cpus: f64, memory: &str, pids_limit: i64) -> Self {
+        Self {
+            cpus: if cpus > 0.0 { cpus } else { 0.0 },
+            memory_bytes: parse_memory(memory).unwrap_or(0),
+            pids_limit: if pids_limit > 0 { pids_limit } else { 0 },
+        }
+    }
+
+    /// apply writes the limits onto a Docker HostConfig.
+    pub fn apply(&self, hc: &mut bollard::models::HostConfig, os: RunnerOS) {
+        if self.memory_bytes > 0 {
+            hc.memory = Some(self.memory_bytes);
+            if os != RunnerOS::Windows {
+                hc.memory_swap = Some(self.memory_bytes);
+            }
+        }
+        if self.cpus > 0.0 {
+            match os {
+                RunnerOS::Windows => hc.cpu_count = Some(self.cpus.ceil() as i64),
+                _ => hc.nano_cpus = Some((self.cpus * 1e9) as i64),
+            }
+        }
+        if self.pids_limit > 0 && os != RunnerOS::Windows {
+            hc.pids_limit = Some(self.pids_limit);
+        }
+    }
+}
+
+/// parse_memory turns "8Gi" / "512Mi" / "2g" / "1073741824" into bytes.
+/// Binary suffixes (Ki/Mi/Gi) are 1024-based, decimal ones (k/m/g) 1000-based;
+/// a bare number is bytes. None on anything unparseable.
+pub fn parse_memory(s: &str) -> Option<i64> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let lower = s.to_ascii_lowercase();
+    let (num_str, mult) = if let Some(rest) = lower.strip_suffix("tib") {
+        (rest, 1024i64.pow(4))
+    } else if let Some(rest) = lower.strip_suffix("gib") {
+        (rest, 1024i64.pow(3))
+    } else if let Some(rest) = lower.strip_suffix("mib") {
+        (rest, 1024i64.pow(2))
+    } else if let Some(rest) = lower.strip_suffix("kib") {
+        (rest, 1024)
+    } else if let Some(rest) = lower.strip_suffix("ti") {
+        (rest, 1024i64.pow(4))
+    } else if let Some(rest) = lower.strip_suffix("gi") {
+        (rest, 1024i64.pow(3))
+    } else if let Some(rest) = lower.strip_suffix("mi") {
+        (rest, 1024i64.pow(2))
+    } else if let Some(rest) = lower.strip_suffix("ki") {
+        (rest, 1024)
+    } else if let Some(rest) = lower.strip_suffix("tb") {
+        (rest, 1000i64.pow(4))
+    } else if let Some(rest) = lower.strip_suffix("gb") {
+        (rest, 1000i64.pow(3))
+    } else if let Some(rest) = lower.strip_suffix("mb") {
+        (rest, 1000i64.pow(2))
+    } else if let Some(rest) = lower.strip_suffix("kb") {
+        (rest, 1000)
+    } else if let Some(rest) = lower.strip_suffix('t') {
+        (rest, 1000i64.pow(4))
+    } else if let Some(rest) = lower.strip_suffix('g') {
+        (rest, 1000i64.pow(3))
+    } else if let Some(rest) = lower.strip_suffix('m') {
+        (rest, 1000i64.pow(2))
+    } else if let Some(rest) = lower.strip_suffix('k') {
+        (rest, 1000)
+    } else {
+        (lower.as_str(), 1)
+    };
+    let n: f64 = num_str.trim().parse().ok()?;
+    if n < 0.0 {
+        return None;
+    }
+    Some((n * mult as f64) as i64)
+}
+
 /// Backend is a job's chosen execution environment for `run:` steps.
 pub enum Backend {
     Container(ContainerBackend),
@@ -95,6 +192,7 @@ impl ContainerBackend {
         workspace_abs: &Path,
         base_env: &[(String, String)],
         os: RunnerOS,
+        limits: ResourceLimits,
     ) -> Result<Self> {
         let docker = Docker::connect_with_local_defaults().context("connect to docker")?;
 
@@ -124,10 +222,11 @@ impl ContainerBackend {
 
         let mount = container_mount(os);
         let bind = format!("{}:{mount}", workspace_abs.display());
-        let host_config = bollard::models::HostConfig {
+        let mut host_config = bollard::models::HostConfig {
             binds: Some(vec![bind]),
             ..Default::default()
         };
+        limits.apply(&mut host_config, os);
         let env: Vec<String> = base_env.iter().map(|(k, v)| format!("{k}={v}")).collect();
         let config = Config {
             image: Some(image.to_string()),
@@ -250,7 +349,8 @@ impl Drop for ContainerBackend {
 // ----------------------------------------------------------------------------
 
 /// HostBackend runs steps directly on the runner host (no container). Used on
-/// macOS always, and on Windows when the job sets no `container:`.
+/// macOS always, and on Windows when the job sets no `container:`. Host jobs
+/// are intentionally unlimited — there is no cgroup; the VM size is the bound.
 pub struct HostBackend {
     workspace: PathBuf,
     base_env: Vec<(String, String)>,
@@ -492,5 +592,52 @@ fn wrap_script(os: RunnerOS, script: &str) -> String {
     match os {
         RunnerOS::Windows => format!("$ErrorActionPreference = 'Stop';\n{script}"),
         _ => script.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_memory_table() {
+        assert_eq!(parse_memory("8Gi"), Some(8 * 1024 * 1024 * 1024));
+        assert_eq!(parse_memory("512Mi"), Some(512 * 1024 * 1024));
+        assert_eq!(parse_memory("2g"), Some(2_000_000_000));
+        assert_eq!(parse_memory("1024"), Some(1024));
+        assert_eq!(parse_memory(""), None);
+        assert_eq!(parse_memory("abc"), None);
+    }
+
+    #[test]
+    fn apply_linux_sets_nano_cpus_and_memory_swap() {
+        let limits = ResourceLimits {
+            cpus: 2.0,
+            memory_bytes: 1024,
+            pids_limit: 100,
+        };
+        let mut hc = bollard::models::HostConfig::default();
+        limits.apply(&mut hc, RunnerOS::Linux);
+        assert_eq!(hc.nano_cpus, Some(2_000_000_000));
+        assert_eq!(hc.memory, Some(1024));
+        assert_eq!(hc.memory_swap, Some(1024));
+        assert_eq!(hc.pids_limit, Some(100));
+        assert!(hc.cpu_count.is_none());
+    }
+
+    #[test]
+    fn apply_windows_sets_cpu_count_not_pids() {
+        let limits = ResourceLimits {
+            cpus: 1.5,
+            memory_bytes: 2048,
+            pids_limit: 100,
+        };
+        let mut hc = bollard::models::HostConfig::default();
+        limits.apply(&mut hc, RunnerOS::Windows);
+        assert_eq!(hc.cpu_count, Some(2));
+        assert_eq!(hc.memory, Some(2048));
+        assert!(hc.memory_swap.is_none());
+        assert!(hc.nano_cpus.is_none());
+        assert!(hc.pids_limit.is_none());
     }
 }

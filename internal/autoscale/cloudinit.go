@@ -15,7 +15,7 @@ import (
 // The script writes that env file with the injected token + server URL, then
 // starts the unit. The wlrt_ token is passed directly so the VM authenticates
 // without a register round-trip — the autoscaler already owns the runner row.
-func BuildUserData(serverURL, token string, pool Pool, runnerName string) string {
+func BuildUserData(serverURL, token string, pool Pool, tier TierSpec, runnerName string) string {
 	labels := strings.Join(pool.Labels, ",")
 	var b strings.Builder
 	b.WriteString("#!/bin/bash\n")
@@ -30,6 +30,7 @@ func BuildUserData(serverURL, token string, pool Pool, runnerName string) string
 	fmt.Fprintf(&b, "WULING_RUNNER_NAME=%s\n", runnerName)
 	fmt.Fprintf(&b, "WULING_RUNNER_LABELS=%s\n", labels)
 	b.WriteString("WULING_RUNNER_CONCURRENCY=1\n")
+	writeTierResourceLimits(&b, tier)
 	b.WriteString("WULING_EOF\n")
 	b.WriteString("chmod 600 /etc/wuling-runner/runner.env\n")
 	b.WriteString("systemctl enable --now wuling-runner.service\n")
@@ -40,11 +41,11 @@ func BuildUserData(serverURL, token string, pool Pool, runnerName string) string
 // *and* provider: Linux cloud-init/bash (BuildUserData) or Windows PowerShell
 // (BuildWindowsUserData). An empty/unknown OS is treated as linux. macOS pools
 // are rejected at config validation, so they never reach here.
-func BuildUserDataForPool(serverURL, token string, pool Pool, runnerName string) string {
+func BuildUserDataForPool(serverURL, token string, pool Pool, tier TierSpec, runnerName string) string {
 	if pool.OS == model.OSWindows {
-		return BuildWindowsUserData(serverURL, token, pool, runnerName)
+		return BuildWindowsUserData(serverURL, token, pool, tier, runnerName)
 	}
-	return BuildUserData(serverURL, token, pool, runnerName)
+	return BuildUserData(serverURL, token, pool, tier, runnerName)
 }
 
 // windowsUserDataWrapper returns the prologue and epilogue a provider's Windows
@@ -61,7 +62,7 @@ func BuildUserDataForPool(serverURL, token string, pool Pool, runnerName string)
 // Anything else (a Proxmox/vCenter template running cloudbase-init, say) gets
 // the AWS-style tags, which is what cloudbase-init also accepts.
 func windowsUserDataWrapper(provider string) (prologue, epilogue string) {
-	if provider == "aliyun" {
+	if provider == ProviderAliyun {
 		return "[powershell]\n", ""
 	}
 	return "<powershell>\n", "</powershell>\n"
@@ -79,7 +80,7 @@ func windowsUserDataWrapper(provider string) (prologue, epilogue string) {
 // documents that user-data running at init time cannot write anywhere under
 // C:\Users, because no user has logged in yet and the profile tree is not
 // mounted. ProgramData is machine-scoped and always present.
-func BuildWindowsUserData(serverURL, token string, pool Pool, runnerName string) string {
+func BuildWindowsUserData(serverURL, token string, pool Pool, tier TierSpec, runnerName string) string {
 	labels := strings.Join(pool.Labels, ",")
 	prologue, epilogue := windowsUserDataWrapper(pool.Provider)
 	var b strings.Builder
@@ -96,6 +97,7 @@ func BuildWindowsUserData(serverURL, token string, pool Pool, runnerName string)
 	fmt.Fprintf(&b, "WULING_RUNNER_NAME=%s\n", runnerName)
 	fmt.Fprintf(&b, "WULING_RUNNER_LABELS=%s\n", labels)
 	b.WriteString("WULING_RUNNER_CONCURRENCY=1\n")
+	writeTierResourceLimits(&b, tier)
 	b.WriteString("'@\n")
 	b.WriteString("Set-Content -Path \"$dir\\runner.env\" -Value $runnerEnv -Encoding ascii\n")
 	// The env file holds the runner's bearer token — restrict it to Administrators
@@ -106,4 +108,18 @@ func BuildWindowsUserData(serverURL, token string, pool Pool, runnerName string)
 	b.WriteString("& schtasks /Run /TN 'wuling-runner'\n")
 	b.WriteString(epilogue)
 	return b.String()
+}
+
+func writeTierResourceLimits(b *strings.Builder, tier TierSpec) {
+	cpus, memory := tier.ContainerLimits()
+	if cpus == 0 && memory == "" {
+		return
+	}
+	if cpus > 0 {
+		fmt.Fprintf(b, "WULING_RUNNER_CPUS=%d\n", cpus)
+	}
+	if memory != "" {
+		fmt.Fprintf(b, "WULING_RUNNER_MEMORY=%s\n", memory)
+	}
+	b.WriteString("WULING_RUNNER_PIDS_LIMIT=4096\n")
 }

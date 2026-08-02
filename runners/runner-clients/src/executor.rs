@@ -13,7 +13,9 @@ use tokio::process::Command;
 use tracing::{info, warn};
 
 use crate::api::{AcquiredJob, ApiClient, StepSpec};
-use crate::backend::{Backend, ContainerBackend, HostBackend, RunnerOS, StepTimeout};
+use crate::backend::{
+    Backend, ContainerBackend, HostBackend, ResourceLimits, RunnerOS, StepTimeout,
+};
 
 /// Executes jobs in a container or on the host shell, chosen per job from the
 /// runner's OS and whether the job requests a `container:`.
@@ -25,6 +27,7 @@ pub struct Executor {
     default_image: String,
     token: String,
     os: RunnerOS,
+    limits: ResourceLimits,
 }
 
 impl Executor {
@@ -34,6 +37,7 @@ impl Executor {
         default_image: String,
         token: String,
         os: RunnerOS,
+        limits: ResourceLimits,
     ) -> Self {
         let cache_dir = work_dir.join("_cache");
         Self {
@@ -43,6 +47,7 @@ impl Executor {
             default_image,
             token,
             os,
+            limits,
         }
     }
 
@@ -130,6 +135,7 @@ impl Executor {
                     &workspace_abs,
                     &base_env,
                     self.os,
+                    self.limits,
                 )
                 .await
                 .context("start container")?,
