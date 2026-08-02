@@ -163,8 +163,9 @@ HMAC-SHA256 校验并**常量时间**比较；校验不过一律 401。
 3. **端到端**：往一个已安装该 App、且含 `.wuling/workflows/*.yml` 的仓库推一个 commit，
    在武陵的流水线页面应能看到新 run。Delivery 里能看到 `push` 事件是绿的、但武陵没建 run，
    说明事件收到了而 workflow 发现或映射有问题——查控制面日志，不要再去动 App 设置。
-4. **回显通没通**：在该仓库开一个 PR，**Checks** 页应出现名为「武陵 CI」的 check run，
-   先是 queued（黄），随流水线推进变 in progress，结束后落到对应 conclusion。
+4. **回显通没通**：在该仓库开一个 PR，**Checks** 页应出现名为「武陵 CI」的 check run（queued）。
+   当前 MVP 只在 `check_suite` 上 `CreateCheckRun`；随流水线推进到 in progress /
+   conclusion 的 `UpdateCheckRun` 尚未接到 pipeline 终态（见 handoff 后续增强）。
    PR 上没出现但 Delivery 里 `check_suite` 是绿的，多半是 Checks 权限没生效（回 §0）
    或 `check_run.app.id` 过滤把自己也滤掉了。
 

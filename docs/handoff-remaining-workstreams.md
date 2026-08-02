@@ -26,6 +26,7 @@
 | `feat/github-webhooks` | Webhook MVP：HMAC + ping + delivery 幂等 |
 | `feat/github-webhooks-events` | repo links + fetch + PR trigger + Checks |
 | `feat/runner-installers` | Windows Inno Setup + release 附件 + 安装文档 |
+| `fix/stack-bugbot-findings` | Bugbot：release help prerender、push 无 App 不 500、Checks 文档对齐 |
 
 （以 `gh stack view` 为准。）
 

@@ -26,7 +26,7 @@ git push origin "$TAG"
 
 1. **`.github/workflows/release.yml`** 触发，跑 5 个 job：
    - `build-binaries` —— 跨编译 Linux/amd64+arm64, macOS/amd64+arm64 四份 `wuling-api` + `wuling-migrate`，含 SHA256
-   - `build-frontend` —— `npm run build` 出 `frontend/dist/`，打成 tar.gz + SHA256
+   - `build-frontend` —— `npm run build` + `help:smoke`（预渲染 `dist/help/**`）出 `frontend/dist/`，打成 tar.gz + SHA256
    - `build-images` —— 推 multi-arch docker 镜像到 `ghcr.io/zixiao-labs/wuling-api:<tag>` 和 `ghcr.io/zixiao-labs/wuling-frontend:<tag>`
    - `nix-check` —— 跑 `nix flake check`，保证 flake 没烂
    - `publish-release` —— 等上面 4 个都过了，建 GitHub Release 并挂上全部产物

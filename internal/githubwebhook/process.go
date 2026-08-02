@@ -3,7 +3,6 @@ package githubwebhook
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 	"time"
 
@@ -210,8 +209,11 @@ func (p *Processor) onPush(ctx context.Context, ec EventContext) error {
 	if instID == 0 {
 		instID = link.InstallationID
 	}
+	// Match pull_request / check_suite: without an App client we cannot fetch.
+	// Returning an error would 500 + ReleaseClaim and cause infinite redelivery.
 	if p.App == nil {
-		return fmt.Errorf("github app client not configured")
+		ec.Log.Info("github-webhook: push skipped — app client not configured", "repo", owner+"/"+name)
+		return nil
 	}
 	token, err := p.App.InstallationToken(instID)
 	if err != nil {

@@ -41,6 +41,59 @@ func TestProcessor_PushUnlinked_NoError(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestProcessor_PushLinkedWithoutApp_NoError(t *testing.T) {
+	pool := dbtest.Open(t)
+	dbtest.Reset(t, pool)
+	users := userstore.New(pool)
+	ctx := context.Background()
+
+	_, org, err := users.CreateUser(ctx, userstore.CreateUserParams{
+		Username: "push-no-app", Email: "push-no-app@example.test",
+	})
+	require.NoError(t, err)
+	project, err := users.CreateProject(ctx, userstore.CreateProjectParams{
+		OrgID: org.ID, Slug: "p", DisplayName: "P",
+	})
+	require.NoError(t, err)
+	repo, err := users.CreateRepo(ctx, userstore.CreateRepoParams{
+		ProjectID: project.ID, Slug: "r", DisplayName: "R",
+	})
+	require.NoError(t, err)
+
+	store := &githubwebhook.LinkStore{Pool: pool}
+	_, err = store.Upsert(ctx, githubwebhook.RepoLink{
+		InstallationID: 99,
+		Owner:          "acme",
+		Name:           "app",
+		OrgID:          org.ID,
+		ProjectID:      project.ID,
+		RepoID:         repo.ID,
+	})
+	require.NoError(t, err)
+
+	proc := &githubwebhook.Processor{
+		AppID:  3713023,
+		App:    nil,
+		Links:  store,
+		Layout: repostore.New(t.TempDir()),
+	}
+	body := []byte(`{
+		"ref":"refs/heads/main",
+		"before":"0000000000000000000000000000000000000000",
+		"after":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"deleted":false,
+		"repository":{"name":"app","full_name":"acme/app","owner":{"login":"acme"}},
+		"installation":{"id":99}
+	}`)
+	err = proc.Handle(githubwebhook.EventContext{
+		DeliveryID: "d-push-no-app",
+		Event:      "push",
+		Body:       body,
+		Log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	require.NoError(t, err)
+}
+
 func TestLinkStore_UpsertAndLookup(t *testing.T) {
 	pool := dbtest.Open(t)
 	dbtest.Reset(t, pool)
