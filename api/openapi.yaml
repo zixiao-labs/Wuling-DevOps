@@ -3779,7 +3779,26 @@ components:
       properties:
         id: { type: string, format: uuid }
         run_id: { type: string, format: uuid }
-        name: { type: string }
+        job_key:
+          type: string
+          description: >-
+            Logical YAML job id, shared by every leg of a matrix job. `needs`
+            resolves against this, not against `name`.
+        name:
+          type: string
+          description: >-
+            Per-leg display name, unique within the run — the job's `name:` when
+            declared, otherwise `<job_key> (v1, v2)` over the matrix values.
+        ordinal:
+          type: integer
+          minimum: 0
+          description: 1-based position in the run's expanded, topologically ordered job list.
+        matrix:
+          type: object
+          additionalProperties: { type: string }
+          description: Resolved matrix context for this leg; absent for a job with no strategy.matrix.
+        fail_fast: { type: boolean }
+        max_parallel: { type: integer, minimum: 0, description: 0 = unlimited. }
         runs_on:
           type: array
           items: { type: string }
@@ -3787,6 +3806,7 @@ components:
         needs:
           type: array
           items: { type: string }
+          description: Job keys this job depends on; every leg of each must succeed.
         status: { $ref: "#/components/schemas/RunStatus" }
         runner_id: { type: string, format: uuid, nullable: true }
         attempt: { type: integer, minimum: 1 }
@@ -3890,6 +3910,15 @@ components:
         project_slug: { type: string }
         repo_slug: { type: string }
         job_name: { type: string }
+        job_key:
+          type: string
+          description: Logical YAML job id, shared by every leg of a matrix job.
+        matrix:
+          type: object
+          additionalProperties: { type: string }
+          description: >-
+            Resolved matrix context, for runner log context only. `${{ matrix.* }}`
+            is already interpolated into `spec` server-side.
         commit_sha: { type: string }
         git_ref: { type: string }
         event: { $ref: "#/components/schemas/RunEvent" }

@@ -58,14 +58,16 @@ type CreateRunParams struct {
 }
 
 // CreateRun materializes a parsed workflow into a run + its jobs + steps in one
-// transaction, allocating the per-repo run number. Jobs start 'queued'; the
-// dispatch query gates them on `needs` so they only become acquirable once
-// their dependencies succeed.
+// transaction, allocating the per-repo run number. Every job's strategy.matrix
+// is expanded here (Workflow.Expand) into one pipeline_jobs row per leg, with
+// ${{ matrix.* }} already interpolated into the persisted definition. Jobs start
+// 'queued'; the dispatch query gates them on `needs` so they only become
+// acquirable once their dependencies succeed.
 func (s *Store) CreateRun(ctx context.Context, p CreateRunParams) (*model.PipelineRun, error) {
 	if p.Workflow == nil {
 		return nil, apperr.Validation("workflow is required", nil)
 	}
-	order, err := p.Workflow.JobOrder()
+	legs, err := p.Workflow.Expand(p.DefaultTier)
 	if err != nil {
 		return nil, apperr.Validation(err.Error(), nil)
 	}
@@ -122,23 +124,25 @@ func (s *Store) CreateRun(ctx context.Context, p CreateRunParams) (*model.Pipeli
 		return nil, apperr.Internal(err)
 	}
 
-	for _, name := range order {
-		job := p.Workflow.Jobs[name]
-		spec := job.Spec()
-		specJSON, err := json.Marshal(spec)
+	// The run's definition snapshot deliberately stays the AUTHORED shape, with
+	// the matrix unexpanded — it is what a re-run and the "view source" UI want.
+	for _, leg := range legs {
+		specJSON, err := json.Marshal(leg.Spec)
 		if err != nil {
 			return nil, apperr.Internal(err)
 		}
 		jobID := uuid.New()
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO pipeline_jobs
-			    (id, run_id, org_id, name, runs_on, resource_tier, needs, status, definition)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,'queued',$8::jsonb)
-		`, jobID, run.ID, p.OrgID, name, normStrings(job.RunsOn), job.EffectiveTier(p.DefaultTier),
-			normStrings(job.Needs), string(specJSON)); err != nil {
+			    (id, run_id, org_id, job_key, name, ordinal, runs_on, resource_tier,
+			     needs, status, definition, matrix, fail_fast, max_parallel)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'queued',$10::jsonb,$11::jsonb,$12,$13)
+		`, jobID, run.ID, p.OrgID, leg.Key, leg.Name, leg.Ordinal,
+			normStrings(leg.RunsOn), leg.Tier, normStrings(leg.Needs),
+			string(specJSON), matrixJSON(leg.Matrix), leg.FailFast, leg.MaxParallel); err != nil {
 			return nil, apperr.Internal(err)
 		}
-		for i, st := range spec.Steps {
+		for i, st := range leg.Spec.Steps {
 			if _, err := tx.Exec(ctx, `
 				INSERT INTO pipeline_steps (id, job_id, number, name, status)
 				VALUES ($1,$2,$3,$4,'queued')
@@ -265,9 +269,14 @@ func (s *Store) getRunRow(ctx context.Context, where string, args ...any) (*mode
 }
 
 func (s *Store) listJobs(ctx context.Context, runID uuid.UUID) ([]model.PipelineJob, error) {
+	// ordinal is Expand's topological position; queued_at cannot order a run's
+	// jobs because Postgres now() is transaction-start time, so every job in a
+	// run shares it. Pre-0012 rows all have ordinal 0 and fall back to name.
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, run_id, name, runs_on, resource_tier, needs, status, runner_id, attempt, log_size, queued_at, started_at, finished_at
-		FROM pipeline_jobs WHERE run_id = $1 ORDER BY queued_at ASC, name ASC
+		SELECT id, run_id, job_key, name, ordinal, matrix, fail_fast, max_parallel,
+		       runs_on, resource_tier, needs, status, runner_id, attempt, log_size,
+		       queued_at, started_at, finished_at
+		FROM pipeline_jobs WHERE run_id = $1 ORDER BY ordinal ASC, name ASC
 	`, runID)
 	if err != nil {
 		return nil, apperr.Internal(err)
@@ -276,9 +285,14 @@ func (s *Store) listJobs(ctx context.Context, runID uuid.UUID) ([]model.Pipeline
 	out := make([]model.PipelineJob, 0)
 	for rows.Next() {
 		var j model.PipelineJob
-		if err := rows.Scan(&j.ID, &j.RunID, &j.Name, &j.RunsOn, &j.ResourceTier, &j.Needs,
+		var matrixRaw []byte
+		if err := rows.Scan(&j.ID, &j.RunID, &j.JobKey, &j.Name, &j.Ordinal, &matrixRaw,
+			&j.FailFast, &j.MaxParallel, &j.RunsOn, &j.ResourceTier, &j.Needs,
 			&j.Status, &j.RunnerID, &j.Attempt, &j.LogSize, &j.QueuedAt, &j.StartedAt, &j.FinishedAt); err != nil {
 			return nil, apperr.Internal(err)
+		}
+		if err := decodeMatrix(matrixRaw, &j.Matrix); err != nil {
+			return nil, err
 		}
 		out = append(out, j)
 	}

@@ -84,9 +84,7 @@ jobs:
       - name: Install & build
         run: |
           npm ci
-          npm run build
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}   # 见 §4
+          npm run build   # 机密以进程环境变量注入，脚本里直接写 $NPM_TOKEN（见 §4）
   test:
     needs: [build]              # DAG 依赖；build 成功后才跑
     runs-on: [linux]
@@ -98,11 +96,16 @@ jobs:
 **Stage 1 支持的字段**
 
 - 顶层：`name`、`on`（`push.branches`、`pull_request`、`workflow_dispatch`）。
-- `jobs.<id>`：`runs-on`（字符串或字符串数组）、`resource`、`container`、`needs`、`env`、`steps`。
+- `jobs.<id>`：`name`、`runs-on`（字符串或字符串数组）、`resource`、`container`、`needs`、
+  `strategy`、`env`、`steps`。
+- `jobs.<id>.strategy`：`matrix`（任意命名轴 + `include` / `exclude`）、`fail-fast`（缺省 `true`）、
+  `max-parallel`（缺省 `0`，即不限）。
 - `steps[]`：`name`、`run`（shell 脚本）、`uses`（仅 `actions/checkout[@x]`）、`with`、`env`、
   `if`（仅 `always()` / `success()` / `failure()` 三种谓词，默认 `success()`）、`timeout-minutes`。
 
-**校验**：`needs` 必须无环且指向同文件内已存在的 job；`resource` 必须是合法档位；标签非空。
+**校验**：`needs` 必须无环且指向同文件内已存在的 job；`resource` 必须是合法档位（除非它是
+`${{ matrix.* }}` 表达式，此时在展开后再校验）；标签非空；矩阵至少展开出一个组合，单个 job
+不超过 256 个组合、单次 run 不超过 1024 个 job。
 
 `resource` 与标签的关系：`resource` 决定 Autoscaler 该用哪个 tier 的机器；`runs-on` 标签用于
 把 job 派给“声明了这些标签”的 runner。Autoscaler 拉起的 runner 会自动带上
@@ -113,8 +116,51 @@ jobs:
 执行方式随 OS：Linux 始终在容器内（`sh -ec`）；Windows 缺省在宿主 `pwsh` 跑，job 声明 `container:`
 时才用 Windows 容器；macOS 只在宿主 `bash` 跑（`container:` 被忽略，macOS 无容器）。
 
-`${{ secrets.X }}` 与 `${{ env.X }}` 的插值**在 Runner 端**完成，机密通过已鉴权的
-acquire 响应下发——明文绝不进 git，也不写进 run 的解析快照。
+### 3.1 矩阵（`strategy.matrix`）
+
+语法与 GitHub Actions 一致：
+
+```yaml
+jobs:
+  build:
+    name: Build ${{ matrix.os }} / node ${{ matrix.node }}   # 可选；写了就不再自动加后缀
+    runs-on: [ "${{ matrix.os }}" ]
+    strategy:
+      fail-fast: false       # 缺省 true：一条腿失败即取消同组其余腿
+      max-parallel: 2        # 缺省 0（不限）：同组同时 running 的腿数上限
+      matrix:
+        os: [linux, windows]
+        node: [18, 20]
+        exclude:
+          - os: windows
+            node: 18
+        include:
+          - os: linux
+            npm: 6
+    steps:
+      - run: node --version
+```
+
+**展开时机：创建 run 时（服务端），不是派发时。** 每个组合落成一行 `pipeline_jobs`，
+`${{ matrix.* }}` 已经就地插值进 `runs-on` / `resource` / `container` / `env` / `steps`，
+所以调度依旧只看行上的 `runs_on` / `resource_tier` 两列，Runner 侧零改动。
+
+- **组合顺序**：笛卡尔积，最后一个轴变化最快；`exclude` 先于 `include` 生效（因此 `include`
+  可以把被排掉的组合加回来）；`include` 能命中已有组合就合并（不覆盖轴本身的值），命中不了
+  就单独追加一条。只声明 `include` 不声明轴时，正好产出 `len(include)` 条。
+- **显示名**：job 写了 `name:` 就原样用它；否则是 `<job id> (值1, 值2)`。重名会自动补
+  ` #2`、` #3`（`pipeline_jobs` 上有 `UNIQUE (run_id, name)`）。
+- **`needs` 认的是 job id，不是显示名**：`pipeline_jobs.job_key` 保存 YAML 里的 job id，
+  一个矩阵 job 的所有腿共用同一个 `job_key`；`needs: [build]` 要求 `build` 的**每一条腿**
+  都成功。
+- **值类型**：字符串、整数、布尔、对象、数组都行。插值时用 YAML 里的**原始文本**
+  （`18` 就是 `"18"`，`1.10` 不会变成 `1.1`）；对象/数组按紧凑 JSON 渲染，子字段可以用
+  `${{ matrix.cfg.arch }}` 直接取。
+
+`${{ matrix.X }}` 的插值**在服务端展开时**完成；`${{ secrets.X }}` 与 `${{ env.X }}` 保持
+**原样字节不变**交给 Runner——机密通过已鉴权的 acquire 响应下发，明文绝不进 git，也不写进
+run 的解析快照。（注意：Runner 侧的 `secrets` / `env` 表达式插值目前**尚未实装**，机密是以
+进程环境变量的形式注入的，脚本里请直接写 `$NPM_TOKEN`。）
 
 ---
 
@@ -299,7 +345,8 @@ runner 二进制还认 `WULING_RUNNER_OS`（默认取构建目标：win/mac 构�
 
 - Runner token / 注册令牌：随机 32B，argon2id 存哈希（同 PAT）；注册令牌短期且一次性。
 - Secrets 主密钥仅在内存；密文 + nonce 落库；GCM 提供机密性 + 完整性。
-- 工作流插值在 runner 端做，明文机密不进 git、不进解析快照、不进普通 API 响应。
+- `${{ matrix.* }}` 在服务端展开时插值；`${{ secrets.* }}` / `${{ env.* }}` 原样留给 runner，
+  明文机密不进 git、不进解析快照、不进普通 API 响应。
 - 派发给 runner 的仓库检出 token 为**最小权限、短期**（仅该 repo 读）。
 - 云凭证以 Secret 名引用，GitOps 配置可公开评审。
 
@@ -328,7 +375,10 @@ runner 二进制还认 `WULING_RUNNER_OS`（默认取构建目标：win/mac 构�
   cloud-init；vCenter 需 govmomi + guest 定制）。与 K8s provider 一并推进。
 - **多 OS runner**：**已实现**——Windows（宿主 `pwsh` 与 Windows 容器两种执行模型，AWS EC2 / 阿里云
   ECS 可 autoscale，最低 Server 2022）、macOS（手动注册物理机，宿主执行）。详见 §3 / §7 / §7.1。
-- **matrix**（`strategy.matrix` + `include`/`exclude` + `fail-fast`/`max-parallel`）：下一切片。
+- **matrix**（`strategy.matrix` + `include`/`exclude` + `fail-fast`/`max-parallel`）：**已实现**——
+  创建 run 时在服务端展开，一个组合一行 job，`needs` 按 `job_key` 解析。详见 §3.1。
+- **`${{ secrets.* }}` / `${{ env.* }}` 表达式插值**：尚未实装。机密目前以进程环境变量注入，
+  脚本里写 `$NPM_TOKEN` 即可；把字面量写进 `env:` 的值不会被展开。
 - step 级 `uses` 第三方 action 生态、可复用 workflow、环境/审批门禁 → Stage 2+。
 - 日志/artifact 转对象存储（当前落盘）。
 - 基于 WebSocket 的实时日志推送（当前 SSE + 轮询）。

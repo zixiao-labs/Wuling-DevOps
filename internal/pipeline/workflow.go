@@ -54,11 +54,18 @@ type RefFilter struct {
 }
 
 // Job is one job in a workflow.
+//
+// Name is GitHub's `jobs.<id>.name` — a display label that may carry
+// `${{ matrix.* }}`. It is only safe to accept because the dispatcher resolves
+// `needs` against the job's KEY (pipeline_jobs.job_key), not its display name,
+// so renaming a job never strands its dependents.
 type Job struct {
+	Name      string            `yaml:"name" json:"name,omitempty"`
 	RunsOn    StringList        `yaml:"runs-on" json:"runs_on,omitempty"`
 	Resource  string            `yaml:"resource" json:"resource,omitempty"`
 	Container Container         `yaml:"container" json:"container,omitempty"`
 	Needs     StringList        `yaml:"needs" json:"needs,omitempty"`
+	Strategy  *Strategy         `yaml:"strategy" json:"strategy,omitempty"`
 	Env       map[string]string `yaml:"env" json:"env,omitempty"`
 	Steps     []Step            `yaml:"steps" json:"steps"`
 }
@@ -199,11 +206,15 @@ func (w *Workflow) Validate() error {
 	if len(w.Jobs) == 0 {
 		return fmt.Errorf("workflow %q has no jobs", w.Name)
 	}
+	totalJobs := 0
 	for name, job := range w.Jobs {
 		if !isJobName(name) {
 			return fmt.Errorf("invalid job id %q (must match ^[A-Za-z_][A-Za-z0-9_-]*$)", name)
 		}
-		if job.Resource != "" && !ValidTier(job.Resource) {
+		// A `resource:` that carries a ${{ … }} expression cannot be checked
+		// here — the tier is only known once CreateRun expands the matrix.
+		// Expand re-validates the resolved value.
+		if job.Resource != "" && !hasExpr(job.Resource) && !ValidTier(job.Resource) {
 			return fmt.Errorf("job %q: resource must be one of low|medium|high", name)
 		}
 		if len(job.Steps) == 0 {
@@ -228,11 +239,72 @@ func (w *Workflow) Validate() error {
 				return fmt.Errorf("job %q needs unknown job %q", name, dep)
 			}
 		}
+		n, err := w.validateStrategy(name, job)
+		if err != nil {
+			return err
+		}
+		totalJobs += n
+	}
+	// Cap the whole run, not just each matrix: MaxMatrixJobs alone would let a
+	// workflow declare many capped jobs and still bury CreateRun's single
+	// transaction under one push.
+	if totalJobs > MaxRunJobs {
+		return fmt.Errorf("workflow %q expands to %d jobs, which exceeds the cap of %d", w.Name, totalJobs, MaxRunJobs)
 	}
 	if _, err := w.JobOrder(); err != nil {
 		return err
 	}
 	return nil
+}
+
+// validateStrategy checks a job's `strategy:` block and returns how many
+// pipeline_jobs rows the job will expand into (1 when it declares no matrix).
+// It is where the combination cap is enforced, so an oversized matrix is
+// rejected at Discover time rather than at CreateRun time.
+func (w *Workflow) validateStrategy(name string, job Job) (int, error) {
+	refs := job.matrixRefs()
+	m := job.Strategy.matrixOrNil()
+	if m == nil {
+		if len(refs) > 0 {
+			return 0, fmt.Errorf("job %q references ${{ matrix.%s }} but declares no strategy.matrix", name, refs[0])
+		}
+		if job.Strategy != nil && job.Strategy.MaxParallel < 0 {
+			return 0, fmt.Errorf("job %q: strategy.max-parallel cannot be negative", name)
+		}
+		return 1, nil
+	}
+	if job.Strategy.MaxParallel < 0 {
+		return 0, fmt.Errorf("job %q: strategy.max-parallel cannot be negative", name)
+	}
+	for _, e := range m.Exclude {
+		for _, k := range e.KeyOrder {
+			if _, ok := m.Axes[k]; !ok {
+				return 0, fmt.Errorf("job %q: strategy.matrix.exclude references %q, which is not a matrix axis "+
+					"(exclude is applied before include and can only narrow declared axes)", name, k)
+			}
+		}
+	}
+	combos, err := m.Combinations() // also enforces the cap and "at least one combination"
+	if err != nil {
+		return 0, fmt.Errorf("job %q: %w", name, err)
+	}
+	for _, ref := range refs {
+		if !anyComboHasRoot(combos, ref) {
+			return 0, fmt.Errorf("job %q references ${{ matrix.%s }} but no matrix combination defines %s", name, ref, ref)
+		}
+	}
+	return len(combos), nil
+}
+
+// anyComboHasRoot reports whether at least one combination defines root — an
+// include-added key need not appear in every leg, but must appear somewhere.
+func anyComboHasRoot(combos []MatrixCombination, root string) bool {
+	for _, c := range combos {
+		if _, ok := c.Values[root]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // JobOrder returns job ids in a topological order (a job appears after every

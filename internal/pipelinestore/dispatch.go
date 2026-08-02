@@ -28,6 +28,8 @@ type AcquiredJob struct {
 	ProjectSlug string               `json:"project_slug"`
 	RepoSlug    string               `json:"repo_slug"`
 	JobName     string               `json:"job_name"`
+	JobKey      string               `json:"job_key"`
+	Matrix      map[string]string    `json:"matrix,omitempty"`
 	CommitSHA   string               `json:"commit_sha"`
 	GitRef      string               `json:"git_ref"`
 	Event       string               `json:"event"`
@@ -35,18 +37,74 @@ type AcquiredJob struct {
 	Steps       []model.PipelineStep `json:"steps"`
 }
 
+// dispatchableNeedsSQL is the shared "every needed job has at least one leg and
+// no non-success leg" gate, aliased on `j`. A matrix job expands to many rows
+// sharing one job_key, so `needs` resolves against job_key with all-legs-must-
+// succeed semantics — matching by name would look for a row called "build" and
+// never find "build (ubuntu, 18)", stranding every dependent forever.
+//
+// Kept in one place because AcquireJob, CompleteJob and QueuedDemand must agree
+// on what is runnable, or the autoscaler provisions for work the dispatcher
+// will not hand out. For a single-leg job this is exactly equivalent to the
+// pre-matrix `(>=1 success)` predicate, which is what makes the 0012 backfill
+// (job_key = name) safe for runs already in flight.
+//
+// The "zero legs" arm is defensive: Validate rejects an unknown `need` and
+// Combinations rejects an empty matrix, so it should be unreachable.
+const dispatchableNeedsSQL = `
+		NOT EXISTS (
+		  SELECT 1 FROM unnest(j.needs) AS need
+		  WHERE NOT EXISTS (SELECT 1 FROM pipeline_jobs d
+		                    WHERE d.run_id = j.run_id AND d.job_key = need)
+		     OR EXISTS     (SELECT 1 FROM pipeline_jobs d
+		                    WHERE d.run_id = j.run_id AND d.job_key = need AND d.status <> 'success')
+		)`
+
+// maxAcquireAttempts bounds how many matrix groups one acquire call will skip
+// past after losing a max-parallel admission race before giving up and letting
+// the runner long-poll again.
+const maxAcquireAttempts = 3
+
 // AcquireJob atomically claims the oldest dispatchable job for a runner.
 // "Dispatchable" = queued, tier matches the runner exactly, the job's runs-on
-// labels are a subset of the runner's labels, and every `needs` dependency has
-// succeeded. The runner's labels/tier are read authoritatively from its row
-// (never trusted from the request) so a runner can't grab work it isn't sized
-// for. Returns (nil, nil) when nothing matches — the runner long-polls again.
-// FOR UPDATE OF j SKIP LOCKED lets concurrent runners scan past each other's
-// claimed rows without blocking.
+// labels are a subset of the runner's labels, every `needs` dependency has
+// succeeded in all its legs, and the job's matrix group is under its
+// max-parallel cap. The runner's labels/tier are read authoritatively from its
+// row (never trusted from the request) so a runner can't grab work it isn't
+// sized for. Returns (nil, nil) when nothing matches — the runner long-polls
+// again. FOR UPDATE OF j SKIP LOCKED lets concurrent runners scan past each
+// other's claimed rows without blocking.
+//
+// A lost max-parallel race retries with the throttled group excluded rather
+// than returning empty: the inner SELECT is LIMIT 1, so a throttled group at
+// the head of the queue would otherwise stall the runner for a full poll
+// interval even when unrelated runs have work.
 func (s *Store) AcquireJob(ctx context.Context, runnerID uuid.UUID) (*AcquiredJob, error) {
+	var throttled []string
+	for i := 0; i < maxAcquireAttempts; i++ {
+		aj, blockedKey, err := s.acquireOnce(ctx, runnerID, throttled)
+		if err != nil {
+			return nil, err
+		}
+		if aj != nil {
+			return aj, nil
+		}
+		if blockedKey == "" {
+			return nil, nil // nothing dispatchable
+		}
+		throttled = append(throttled, blockedKey)
+	}
+	return nil, nil
+}
+
+// acquireOnce is one claim attempt in its own transaction. It returns the
+// claimed job, or the job_key of a matrix group that lost the max-parallel
+// admission race (so the caller can retry past it), or neither when the queue
+// has nothing for this runner.
+func (s *Store) acquireOnce(ctx context.Context, runnerID uuid.UUID, excludeKeys []string) (*AcquiredJob, string, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return nil, apperr.Internal(err)
+		return nil, "", apperr.Internal(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
@@ -60,17 +118,19 @@ func (s *Store) AcquireJob(ctx context.Context, runnerID uuid.UUID) (*AcquiredJo
 		`SELECT org_id, labels, resource_tier FROM runners WHERE id = $1`, runnerID).
 		Scan(&orgID, &labels, &tier); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, apperr.Unauthorized("unknown runner")
+			return nil, "", apperr.Unauthorized("unknown runner")
 		}
-		return nil, apperr.Internal(err)
+		return nil, "", apperr.Internal(err)
 	}
 
 	var (
-		aj       AcquiredJob
-		specJSON []byte
+		aj          AcquiredJob
+		specJSON    []byte
+		matrixRaw   []byte
+		maxParallel int
 	)
 	err = tx.QueryRow(ctx, `
-		SELECT j.id, j.run_id, j.name, j.definition,
+		SELECT j.id, j.run_id, j.name, j.job_key, j.matrix, j.max_parallel, j.definition,
 		       run.number, run.project_id, run.repo_id, run.commit_sha, run.git_ref, run.event,
 		       o.slug, p.slug, rp.slug
 		FROM pipeline_jobs j
@@ -82,60 +142,87 @@ func (s *Store) AcquireJob(ctx context.Context, runnerID uuid.UUID) (*AcquiredJo
 		  AND j.status = 'queued'
 		  AND j.resource_tier = $3
 		  AND j.runs_on <@ $2::text[]
-		  AND NOT EXISTS (
-		        SELECT 1 FROM unnest(j.needs) AS need
-		        WHERE NOT EXISTS (
-		          SELECT 1 FROM pipeline_jobs d
-		          WHERE d.run_id = j.run_id AND d.name = need AND d.status = 'success'
-		        )
-		      )
-		ORDER BY j.queued_at ASC
+		  AND `+dispatchableNeedsSQL+`
+		  AND (j.max_parallel = 0 OR j.job_key <> ALL($4::text[]))
+		  AND (j.max_parallel = 0 OR (
+		        SELECT count(*) FROM pipeline_jobs sib
+		        WHERE sib.run_id = j.run_id AND sib.job_key = j.job_key AND sib.status = 'running'
+		      ) < j.max_parallel)
+		ORDER BY j.queued_at ASC, j.ordinal ASC, j.name ASC
 		FOR UPDATE OF j SKIP LOCKED
 		LIMIT 1
-	`, orgID, normStrings(labels), tier).Scan(
-		&aj.JobID, &aj.RunID, &aj.JobName, &specJSON,
+	`, orgID, normStrings(labels), tier, normStrings(excludeKeys)).Scan(
+		&aj.JobID, &aj.RunID, &aj.JobName, &aj.JobKey, &matrixRaw, &maxParallel, &specJSON,
 		&aj.RunNumber, &aj.ProjectID, &aj.RepoID, &aj.CommitSHA, &aj.GitRef, &aj.Event,
 		&aj.OrgSlug, &aj.ProjectSlug, &aj.RepoSlug,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil // nothing to do
+		return nil, "", nil // nothing to do
 	}
 	if err != nil {
-		return nil, apperr.Internal(err)
+		return nil, "", apperr.Internal(err)
 	}
 	aj.OrgID = orgID
 	if err := json.Unmarshal(specJSON, &aj.Spec); err != nil {
-		return nil, apperr.Internal(err)
+		return nil, "", apperr.Internal(err)
+	}
+	if err := decodeMatrix(matrixRaw, &aj.Matrix); err != nil {
+		return nil, "", err
+	}
+
+	// max-parallel is a GROUP invariant, but SKIP LOCKED only guards the single
+	// row we picked: two runners scanning two different legs of one group lock
+	// disjoint rows, both read the same running-count under READ COMMITTED, and
+	// both admit. Serialise admissions within one matrix group so count-then-
+	// claim is atomic. pg_advisory_xact_lock releases on commit/rollback, and
+	// the row lock is always taken before the advisory lock here, so no
+	// lock-ordering cycle is reachable.
+	if maxParallel > 0 {
+		if _, err := tx.Exec(ctx,
+			`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+			aj.RunID.String()+"/"+aj.JobKey); err != nil {
+			return nil, "", apperr.Internal(err)
+		}
+		var running int
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*) FROM pipeline_jobs
+			WHERE run_id = $1 AND job_key = $2 AND status = 'running'
+		`, aj.RunID, aj.JobKey).Scan(&running); err != nil {
+			return nil, "", apperr.Internal(err)
+		}
+		if running >= maxParallel {
+			return nil, aj.JobKey, nil // throttled — retry past this group
+		}
 	}
 
 	if _, err := tx.Exec(ctx, `
 		UPDATE pipeline_jobs SET status = 'running', runner_id = $2, started_at = now()
 		WHERE id = $1
 	`, aj.JobID, runnerID); err != nil {
-		return nil, apperr.Internal(err)
+		return nil, "", apperr.Internal(err)
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE pipeline_runs SET status = 'running', started_at = COALESCE(started_at, now())
 		WHERE id = $1 AND status = 'queued'
 	`, aj.RunID); err != nil {
-		return nil, apperr.Internal(err)
+		return nil, "", apperr.Internal(err)
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE runners SET status = 'busy', last_seen_at = now() WHERE id = $1
 	`, runnerID); err != nil {
-		return nil, apperr.Internal(err)
+		return nil, "", apperr.Internal(err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return nil, apperr.Internal(err)
+		return nil, "", apperr.Internal(err)
 	}
 
 	steps, err := s.listSteps(ctx, aj.JobID)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	aj.Steps = steps
-	return &aj, nil
+	return &aj, "", nil
 }
 
 // UpdateStepParams patches one step's status. Step is addressed by (job,
@@ -176,6 +263,7 @@ func (s *Store) UpdateStep(ctx context.Context, p UpdateStepParams) error {
 
 // CompleteJob finalizes a job with conclusion (success|failed|canceled), then:
 //   - frees the runner (idle, stamps last_job_at for idle scale-down),
+//   - cancels the job's still-live matrix siblings when fail-fast is on,
 //   - cascades cancellation to queued jobs whose needs can no longer succeed,
 //   - re-aggregates the run's status, stamping finished_at once all jobs end.
 func (s *Store) CompleteJob(ctx context.Context, jobID uuid.UUID, conclusion string) error {
@@ -193,11 +281,13 @@ func (s *Store) CompleteJob(ctx context.Context, jobID uuid.UUID, conclusion str
 
 	var runID uuid.UUID
 	var runnerID *uuid.UUID
+	var jobKey string
+	var failFast bool
 	err = tx.QueryRow(ctx, `
 		UPDATE pipeline_jobs SET status = $2, finished_at = now()
 		WHERE id = $1 AND status = 'running'
-		RETURNING run_id, runner_id
-	`, jobID, conclusion).Scan(&runID, &runnerID)
+		RETURNING run_id, runner_id, job_key, fail_fast
+	`, jobID, conclusion).Scan(&runID, &runnerID, &jobKey, &failFast)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return apperr.New(apperr.CodeConflict, "job is not running")
 	}
@@ -213,6 +303,17 @@ func (s *Store) CompleteJob(ctx context.Context, jobID uuid.UUID, conclusion str
 		}
 	}
 
+	// fail-fast: one failed leg cancels its still-live siblings, before the
+	// downstream cascade below picks up the transitive cancellations in the same
+	// transaction. A running sibling is flipped in the DB only — its runner
+	// discovers it on the next callback, which ownedJob answers 409 for. That is
+	// the same mechanism CancelRun relies on.
+	if conclusion == "failed" && failFast {
+		if err := cancelMatrixSiblings(ctx, tx, runID, jobKey, jobID); err != nil {
+			return err
+		}
+	}
+
 	// Cascade-cancel queued jobs whose needs include a failed/canceled job.
 	// Looping handles transitive chains (A→B→C): canceling B then cancels C.
 	for {
@@ -221,7 +322,7 @@ func (s *Store) CompleteJob(ctx context.Context, jobID uuid.UUID, conclusion str
 			WHERE j.run_id = $1 AND j.status = 'queued'
 			  AND EXISTS (
 			        SELECT 1 FROM unnest(j.needs) AS need
-			        JOIN pipeline_jobs d ON d.run_id = j.run_id AND d.name = need
+			        JOIN pipeline_jobs d ON d.run_id = j.run_id AND d.job_key = need
 			        WHERE d.status IN ('failed', 'canceled')
 			      )
 		`, runID)
@@ -262,6 +363,67 @@ func (s *Store) CompleteJob(ctx context.Context, jobID uuid.UUID, conclusion str
 	return tx.Commit(ctx)
 }
 
+// cancelMatrixSiblings implements fail-fast: it cancels every still-live leg of
+// jobKey other than exceptID, cancels those legs' pending steps, and frees the
+// runners they were holding. Freeing the runners matters — a busy runner row
+// that nothing will ever complete skews the autoscaler's idle accounting.
+//
+// A leg cancelled while still queued gets finished_at with started_at left
+// NULL; that is the same shape CancelRun already produces for queued jobs.
+func cancelMatrixSiblings(ctx context.Context, tx pgx.Tx, runID uuid.UUID, jobKey string, exceptID uuid.UUID) error {
+	rows, err := tx.Query(ctx, `
+		UPDATE pipeline_jobs sib SET status = 'canceled', finished_at = now()
+		WHERE sib.run_id = $1 AND sib.job_key = $2 AND sib.id <> $3
+		  AND sib.status IN ('queued','running')
+		RETURNING sib.id, sib.runner_id
+	`, runID, jobKey, exceptID)
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	var jobIDs, runnerIDs []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		var rid *uuid.UUID
+		if err := rows.Scan(&id, &rid); err != nil {
+			rows.Close()
+			return apperr.Internal(err)
+		}
+		jobIDs = append(jobIDs, id)
+		if rid != nil {
+			runnerIDs = append(runnerIDs, *rid)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return apperr.Internal(err)
+	}
+	if len(jobIDs) == 0 {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE pipeline_steps SET status = 'canceled', finished_at = now()
+		WHERE job_id = ANY($1::uuid[]) AND status IN ('queued','running')
+	`, jobIDs); err != nil {
+		return apperr.Internal(err)
+	}
+	return freeRunners(ctx, tx, runnerIDs)
+}
+
+// freeRunners marks runners idle after their job was cancelled out from under
+// them, stamping last_job_at so the idle scale-down clock starts now.
+func freeRunners(ctx context.Context, tx pgx.Tx, runnerIDs []uuid.UUID) error {
+	if len(runnerIDs) == 0 {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE runners SET status = 'idle', last_job_at = now(), last_seen_at = now()
+		WHERE id = ANY($1::uuid[])
+	`, runnerIDs); err != nil {
+		return apperr.Internal(err)
+	}
+	return nil
+}
+
 // CancelRun marks a run and its non-terminal jobs/steps canceled. Running jobs
 // are cut short — the runner discovers the cancellation on its next callback
 // (which returns a conflict) and aborts.
@@ -282,11 +444,36 @@ func (s *Store) CancelRun(ctx context.Context, runID uuid.UUID) error {
 	if tag.RowsAffected() == 0 {
 		return apperr.New(apperr.CodeConflict, "run is already finished")
 	}
-	if _, err := tx.Exec(ctx, `
+	// Cancel the non-terminal jobs and collect the runners they were holding:
+	// leaving those rows 'busy' with nothing left to complete them confuses the
+	// autoscaler's idle accounting. RETURNING scopes the free to exactly the
+	// jobs this call cancelled, so a runner already moved on to another job is
+	// untouched.
+	rows, err := tx.Query(ctx, `
 		UPDATE pipeline_jobs SET status = 'canceled', finished_at = now()
 		WHERE run_id = $1 AND status IN ('queued','running')
-	`, runID); err != nil {
+		RETURNING runner_id
+	`, runID)
+	if err != nil {
 		return apperr.Internal(err)
+	}
+	var runnerIDs []uuid.UUID
+	for rows.Next() {
+		var rid *uuid.UUID
+		if err := rows.Scan(&rid); err != nil {
+			rows.Close()
+			return apperr.Internal(err)
+		}
+		if rid != nil {
+			runnerIDs = append(runnerIDs, *rid)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return apperr.Internal(err)
+	}
+	if err := freeRunners(ctx, tx, runnerIDs); err != nil {
+		return err
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE pipeline_steps st SET status = 'canceled', finished_at = now()
@@ -362,18 +549,29 @@ type QueuedJob struct {
 // QueuedDemand returns the tier/labels of every queued, dependency-satisfied
 // job in an org — i.e. work that could run right now if a matching runner
 // existed. The autoscaler diffs this against online runners to size pools.
+//
+// Matrix legs are clamped to their group's remaining max-parallel headroom.
+// Mirroring AcquireJob's admission PREDICATE alone would not be enough: with 20
+// queued legs of a `max-parallel: 2` group and none running, the running-count
+// is 0 for all 20 rows, so all 20 pass and assignDemand counts 20 machines'
+// worth of demand for work that can only ever run 2 at a time. Ranking the legs
+// within their group and keeping only the first (max_parallel - running) is
+// what makes the autoscaler and the dispatcher agree.
 func (s *Store) QueuedDemand(ctx context.Context, orgID uuid.UUID) ([]QueuedJob, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT j.resource_tier, j.runs_on
-		FROM pipeline_jobs j
-		WHERE j.org_id = $1 AND j.status = 'queued'
-		  AND NOT EXISTS (
-		        SELECT 1 FROM unnest(j.needs) AS need
-		        WHERE NOT EXISTS (
-		          SELECT 1 FROM pipeline_jobs d
-		          WHERE d.run_id = j.run_id AND d.name = need AND d.status = 'success'
-		        )
-		      )
+		SELECT t.resource_tier, t.runs_on FROM (
+		  SELECT j.resource_tier, j.runs_on, j.max_parallel,
+		         row_number() OVER (PARTITION BY j.run_id, j.job_key
+		                            ORDER BY j.ordinal ASC, j.name ASC) AS rn,
+		         (SELECT count(*) FROM pipeline_jobs s
+		          WHERE s.run_id = j.run_id AND s.job_key = j.job_key
+		            AND s.status = 'running') AS running
+		  FROM pipeline_jobs j
+		  WHERE j.org_id = $1 AND j.status = 'queued'
+		    AND `+dispatchableNeedsSQL+`
+		) t
+		WHERE t.max_parallel = 0
+		   OR t.rn <= GREATEST(t.max_parallel - t.running, 0)
 	`, orgID)
 	if err != nil {
 		return nil, apperr.Internal(err)

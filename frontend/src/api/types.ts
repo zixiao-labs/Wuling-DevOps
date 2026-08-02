@@ -923,7 +923,17 @@ export interface PipelineStep {
 export interface PipelineJob {
   id: string;
   run_id: string;
+  /** Logical YAML job id, shared by every leg of a matrix job. `needs` resolves against this, not `name`. */
+  job_key: string;
+  /** Per-leg display name, unique within the run — e.g. "build (ubuntu, 18)". */
   name: string;
+  /** 1-based position in the run's expanded, topologically ordered job list. */
+  ordinal: number;
+  /** Resolved matrix context for this leg; absent for a job with no strategy.matrix. */
+  matrix?: Record<string, string>;
+  fail_fast: boolean;
+  /** 0 = unlimited. */
+  max_parallel: number;
   runs_on: string[];
   resource_tier: ResourceTier;
   needs: string[];

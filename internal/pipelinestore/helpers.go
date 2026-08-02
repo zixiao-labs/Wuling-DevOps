@@ -1,12 +1,15 @@
 package pipelinestore
 
 import (
+	"encoding/json"
 	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/zixiao-labs/wuling-devops/internal/apperr"
 	"github.com/zixiao-labs/wuling-devops/internal/model"
+	"github.com/zixiao-labs/wuling-devops/internal/pipeline"
 )
 
 // row is the common interface of pgx.Row and a single pgx.Rows iteration.
@@ -52,6 +55,34 @@ func normStrings(s []string) []string {
 		return []string{}
 	}
 	return s
+}
+
+// matrixJSON renders a leg's matrix context for the JSONB column. json.Marshal
+// of a nil map yields "null", which is valid JSONB but wrong for a column
+// defaulted to '{}' and awkward to read back.
+func matrixJSON(m pipeline.MatrixContext) string {
+	if len(m) == 0 {
+		return "{}"
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
+}
+
+// decodeMatrix unmarshals a pipeline_jobs.matrix JSONB payload. The column is
+// scanned as raw bytes (the store's convention for JSONB) and decoded here; the
+// common empty object is left as a nil map so it stays out of the JSON API
+// response via `omitempty`.
+func decodeMatrix(raw []byte, dst *map[string]string) error {
+	if len(raw) == 0 || string(raw) == "{}" || string(raw) == "null" {
+		return nil
+	}
+	if err := json.Unmarshal(raw, dst); err != nil {
+		return apperr.Internal(err)
+	}
+	return nil
 }
 
 func itoa(i int) string { return strconv.Itoa(i) }

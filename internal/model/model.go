@@ -359,21 +359,31 @@ type PipelineRun struct {
 }
 
 // PipelineJob is a job within a run. Steps is populated on the detail endpoint.
+//
+// JobKey is the logical YAML job id, shared by every leg of a matrix job and
+// the identity `needs` resolves against; Name is the per-leg display name
+// ("build (ubuntu, 18)"). Matrix is the leg's resolved matrix context, empty
+// for a job with no strategy.matrix.
 type PipelineJob struct {
-	ID           uuid.UUID      `json:"id"`
-	RunID        uuid.UUID      `json:"run_id"`
-	Name         string         `json:"name"`
-	RunsOn       []string       `json:"runs_on"`
-	ResourceTier string         `json:"resource_tier"`
-	Needs        []string       `json:"needs"`
-	Status       string         `json:"status"`
-	RunnerID     *uuid.UUID     `json:"runner_id,omitempty"`
-	Attempt      int            `json:"attempt"`
-	LogSize      int64          `json:"log_size"`
-	QueuedAt     time.Time      `json:"queued_at"`
-	StartedAt    *time.Time     `json:"started_at,omitempty"`
-	FinishedAt   *time.Time     `json:"finished_at,omitempty"`
-	Steps        []PipelineStep `json:"steps,omitempty"`
+	ID           uuid.UUID         `json:"id"`
+	RunID        uuid.UUID         `json:"run_id"`
+	JobKey       string            `json:"job_key"`
+	Name         string            `json:"name"`
+	Ordinal      int               `json:"ordinal"`
+	Matrix       map[string]string `json:"matrix,omitempty"`
+	FailFast     bool              `json:"fail_fast"`
+	MaxParallel  int               `json:"max_parallel"`
+	RunsOn       []string          `json:"runs_on"`
+	ResourceTier string            `json:"resource_tier"`
+	Needs        []string          `json:"needs"`
+	Status       string            `json:"status"`
+	RunnerID     *uuid.UUID        `json:"runner_id,omitempty"`
+	Attempt      int               `json:"attempt"`
+	LogSize      int64             `json:"log_size"`
+	QueuedAt     time.Time         `json:"queued_at"`
+	StartedAt    *time.Time        `json:"started_at,omitempty"`
+	FinishedAt   *time.Time        `json:"finished_at,omitempty"`
+	Steps        []PipelineStep    `json:"steps,omitempty"`
 }
 
 // PipelineStep is one ordered step within a job. Logs live on disk, not here.
