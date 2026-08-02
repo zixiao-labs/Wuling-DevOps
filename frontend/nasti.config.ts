@@ -13,6 +13,9 @@ import path from "node:path";
 import { defineConfig, type NastiPlugin } from "@nasti-toolchain/nasti";
 import { chen } from "chen-the-dawnstreak/vite-plugin";
 
+// @ts-ignore — plain-JS build helper, deliberately outside the app tsconfig
+import { serviceWorkerPlugin } from "./build/service-worker-plugin.js";
+
 declare const process: { env: Record<string, string | undefined>; cwd(): string };
 
 const API_TARGET = process.env.WULING_API_URL ?? "http://localhost:8080";
@@ -135,6 +138,10 @@ export default defineConfig({
         icons: pwaIcons,
       },
     }),
+    // Must come after chen(): both write sw.js in closeBundle and the last
+    // write wins. See build/service-worker-plugin.js for why chen's generated
+    // worker cannot be shipped as-is.
+    serviceWorkerPlugin(),
   ],
   resolve: {
     alias: {
