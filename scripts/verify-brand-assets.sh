@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # Assert the built frontend bundle actually contains everything in public/.
 #
 # Nasti's build has no publicDir handling — the dev server serves public/ via
@@ -14,9 +14,11 @@
 #
 # Set PUBLIC_DIR to point the source-of-truth elsewhere (the Docker build runs
 # this from outside the repo layout, where the ../frontend guess does not hold).
-set -euo pipefail
+#
+# POSIX sh — must run on Alpine (no bash) used by Dockerfile.frontend.
+set -eu
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 public_dir="${PUBLIC_DIR:-$repo_root/frontend/public}"
 dist_dir="${1:-$repo_root/frontend/dist}"
 
@@ -33,12 +35,17 @@ dist_dir="${1:-$repo_root/frontend/dist}"
 status=0
 
 # 1. Everything in public/ must have been copied into the bundle.
+#    Here-doc (not process substitution) so status updates survive the loop
+#    under plain /bin/sh.
 while IFS= read -r rel; do
+  [ -n "$rel" ] || continue
   if [ ! -f "$dist_dir/$rel" ]; then
     echo "MISSING from bundle: $rel (present in frontend/public/)" >&2
     status=1
   fi
-done < <(cd "$public_dir" && find . -type f -not -name '.DS_Store' | sed 's|^\./||')
+done <<EOF
+$(cd "$public_dir" && find . -type f ! -name '.DS_Store' | sed 's|^\./||')
+EOF
 
 # 2. Every root-relative file index.html points at must exist. Hashed /assets/*
 #    are emitted by the bundler itself; this mainly covers the brand files,
@@ -50,8 +57,10 @@ if [ -f "$dist_dir/index.html" ]; then
       echo "DANGLING reference in index.html: /$ref" >&2
       status=1
     fi
-  done < <(grep -oE '(href|src|content)="/[^"]+"' "$dist_dir/index.html" |
-    sed -E 's/.*="\/([^"]+)"/\1/' | sort -u)
+  done <<EOF
+$(grep -oE '(href|src|content)="/[^"]+"' "$dist_dir/index.html" |
+  sed -E 's/.*="\/([^"]+)"/\1/' | sort -u)
+EOF
 fi
 
 # 3. The manifest's icons must resolve, or an install prompt silently degrades.
@@ -62,8 +71,10 @@ if [ -f "$dist_dir/manifest.json" ]; then
       echo "DANGLING manifest icon: /$icon" >&2
       status=1
     fi
-  done < <(grep -oE '"src"[[:space:]]*:[[:space:]]*"/[^"]+"' "$dist_dir/manifest.json" |
-    sed -E 's/.*"\/([^"]+)"/\1/' | sort -u)
+  done <<EOF
+$(grep -oE '"src"[[:space:]]*:[[:space:]]*"/[^"]+"' "$dist_dir/manifest.json" |
+  sed -E 's/.*"\/([^"]+)"/\1/' | sort -u)
+EOF
 fi
 
 if [ "$status" -ne 0 ]; then
