@@ -46,6 +46,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Files]
 Source: "{#RunnerExe}"; DestDir: "{app}"; DestName: "wuling-runner.exe"; Flags: ignoreversion
 Source: "run.cmd"; DestDir: "{app}"; Flags: ignoreversion
+Source: "register-schtask.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
 [Dirs]
 Name: "C:\ProgramData\wuling-runner"; Permissions: admins-full system-full
@@ -59,18 +60,10 @@ Name: "schtask"; Description: "Register Scheduled Task ""wuling-runner"" (runs a
 
 [Run]
 ; Register the scheduled task after files are in place. Safe to re-run on upgrade.
+; Keep Parameters on one line: Inno Setup cannot split a quoted parameter across "\" continuations.
 Filename: "powershell.exe"; \
-  Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""\
-    $action = New-ScheduledTaskAction -Execute '{app}\run.cmd'; \
-    $trigger = New-ScheduledTaskTrigger -AtStartup; \
-    $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest; \
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries \
-      -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) \
-      -ExecutionTimeLimit (New-TimeSpan -Seconds 0); \
-    Register-ScheduledTask -TaskName 'wuling-runner' -Action $action -Trigger $trigger \
-      -Principal $principal -Settings $settings -Force | Out-Null\
-  """; \
-  StatusMsg: "Registering scheduled task…"; \
+  Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\register-schtask.ps1"""; \
+  StatusMsg: "Registering scheduled task..."; \
   Flags: runhidden; \
   Tasks: schtask
 

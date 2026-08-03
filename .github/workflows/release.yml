@@ -168,9 +168,14 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          choco install innosetup -y --no-progress
+          # Image may already have Inno Setup; install only when ISCC is missing.
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { $iscc = "${env:ProgramFiles}\Inno Setup 6\ISCC.exe" }
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+            $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+            if (-not (Test-Path $iscc)) { $iscc = "${env:ProgramFiles}\Inno Setup 6\ISCC.exe" }
+          }
           if (-not (Test-Path $iscc)) { throw "ISCC.exe not found after installing Inno Setup" }
           $exe = (Resolve-Path "target/${{ matrix.target }}/release/wuling-runner.exe").Path
           $outDir = (Resolve-Path "out").Path
