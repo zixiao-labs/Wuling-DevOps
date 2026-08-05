@@ -52,6 +52,9 @@ func (p *aliyunProvider) Launch(ctx context.Context, spec LaunchSpec) (Instance,
 	if len(spec.UserData) > 32*1024 {
 		return Instance{}, fmt.Errorf("user-data exceeds 32 KiB before base64 encoding (InvalidUserData.SizeExceeded)")
 	}
+	if err := p.verifyTopology(ctx); err != nil {
+		return Instance{}, err
+	}
 
 	types, err := p.resolveInstanceTypes()
 	if err != nil {
@@ -87,6 +90,74 @@ func (p *aliyunProvider) Launch(ctx context.Context, spec LaunchSpec) (Instance,
 	return Instance{}, lastErr
 }
 
+// verifyTopology makes v2's explicit VPC id a real cloud-side constraint.
+// ECS RunInstances uses VSwitchId and SecurityGroupId, so both resources must
+// be read and proven to belong to the configured VPC before creating a billed
+// instance.
+func (p *aliyunProvider) verifyTopology(ctx context.Context) error {
+	if p.pool.VPCID == "" || p.pool.VSwitchID == "" || p.pool.SecurityGroupID == "" {
+		// v1 permitted incomplete/default network selection. v2 validation
+		// requires the whole topology tuple, so every v2 launch is checked.
+		return nil
+	}
+	body, err := p.call(ctx, map[string]string{
+		"Action":    "DescribeVSwitchAttributes",
+		"RegionId":  p.pool.Region,
+		"VSwitchId": p.pool.VSwitchID,
+	}, callOpts{MaxAttempts: 3})
+	if err != nil {
+		return fmt.Errorf("verify aliyun vswitch/VPC: %w", err)
+	}
+	if err := validateAliyunVSwitchTopology(body, p.pool.VSwitchID, p.pool.VPCID, p.pool.ZoneID); err != nil {
+		return err
+	}
+
+	body, err = p.call(ctx, map[string]string{
+		"Action":          "DescribeSecurityGroupAttribute",
+		"RegionId":        p.pool.Region,
+		"SecurityGroupId": p.pool.SecurityGroupID,
+	}, callOpts{MaxAttempts: 3})
+	if err != nil {
+		return fmt.Errorf("verify aliyun security group/VPC: %w", err)
+	}
+	return validateAliyunSecurityGroupVPC(body, p.pool.SecurityGroupID, p.pool.VPCID)
+}
+
+func validateAliyunVSwitchTopology(body []byte, vswitchID, vpcID, zoneID string) error {
+	var vswitch struct {
+		ID     string `json:"VSwitchId"`
+		VPCID  string `json:"VpcId"`
+		ZoneID string `json:"ZoneId"`
+	}
+	if err := json.Unmarshal(body, &vswitch); err != nil {
+		return fmt.Errorf("parse DescribeVSwitchAttributes response: %w", err)
+	}
+	if vswitch.ID != vswitchID || vswitch.VPCID == "" || vswitch.VPCID != vpcID {
+		return fmt.Errorf("configured aliyun vswitch %q belongs to VPC %q, not vpc_id %q",
+			vswitchID, vswitch.VPCID, vpcID)
+	}
+	if zoneID != "" && vswitch.ZoneID != zoneID {
+		return fmt.Errorf("configured aliyun vswitch %q belongs to zone %q, not zone_id %q",
+			vswitchID, vswitch.ZoneID, zoneID)
+	}
+	return nil
+}
+
+func validateAliyunSecurityGroupVPC(body []byte, groupID, vpcID string) error {
+	var group struct {
+		ID    string `json:"SecurityGroupId"`
+		VPCID string `json:"VpcId"`
+	}
+	if err := json.Unmarshal(body, &group); err != nil {
+		return fmt.Errorf("parse DescribeSecurityGroupAttribute response: %w", err)
+	}
+	if group.ID != groupID || group.VPCID == "" || group.VPCID != vpcID {
+		return fmt.Errorf("configured aliyun security group %q belongs to VPC %q, not vpc_id %q",
+			groupID, group.VPCID, vpcID)
+	}
+	return nil
+}
+
 func (p *aliyunProvider) resolveInstanceTypes() ([]string, error) {
 	if p.pool.InstanceType != "" {
 		return []string{p.pool.InstanceType}, nil
@@ -102,19 +173,19 @@ func (p *aliyunProvider) resolveInstanceTypes() ([]string, error) {
 // makes the call idempotent only while the other parameters are byte-identical.
 func (p *aliyunProvider) runInstancesParams(spec LaunchSpec, instanceType string, now time.Time) map[string]string {
 	params := map[string]string{
-		"Action":          "RunInstances",
-		"RegionId":        p.pool.Region,
-		"ImageId":         p.pool.ImageID,
-		"InstanceType":    instanceType,
-		"SecurityGroupId": p.pool.SecurityGroupID,
-		"VSwitchId":       p.pool.VSwitchID,
-		"Amount":          "1",
-		"InstanceName":    spec.RunnerName,
-		"HostName":        aliyunHostName(spec.RunnerName, spec.Pool.OS),
-		"UserData":        base64.StdEncoding.EncodeToString([]byte(spec.UserData)),
-		"IoOptimized":     "optimized",
+		"Action":             "RunInstances",
+		"RegionId":           p.pool.Region,
+		"ImageId":            p.pool.ImageID,
+		"InstanceType":       instanceType,
+		"SecurityGroupId":    p.pool.SecurityGroupID,
+		"VSwitchId":          p.pool.VSwitchID,
+		"Amount":             "1",
+		"InstanceName":       spec.RunnerName,
+		"HostName":           aliyunHostName(spec.RunnerName, spec.Pool.OS),
+		"UserData":           base64.StdEncoding.EncodeToString([]byte(spec.UserData)),
+		"IoOptimized":        "optimized",
 		"InstanceChargeType": orDefault(p.pool.InstanceChargeType, "PostPaid"),
-		"ClientToken":     spec.IdempotencyKey(),
+		"ClientToken":        spec.IdempotencyKey(),
 	}
 	if p.pool.ZoneID != "" {
 		params["ZoneId"] = p.pool.ZoneID
@@ -145,7 +216,25 @@ func (p *aliyunProvider) runInstancesParams(spec LaunchSpec, instanceType string
 	if p.pool.SystemDiskPerformanceLevel != "" {
 		params["SystemDisk.PerformanceLevel"] = p.pool.SystemDiskPerformanceLevel
 	}
-	if gib, ok := ParseSizeGiB(p.pool.DataDiskSize); ok {
+	if len(p.pool.DataDisks) > 0 {
+		for i, disk := range p.pool.DataDisks {
+			index := i + 1
+			prefix := fmt.Sprintf("DataDisk.%d.", index)
+			params[prefix+"DiskName"] = disk.Name
+			if gib, ok := ParseSizeGiB(disk.Size); ok {
+				params[prefix+"Size"] = strconv.Itoa(gib)
+			}
+			if disk.Category != "" {
+				params[prefix+"Category"] = disk.Category
+			}
+			if disk.PerformanceLevel != "" {
+				params[prefix+"PerformanceLevel"] = disk.PerformanceLevel
+			}
+			params[prefix+"DeleteWithInstance"] = strconv.FormatBool(disk.DeleteWithInstance)
+		}
+	} else if gib, ok := ParseSizeGiB(p.pool.DataDiskSize); ok {
+		// Preserve the v1 single-disk fields exactly, including their
+		// DeleteWithInstance=true behavior.
 		params["DataDisk.1.Size"] = strconv.Itoa(gib)
 		params["DataDisk.1.DeleteWithInstance"] = "true"
 		if p.pool.DataDiskCategory != "" {
@@ -185,6 +274,15 @@ func (p *aliyunProvider) runInstancesParams(spec LaunchSpec, instanceType string
 		{"wuling-org", spec.OrgID.String()},
 		{"wuling-pool", spec.Pool.Name},
 		{"wuling-runner", spec.RunnerName},
+		// Immutable join key used to recover an instance id when SetExternalID
+		// fails after a successful RunInstances call.
+		{"wuling-runner-id", spec.RunnerID.String()},
+	}
+	if spec.IsolatedJobID != uuid.Nil {
+		// This is the cloud-side join key for the durable isolated-job/self-
+		// check audit. It contains no token or secret and makes a stranded VM
+		// identifiable in the provider console.
+		tags = append(tags, [2]string{"wuling-isolated-job", spec.IsolatedJobID.String()})
 	}
 	for _, k := range sortedKeys(p.pool.Tags) {
 		tags = append(tags, [2]string{k, p.pool.Tags[k]})
@@ -269,6 +367,52 @@ func (p *aliyunProvider) Terminate(ctx context.Context, externalID string) error
 		}
 	}
 	return err
+}
+
+// FindRunnerInstance recovers an instance id after a post-launch database
+// write failed. The runner UUID tag is immutable and unique to one row.
+func (p *aliyunProvider) FindRunnerInstance(ctx context.Context, runnerID uuid.UUID) (Instance, bool, error) {
+	body, err := p.call(ctx, map[string]string{
+		"Action":      "DescribeInstances",
+		"RegionId":    p.pool.Region,
+		"Tag.1.Key":   "wuling-runner-id",
+		"Tag.1.Value": runnerID.String(),
+	}, callOpts{MaxAttempts: 3})
+	if err != nil {
+		return Instance{}, false, fmt.Errorf("find aliyun runner instance: %w", err)
+	}
+	instanceID, found, err := parseAliyunRunnerInstance(body)
+	if err != nil {
+		return Instance{}, false, err
+	}
+	if !found {
+		return Instance{}, false, nil
+	}
+	return Instance{ExternalID: instanceID}, true, nil
+}
+
+func parseAliyunRunnerInstance(body []byte) (string, bool, error) {
+	var response struct {
+		Instances struct {
+			Instance []struct {
+				InstanceID string `json:"InstanceId"`
+			} `json:"Instance"`
+		} `json:"Instances"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return "", false, fmt.Errorf("parse DescribeInstances response: %w", err)
+	}
+	var instanceID string
+	for _, instance := range response.Instances.Instance {
+		if instance.InstanceID == "" {
+			continue
+		}
+		if instanceID != "" && instanceID != instance.InstanceID {
+			return "", false, fmt.Errorf("DescribeInstances returned multiple instances for one runner id")
+		}
+		instanceID = instance.InstanceID
+	}
+	return instanceID, instanceID != "", nil
 }
 
 type callOpts struct {

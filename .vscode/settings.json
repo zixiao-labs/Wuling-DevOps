@@ -1,0 +1,9 @@
+{
+  "yaml.schemas": {
+    "./schemas/wuling-workflow.schema.json": [
+      ".wuling/workflows/*.yml",
+      ".wuling/workflows/*.yaml"
+    ],
+    "./schemas/runner-config.schema.json": "**/runner-config.yaml"
+  }
+}

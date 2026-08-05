@@ -135,11 +135,13 @@ func (s *Store) CreateRun(ctx context.Context, p CreateRunParams) (*model.Pipeli
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO pipeline_jobs
 			    (id, run_id, org_id, job_key, name, ordinal, runs_on, resource_tier,
-			     needs, status, definition, matrix, fail_fast, max_parallel)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'queued',$10::jsonb,$11::jsonb,$12,$13)
+			     needs, status, definition, matrix, fail_fast, max_parallel,
+			     execution_mode, execution_pool)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'queued',$10::jsonb,$11::jsonb,$12,$13,$14,$15)
 		`, jobID, run.ID, p.OrgID, leg.Key, leg.Name, leg.Ordinal,
 			normStrings(leg.RunsOn), leg.Tier, normStrings(leg.Needs),
-			string(specJSON), matrixJSON(leg.Matrix), leg.FailFast, leg.MaxParallel); err != nil {
+			string(specJSON), matrixJSON(leg.Matrix), leg.FailFast, leg.MaxParallel,
+			leg.Spec.Execution.Mode, leg.Spec.Execution.Pool); err != nil {
 			return nil, apperr.Internal(err)
 		}
 		for i, st := range leg.Spec.Steps {

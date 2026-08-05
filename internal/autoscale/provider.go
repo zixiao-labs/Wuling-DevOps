@@ -29,6 +29,9 @@ type LaunchSpec struct {
 	// — and billing — a second VM.
 	OrgID    uuid.UUID
 	RunnerID uuid.UUID
+	// IsolatedJobID is non-zero only for a one-job VM. Providers emit it as a
+	// non-secret audit tag so operators can find a stranded isolated VM.
+	IsolatedJobID uuid.UUID
 }
 
 // IdempotencyKey is the ≤64-ASCII-char token providers pass as their
@@ -40,6 +43,18 @@ type Provider interface {
 	Name() string
 	Launch(ctx context.Context, spec LaunchSpec) (Instance, error)
 	Terminate(ctx context.Context, externalID string) error
+}
+
+// RunnerInstanceFinder is an optional recovery capability implemented by cloud
+// providers that can search instance tags. A database write can fail after a
+// VM is successfully created; the autoscaler uses this capability to recover
+// the instance id from its immutable runner-id tag before deciding whether it
+// is safe to delete the runner row.
+//
+// It intentionally sits outside Provider so deployment-specific providers and
+// test doubles are not forced to support an API that only AWS and Aliyun need.
+type RunnerInstanceFinder interface {
+	FindRunnerInstance(ctx context.Context, runnerID uuid.UUID) (Instance, bool, error)
 }
 
 // ProviderSecrets holds the decrypted org secrets one pool needs. Credentials

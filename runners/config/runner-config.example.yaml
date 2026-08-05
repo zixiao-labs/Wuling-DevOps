@@ -11,9 +11,15 @@
 #     AK/SK / API token 存在加密 Secret 里（见 docs/pipelines.md §4）。
 #
 # 本文件是带注释的“示例”。复制到你 org 的 config 仓库后按需删改。
+# v2 迁移：v1 仍可解析；将 aliyun.data_disk_size/data_disk_category 迁移为
+# provider 的 data_disks 列表，并在 pool 顶层指定 runner_data_disk。v2 的
+# aliyun/aws 池必须显式声明 vpc_id；实际 API 仍分别使用 vswitch_id/subnet_id。
+# runner_data_disk 的容量必须在该 pool 的 data_disks 中唯一，确保 Linux/Windows
+# 首启只能安全识别并格式化目标 RAW 非系统盘。
+# 每个 isolated VM 会附带 wuling-isolated-job 审计标签，便于在云控制台盘点并清理临时实例。
 # =============================================================================
 
-version: 1
+version: 2
 
 # job 未声明 `resource:` 且 runs-on 不含 `tier:*` 标签时的默认档位。
 default_tier: medium
@@ -49,14 +55,25 @@ pools:
     labels: [linux, docker]
     min: 0
     max: 5
+    # Runner 的 work/tools/state 将格式化并挂载在这块非系统盘；首次启动会
+    # 销毁该 RAW 磁盘上的已有数据。为避免歧义，它的容量必须在 data_disks 中唯一；
+    # 其他不同容量的 RAW 非根盘可以存在，但不会被 Runner 初始化。
+    runner_data_disk: runner-work
     aliyun:
       region: cn-hangzhou
       zone_id: cn-hangzhou-i
       image_id: m-xxxxxxxx              # 预装容器运行时 + 武陵 runner 客户端的镜像（构建见 docs/pipelines.md §7.1）
       instance_type: ecs.g7.large       # 应与 tier 规格相称；也可用 instance_types 按序回退规避售罄
+      vpc_id: vpc-xxxxxxxx              # v2 必填：用于自检/拓扑归属校验
       vswitch_id: vsw-xxxxxxxx
       security_group_id: sg-xxxxxxxx
       system_disk_category: cloud_essd  # 不填 system_disk_size 则取 tiers.<tier>.storage
+      data_disks:
+        - name: runner-work              # ECS 磁盘名称；runner_data_disk 必须命中该名称
+          size: 120Gi
+          category: cloud_essd
+          performance_level: PL1
+          delete_with_instance: true       # Runner 数据盘必须为 true，防止遗留计费卷/隔离数据
       internet_max_bandwidth_out: 5      # Mbps；0 = 不分配公网
       spot: true                         # 竞价实例进一步降本（可选）
       credentials_secret: ALIYUN_CREDS   # org Secret，JSON: {"access_key_id":"…","access_key_secret":"…"}
@@ -68,12 +85,21 @@ pools:
     labels: [linux, docker]
     min: 0
     max: 3
+    runner_data_disk: runner-work
     aws:
       region: us-west-2
       ami: ami-xxxxxxxx                  # 预装容器运行时 + 武陵 runner 客户端的镜像（构建见 docs/pipelines.md §7.1）
       instance_type: c6i.2xlarge
+      vpc_id: vpc-xxxxxxxx               # v2 必填：用于自检/拓扑归属校验
       subnet_id: subnet-xxxxxxxx
       security_group_ids: [sg-xxxxxxxx]
+      data_disks:
+        - name: runner-work
+          size: 160Gi
+          category: gp3
+          device_name: /dev/sdf          # AWS 请求映射；Nitro 来宾内可能显示为 NVMe 名
+          encrypted: true
+          delete_with_instance: true
       iam_instance_profile: ""           # 可选
       spot: false
       credentials_secret: AWS_CREDS       # JSON: {"access_key_id":"…","secret_access_key":"…","session_token":"…"(可选)}
@@ -86,12 +112,20 @@ pools:
     labels: [windows]                    # 工作流用 runs-on: [windows] 命中（runner 也会自动带 windows 裸标签）
     min: 0
     max: 3
+    runner_data_disk: runner-work
     aws:
       region: us-west-2
       ami: ami-xxxxxxxx                  # Windows Server 2022 镜像，预装 wuling-runner.exe + 计划任务（见 docs/pipelines.md §7.1、runners/images/windows）
       instance_type: c6i.2xlarge
+      vpc_id: vpc-xxxxxxxx
       subnet_id: subnet-xxxxxxxx
       security_group_ids: [sg-xxxxxxxx]
+      data_disks:
+        - name: runner-work
+          size: 160Gi
+          category: gp3
+          encrypted: true
+          delete_with_instance: true
       spot: false
       credentials_secret: AWS_CREDS
 
@@ -107,15 +141,23 @@ pools:
     labels: [windows]                      # labels 必须是半角 ASCII
     min: 0
     max: 3
+    runner_data_disk: runner-work
     aliyun:
       region: cn-hangzhou
       zone_id: cn-hangzhou-i
       image_id: m-xxxxxxxx                 # Windows Server 2022 自定义镜像（runners/images/windows/setup.ps1）
       instance_types: [ecs.g8i.xlarge, ecs.g7.xlarge]   # 按序回退，规避某一规格售罄
+      vpc_id: vpc-xxxxxxxx
       vswitch_id: vsw-xxxxxxxx
       security_group_id: sg-xxxxxxxx
       system_disk_size: 120Gi              # 不填则取 tiers.<tier>.storage
       system_disk_category: cloud_essd
+      data_disks:
+        - name: runner-work
+          size: 160Gi
+          category: cloud_essd
+          performance_level: PL1
+          delete_with_instance: true
       instance_charge_type: PostPaid
       auto_release_hours: 24               # 兜底自毁，防控制面异常时实例泄漏
       # ⚠️ Windows 必填：阿里云在 Windows 实例上**忽略** key_pair_name，只认 Password。

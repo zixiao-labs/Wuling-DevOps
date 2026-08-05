@@ -170,8 +170,14 @@ func (h *Handler) buildConfigResponse(ctx context.Context, orgID uuid.UUID, f *o
 
 func (h *Handler) configWarnings(ctx context.Context, orgID uuid.UUID, cfg *autoscale.Config) []string {
 	out := []string{}
-	if cfg.Version != 0 && cfg.Version != 1 {
-		out = append(out, fmt.Sprintf("version %d is not recognised; the control plane implements version 1", cfg.Version))
+	switch cfg.Version {
+	case 0, 1:
+		out = append(out,
+			"runner-config version 1 仍兼容，但不要求显式 vpc_id，且不支持命名 data_disks 或 runner_data_disk；请按示例迁移到 version: 2")
+	case 2:
+		// Current format; no migration warning.
+	default:
+		out = append(out, fmt.Sprintf("version %d is not recognised; the control plane implements versions 1 and 2", cfg.Version))
 	}
 	if h.Secrets == nil {
 		return out

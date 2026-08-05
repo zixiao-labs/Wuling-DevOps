@@ -5,11 +5,12 @@ order: 10
 description: 十分钟跑通第一条流水线。
 ---
 
-## 创建 .wuling-ci.yml
+## 创建 `.wuling/workflows/ci.yml`
 
-在仓库根目录新建 `.wuling-ci.yml`：
+在仓库中新建 `.wuling/workflows/ci.yml`：
 
 ```yaml
+# yaml-language-server: $schema=https://<wuling-origin>/.well-known/wuling/schemas/v1/workflow.json
 name: CI
 
 on:
@@ -22,13 +23,19 @@ jobs:
     runs-on: [linux]
     steps:
       - name: Checkout
-        run: git status
+        uses: actions/checkout@v4
 
-      - name: Hello
-        run: echo "Hello from Wuling CI"
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Test
+        run: npm ci && npm test
 ```
 
-提交并推送到远程仓库。
+将 `<wuling-origin>` 替换为当前武陵 DevOps 站点的实际 origin。提交并推送到远程仓库。
 
 ## 查看运行结果
 
@@ -38,15 +45,21 @@ jobs:
 
 ## 使用内置 Action
 
-武陵 DevOps 提供 `setup-node`、`setup-rust` 等内置 action，可缓存依赖：
+武陵 DevOps 支持 GitHub Actions 风格的内置 action。使用完整 action 名称和版本引用：
 
 ```yaml
 steps:
-  - uses: setup-node
+  - uses: actions/checkout@v4
+
+  - uses: actions/setup-node@v4
     with:
       node-version: "22"
+      cache: npm
+
   - run: npm ci && npm test
 ```
+
+`actions/setup-node@v4` 的 `cache` 可选值为 `npm`、`pnpm` 或 `yarn`。`actions/setup-rust` 用于配置 Rust 工具链；它的 `cache` input 当前不会启用 Rust 依赖缓存，请不要将其作为缓存保证。
 
 ## 矩阵构建
 
@@ -57,7 +70,8 @@ strategy:
   matrix:
     node: ["20", "22"]
 steps:
-  - uses: setup-node
+  - uses: actions/checkout@v4
+  - uses: actions/setup-node@v4
     with:
       node-version: ${{ matrix.node }}
 ```

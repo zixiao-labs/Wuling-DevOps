@@ -30,6 +30,7 @@ import (
 	"github.com/zixiao-labs/wuling-devops/internal/orgconfig"
 	"github.com/zixiao-labs/wuling-devops/internal/pipelinestore"
 	"github.com/zixiao-labs/wuling-devops/internal/repostore"
+	"github.com/zixiao-labs/wuling-devops/internal/runnercheck"
 	"github.com/zixiao-labs/wuling-devops/internal/runnerstore"
 	"github.com/zixiao-labs/wuling-devops/internal/secretbox"
 	"github.com/zixiao-labs/wuling-devops/internal/secretstore"
@@ -118,6 +119,7 @@ func run() error {
 		return err
 	}
 	secrets := secretstore.New(pool, box)
+	runnerSelfChecks := runnercheck.NewAuditStore(pool, box)
 	runners := runnerstore.New(pool)
 	pipelines := pipelinestore.New(pool, cfg.Pipeline.LogDir)
 	stage2 := stage2store.New(pool)
@@ -135,21 +137,22 @@ func run() error {
 	}
 
 	handler := server.New(server.Deps{
-		Cfg:       cfg,
-		Log:       log,
-		Pool:      pool,
-		Store:     store,
-		Issues:    issues,
-		MRs:       mrs,
-		Wikis:     wikis,
-		Insights:  insights,
-		Layout:    layout,
-		Secrets:   secrets,
-		Runners:   runners,
-		Pipelines: pipelines,
-		Stage2:    stage2,
-		Artifacts: artifacts,
-		OrgConfig: orgConfig,
+		Cfg:              cfg,
+		Log:              log,
+		Pool:             pool,
+		Store:            store,
+		Issues:           issues,
+		MRs:              mrs,
+		Wikis:            wikis,
+		Insights:         insights,
+		Layout:           layout,
+		Secrets:          secrets,
+		Runners:          runners,
+		Pipelines:        pipelines,
+		Stage2:           stage2,
+		Artifacts:        artifacts,
+		OrgConfig:        orgConfig,
+		RunnerSelfChecks: runnerSelfChecks,
 	})
 
 	srv := &http.Server{
@@ -173,6 +176,7 @@ func run() error {
 			Secrets:            secrets,
 			Log:                log.With("component", "autoscaler"),
 			OrgConfig:          orgConfig,
+			IsolatedLifecycle:  runnerSelfChecks,
 			ServerURL:          cfg.OAuth.PublicBaseURL,
 			DefaultIdleTimeout: cfg.Autoscale.DefaultIdleTimeout,
 			Interval:           cfg.Autoscale.Interval,

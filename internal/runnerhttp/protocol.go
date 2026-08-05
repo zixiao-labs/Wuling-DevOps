@@ -100,10 +100,29 @@ func (h *Handler) acquire(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	secrets, err := h.Secrets.ResolveForProject(r.Context(), aj.OrgID, aj.ProjectID)
-	if err != nil {
-		httpapi.RenderError(w, r, err)
-		return
+	var secrets map[string]string
+	if h.SelfChecks != nil {
+		probeSecrets, isProbe, probeErr := h.SelfChecks.ProbeSecretsForJob(r.Context(), aj.JobID)
+		if probeErr != nil {
+			// Acquire has already atomically claimed the job. Finalize it rather
+			// than leaving a one-shot VM indefinitely busy when its encrypted
+			// diagnostic value cannot be read.
+			_ = h.Pipelines.CompleteJob(r.Context(), aj.JobID, "failed")
+			h.SelfChecks.CompleteProbe(r.Context(), aj.JobID, "failed")
+			httpapi.RenderError(w, r, probeErr)
+			return
+		}
+		if isProbe {
+			secrets = probeSecrets
+			h.SelfChecks.MarkProbeExecuting(r.Context(), aj.JobID, ri.RunnerID)
+		}
+	}
+	if secrets == nil {
+		secrets, err = h.Secrets.ResolveForProject(r.Context(), aj.OrgID, aj.ProjectID)
+		if err != nil {
+			httpapi.RenderError(w, r, err)
+			return
+		}
 	}
 	resp := acquireResponse{
 		AcquiredJob: aj,
@@ -210,6 +229,9 @@ func (h *Handler) complete(w http.ResponseWriter, r *http.Request) {
 	if err := h.Pipelines.CompleteJob(r.Context(), jc.JobID, req.Conclusion); err != nil {
 		httpapi.RenderError(w, r, err)
 		return
+	}
+	if h.SelfChecks != nil {
+		h.SelfChecks.CompleteProbe(r.Context(), jc.JobID, req.Conclusion)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

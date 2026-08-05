@@ -11,8 +11,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // awsProvider launches/terminates EC2 instances via the EC2 query API, signed
@@ -38,6 +41,120 @@ func newAWSProvider(pool Pool, creds awsCreds) (Provider, error) {
 func (p *awsProvider) Name() string { return "aws" }
 
 func (p *awsProvider) Launch(ctx context.Context, spec LaunchSpec) (Instance, error) {
+	if err := p.verifyTopology(ctx); err != nil {
+		return Instance{}, err
+	}
+	params := p.runInstancesParams(spec)
+
+	body, err := p.call(ctx, params)
+	if err != nil {
+		return Instance{}, err
+	}
+	var resp struct {
+		Instances []struct {
+			InstanceID string `xml:"instanceId"`
+		} `xml:"instancesSet>item"`
+	}
+	if err := xml.Unmarshal(body, &resp); err != nil {
+		return Instance{}, fmt.Errorf("parse RunInstances response: %w", err)
+	}
+	if len(resp.Instances) == 0 || resp.Instances[0].InstanceID == "" {
+		return Instance{}, fmt.Errorf("RunInstances returned no instance id")
+	}
+	return Instance{ExternalID: resp.Instances[0].InstanceID}, nil
+}
+
+// verifyTopology makes the explicit v2 VPC contract real before a billable
+// RunInstances request. SubnetId alone selects placement in EC2, so without
+// these Describe calls a typo in vpc_id would silently be accepted and make
+// GitOps/audit records claim the wrong network boundary.
+func (p *awsProvider) verifyTopology(ctx context.Context) error {
+	if p.pool.VPCID == "" || p.pool.SubnetID == "" || len(p.pool.SecurityGroupIDs) == 0 {
+		// v1 allowed EC2's implicit/default-network behavior. v2 validation
+		// requires all three fields, so every v2 launch takes this path.
+		return nil
+	}
+	subnets := url.Values{}
+	subnets.Set("Action", "DescribeSubnets")
+	subnets.Set("Version", "2016-11-15")
+	subnets.Set("SubnetId.1", p.pool.SubnetID)
+	body, err := p.call(ctx, subnets)
+	if err != nil {
+		return fmt.Errorf("verify aws subnet/VPC: %w", err)
+	}
+	if err := validateAWSSubnetVPC(body, p.pool.SubnetID, p.pool.VPCID); err != nil {
+		return err
+	}
+
+	groups := url.Values{}
+	groups.Set("Action", "DescribeSecurityGroups")
+	groups.Set("Version", "2016-11-15")
+	for i, id := range p.pool.SecurityGroupIDs {
+		groups.Set(fmt.Sprintf("GroupId.%d", i+1), id)
+	}
+	body, err = p.call(ctx, groups)
+	if err != nil {
+		return fmt.Errorf("verify aws security group/VPC: %w", err)
+	}
+	return validateAWSSecurityGroupVPC(body, p.pool.SecurityGroupIDs, p.pool.VPCID)
+}
+
+func validateAWSSubnetVPC(body []byte, subnetID, vpcID string) error {
+	var subnetResp struct {
+		Subnets []struct {
+			ID    string `xml:"subnetId"`
+			VPCID string `xml:"vpcId"`
+		} `xml:"subnetSet>item"`
+	}
+	if err := xml.Unmarshal(body, &subnetResp); err != nil {
+		return fmt.Errorf("parse DescribeSubnets response: %w", err)
+	}
+	if len(subnetResp.Subnets) != 1 || subnetResp.Subnets[0].ID != subnetID || subnetResp.Subnets[0].VPCID == "" {
+		return fmt.Errorf("DescribeSubnets did not return configured subnet %q", subnetID)
+	}
+	if subnetResp.Subnets[0].VPCID != vpcID {
+		return fmt.Errorf("configured aws subnet %q belongs to VPC %q, not vpc_id %q",
+			subnetID, subnetResp.Subnets[0].VPCID, vpcID)
+	}
+	return nil
+}
+
+func validateAWSSecurityGroupVPC(body []byte, groupIDs []string, vpcID string) error {
+	var groupResp struct {
+		Groups []struct {
+			ID    string `xml:"groupId"`
+			VPCID string `xml:"vpcId"`
+		} `xml:"securityGroupInfo>item"`
+	}
+	if err := xml.Unmarshal(body, &groupResp); err != nil {
+		return fmt.Errorf("parse DescribeSecurityGroups response: %w", err)
+	}
+	if len(groupResp.Groups) != len(groupIDs) {
+		return fmt.Errorf("DescribeSecurityGroups returned %d groups, want %d", len(groupResp.Groups), len(groupIDs))
+	}
+	expected := make(map[string]struct{}, len(groupIDs))
+	for _, id := range groupIDs {
+		expected[id] = struct{}{}
+	}
+	for _, group := range groupResp.Groups {
+		if _, ok := expected[group.ID]; !ok {
+			return fmt.Errorf("DescribeSecurityGroups returned unexpected security group %q", group.ID)
+		}
+		if group.VPCID == "" || group.VPCID != vpcID {
+			return fmt.Errorf("configured aws security group %q does not belong to vpc_id %q", group.ID, vpcID)
+		}
+		delete(expected, group.ID)
+	}
+	if len(expected) != 0 {
+		return fmt.Errorf("DescribeSecurityGroups did not return every configured security group")
+	}
+	return nil
+}
+
+// runInstancesParams renders the EC2 Query API request without adding a root
+// block-device mapping. Leaving the image's root mapping untouched preserves
+// the AMI's boot-disk behavior; every mapping rendered here is a data disk.
+func (p *awsProvider) runInstancesParams(spec LaunchSpec) url.Values {
 	params := url.Values{}
 	params.Set("Action", "RunInstances")
 	params.Set("Version", "2016-11-15")
@@ -58,29 +175,48 @@ func (p *awsProvider) Launch(ctx context.Context, spec LaunchSpec) (Instance, er
 	if p.pool.Spot {
 		params.Set("InstanceMarketOptions.MarketType", "spot")
 	}
-	// Tag the instance so it's identifiable in the console.
+	for i, disk := range p.pool.DataDisks {
+		index := i + 1
+		prefix := fmt.Sprintf("BlockDeviceMapping.%d.", index)
+		params.Set(prefix+"DeviceName", awsDataDiskDeviceName(disk, i))
+		if gib, ok := ParseSizeGiB(disk.Size); ok {
+			params.Set(prefix+"Ebs.VolumeSize", strconv.Itoa(gib))
+		}
+		if disk.Category != "" {
+			params.Set(prefix+"Ebs.VolumeType", disk.Category)
+		}
+		params.Set(prefix+"Ebs.DeleteOnTermination", strconv.FormatBool(disk.DeleteWithInstance))
+		params.Set(prefix+"Ebs.Encrypted", strconv.FormatBool(disk.Encrypted))
+	}
+	// Tag the instance so it is traceable in the provider console. The
+	// isolated-job id is a non-secret audit join key for per-job VM cleanup.
+	tags := [][2]string{
+		{"Name", spec.RunnerName},
+		{"managed-by", "wuling-autoscaler"},
+		{"wuling-org", spec.OrgID.String()},
+		{"wuling-pool", spec.Pool.Name},
+		{"wuling-runner", spec.RunnerName},
+		{"wuling-runner-id", spec.RunnerID.String()},
+	}
+	if spec.IsolatedJobID != uuid.Nil {
+		tags = append(tags, [2]string{"wuling-isolated-job", spec.IsolatedJobID.String()})
+	}
 	params.Set("TagSpecification.1.ResourceType", "instance")
-	params.Set("TagSpecification.1.Tag.1.Key", "Name")
-	params.Set("TagSpecification.1.Tag.1.Value", spec.RunnerName)
-	params.Set("TagSpecification.1.Tag.2.Key", "managed-by")
-	params.Set("TagSpecification.1.Tag.2.Value", "wuling-autoscaler")
+	for i, tag := range tags {
+		params.Set(fmt.Sprintf("TagSpecification.1.Tag.%d.Key", i+1), tag[0])
+		params.Set(fmt.Sprintf("TagSpecification.1.Tag.%d.Value", i+1), tag[1])
+	}
+	return params
+}
 
-	body, err := p.call(ctx, params)
-	if err != nil {
-		return Instance{}, err
+// awsDataDiskDeviceName supplies a deterministic non-root mapping when an
+// operator does not set device_name. AWS device names are advisory on Nitro
+// instances, but still identify the EBS mapping in the RunInstances request.
+func awsDataDiskDeviceName(disk DataDisk, index int) string {
+	if disk.DeviceName != "" {
+		return disk.DeviceName
 	}
-	var resp struct {
-		Instances []struct {
-			InstanceID string `xml:"instanceId"`
-		} `xml:"instancesSet>item"`
-	}
-	if err := xml.Unmarshal(body, &resp); err != nil {
-		return Instance{}, fmt.Errorf("parse RunInstances response: %w", err)
-	}
-	if len(resp.Instances) == 0 || resp.Instances[0].InstanceID == "" {
-		return Instance{}, fmt.Errorf("RunInstances returned no instance id")
-	}
-	return Instance{ExternalID: resp.Instances[0].InstanceID}, nil
+	return fmt.Sprintf("/dev/sd%c", 'f'+rune(index))
 }
 
 func (p *awsProvider) Terminate(ctx context.Context, externalID string) error {
@@ -90,6 +226,55 @@ func (p *awsProvider) Terminate(ctx context.Context, externalID string) error {
 	params.Set("InstanceId.1", externalID)
 	_, err := p.call(ctx, params)
 	return err
+}
+
+// FindRunnerInstance recovers an instance id after a post-launch database
+// write failed. runner-id is immutable and unique to a generated runner row,
+// unlike a human-readable name that operators may reuse.
+func (p *awsProvider) FindRunnerInstance(ctx context.Context, runnerID uuid.UUID) (Instance, bool, error) {
+	params := url.Values{}
+	params.Set("Action", "DescribeInstances")
+	params.Set("Version", "2016-11-15")
+	params.Set("Filter.1.Name", "tag:wuling-runner-id")
+	params.Set("Filter.1.Value.1", runnerID.String())
+	body, err := p.call(ctx, params)
+	if err != nil {
+		return Instance{}, false, fmt.Errorf("find aws runner instance: %w", err)
+	}
+	instanceID, found, err := parseAWSRunnerInstance(body)
+	if err != nil {
+		return Instance{}, false, err
+	}
+	if !found {
+		return Instance{}, false, nil
+	}
+	return Instance{ExternalID: instanceID}, true, nil
+}
+
+func parseAWSRunnerInstance(body []byte) (string, bool, error) {
+	var response struct {
+		Reservations []struct {
+			Instances []struct {
+				ID string `xml:"instanceId"`
+			} `xml:"instancesSet>item"`
+		} `xml:"reservationSet>item"`
+	}
+	if err := xml.Unmarshal(body, &response); err != nil {
+		return "", false, fmt.Errorf("parse DescribeInstances response: %w", err)
+	}
+	var instanceID string
+	for _, reservation := range response.Reservations {
+		for _, instance := range reservation.Instances {
+			if instance.ID == "" {
+				continue
+			}
+			if instanceID != "" && instanceID != instance.ID {
+				return "", false, fmt.Errorf("DescribeInstances returned multiple instances for one runner id")
+			}
+			instanceID = instance.ID
+		}
+	}
+	return instanceID, instanceID != "", nil
 }
 
 // call signs and POSTs an EC2 query-API request, returning the response body

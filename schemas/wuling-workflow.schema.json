@@ -1,0 +1,502 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Wuling DevOps workflow",
+  "description": "The supported Wuling workflow syntax. This schema provides editor feedback only; server-side parsing, matrix expansion, action support, and scheduling remain authoritative.",
+  "type": "object",
+  "required": ["on", "jobs"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "$ref": "#/definitions/nonEmptyString",
+      "description": "Human-readable workflow name."
+    },
+    "on": {
+      "$ref": "#/definitions/triggers"
+    },
+    "jobs": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
+      },
+      "additionalProperties": {
+        "$ref": "#/definitions/job"
+      }
+    }
+  },
+  "definitions": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "stringValue": {
+      "type": ["string", "number", "boolean"],
+      "description": "YAML scalar accepted by the workflow parser."
+    },
+    "stringValueMap": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^\\S(?:.*\\S)?$"
+      },
+      "additionalProperties": {
+        "$ref": "#/definitions/stringValue"
+      }
+    },
+    "envMap": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+      },
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "stringOrStringArray": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/nonEmptyString"
+          }
+        }
+      ]
+    },
+    "jobIdOrJobIdArray": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
+          },
+          "uniqueItems": true
+        }
+      ]
+    },
+    "branchFilter": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "branches": {
+          "$ref": "#/definitions/stringOrStringArray",
+          "description": "Branch globs. An omitted or empty list matches every branch."
+        }
+      }
+    },
+    "workflowDispatch": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "maxProperties": 0,
+          "additionalProperties": false
+        }
+      ]
+    },
+    "triggers": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": ["push", "pull_request", "workflow_dispatch"]
+        },
+        {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["push", "pull_request", "workflow_dispatch"]
+          }
+        },
+        {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": false,
+          "properties": {
+            "push": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/definitions/branchFilter"
+                }
+              ]
+            },
+            "pull_request": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/definitions/branchFilter"
+                }
+              ]
+            },
+            "workflow_dispatch": {
+              "$ref": "#/definitions/workflowDispatch"
+            }
+          }
+        }
+      ]
+    },
+    "container": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        {
+          "type": "object",
+          "required": ["image"],
+          "additionalProperties": false,
+          "properties": {
+            "image": {
+              "$ref": "#/definitions/nonEmptyString"
+            }
+          }
+        }
+      ]
+    },
+    "matrixValue": {
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/matrixValue"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/matrixValue"
+          }
+        }
+      ]
+    },
+    "matrixEntry": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$"
+      },
+      "additionalProperties": {
+        "$ref": "#/definitions/matrixValue"
+      }
+    },
+    "matrix": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "propertyNames": {
+        "pattern": "^(?:include|exclude|[A-Za-z_][A-Za-z0-9_-]*)$"
+      },
+      "properties": {
+        "include": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/matrixEntry"
+          }
+        },
+        "exclude": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/matrixEntry"
+          }
+        }
+      },
+      "patternProperties": {
+        "^(?!(?:include|exclude)$)[A-Za-z_][A-Za-z0-9_-]*$": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/matrixValue"
+          }
+        }
+      }
+    },
+    "strategy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "matrix": {
+          "$ref": "#/definitions/matrix"
+        },
+        "fail-fast": {
+          "type": "boolean"
+        },
+        "max-parallel": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "setupNodeInputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "node-version": {
+          "$ref": "#/definitions/stringValue"
+        },
+        "node-version-file": {
+          "$ref": "#/definitions/stringValue"
+        },
+        "architecture": {
+          "$ref": "#/definitions/stringValue"
+        },
+        "cache": {
+          "enum": ["npm", "pnpm", "yarn"]
+        },
+        "cache-dependency-path": {
+          "$ref": "#/definitions/stringValue"
+        },
+        "package-manager": {
+          "$ref": "#/definitions/stringValue"
+        },
+        "registry-url": {
+          "$ref": "#/definitions/stringValue"
+        },
+        "scope": {
+          "$ref": "#/definitions/stringValue"
+        },
+        "always-auth": {
+          "$ref": "#/definitions/stringValue"
+        }
+      }
+    },
+    "pnpmSetupInputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "$ref": "#/definitions/stringValue"
+        }
+      }
+    },
+    "setupRustInputs": {
+      "type": "object",
+      "description": "Accepted inputs for the existing parser. The cache input is not an implemented dependency-cache switch in the current runner.",
+      "additionalProperties": false,
+      "properties": {
+        "toolchain": {
+          "$ref": "#/definitions/stringValue"
+        },
+        "targets": {
+          "$ref": "#/definitions/stringValue"
+        },
+        "components": {
+          "$ref": "#/definitions/stringValue"
+        },
+        "profile": {
+          "$ref": "#/definitions/stringValue"
+        },
+        "cache": {
+          "$ref": "#/definitions/stringValue",
+          "description": "Structurally accepted for compatibility; it does not currently enable Rust dependency caching."
+        },
+        "rustflags": {
+          "$ref": "#/definitions/stringValue"
+        }
+      }
+    },
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "run": {
+          "type": "string",
+          "minLength": 1
+        },
+        "uses": {
+          "type": "string",
+          "pattern": "^(?:actions/(?:checkout|upload-artifact|cache|setup-node|setup-rust)|dtolnay/rust-toolchain|actions-rust-lang/setup-rust-toolchain|pnpm/action-setup)(?:@[^\\s@]+)?$"
+        },
+        "with": {
+          "$ref": "#/definitions/stringValueMap"
+        },
+        "env": {
+          "$ref": "#/definitions/envMap"
+        },
+        "if": {
+          "enum": ["success()", "failure()", "always()"]
+        },
+        "timeout-minutes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "oneOf": [
+        {
+          "required": ["run"],
+          "not": {
+            "required": ["uses"]
+          }
+        },
+        {
+          "required": ["uses"],
+          "not": {
+            "required": ["run"]
+          }
+        }
+      ],
+      "allOf": [
+        {
+          "if": {
+            "required": ["uses"],
+            "properties": {
+              "uses": {
+                "pattern": "^actions/setup-node(?:@[^\\s@]+)?$"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "with": {
+                "$ref": "#/definitions/setupNodeInputs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["uses"],
+            "properties": {
+              "uses": {
+                "pattern": "^pnpm/action-setup(?:@[^\\s@]+)?$"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "with": {
+                "$ref": "#/definitions/pnpmSetupInputs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["uses"],
+            "properties": {
+              "uses": {
+                "pattern": "^(?:actions/setup-rust|dtolnay/rust-toolchain|actions-rust-lang/setup-rust-toolchain)(?:@[^\\s@]+)?$"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "with": {
+                "$ref": "#/definitions/setupRustInputs"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "execution": {
+      "$ref": "#/definitions/executionConfig"
+    },
+    "executionConfig": {
+      "description": "Job placement contract. shared and exclusive jobs must not set pool; an isolated job must name its reserved pool. The service remains authoritative for isolation, capacity, and pool resolution.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": ["shared", "exclusive", "isolated"]
+        },
+        "pool": {
+          "$ref": "#/definitions/nonEmptyString"
+        }
+      },
+      "oneOf": [
+        {
+          "not": {
+            "required": ["pool"]
+          },
+          "properties": {
+            "mode": {
+              "enum": ["shared", "exclusive"]
+            }
+          }
+        },
+        {
+          "required": ["mode", "pool"],
+          "properties": {
+            "mode": {
+              "const": "isolated"
+            }
+          }
+        }
+      ]
+    },
+    "job": {
+      "type": "object",
+      "required": ["steps"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "runs-on": {
+          "$ref": "#/definitions/stringOrStringArray"
+        },
+        "resource": {
+          "oneOf": [
+            {
+              "enum": ["low", "medium", "high"]
+            },
+            {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\$\\{\\{"
+            }
+          ]
+        },
+        "execution": {
+          "$ref": "#/definitions/execution"
+        },
+        "container": {
+          "$ref": "#/definitions/container"
+        },
+        "needs": {
+          "$ref": "#/definitions/jobIdOrJobIdArray"
+        },
+        "strategy": {
+          "$ref": "#/definitions/strategy"
+        },
+        "env": {
+          "$ref": "#/definitions/envMap"
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/step"
+          }
+        }
+      }
+    }
+  }
+}

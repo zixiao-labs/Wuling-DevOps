@@ -5,6 +5,10 @@ Stage 2 将制品拆成两个边界：
 - `wuling-api` 管理 Package、Version、Release 元数据与项目权限；
 - `wuling-artifacts` 只管理不可变 Blob，可独立扩容和挂载对象存储。
 
+这不是 CI 依赖缓存后端：Artifact Blob 按版本不可变、可下载且受项目权限保护；缓存应使用
+独立 bucket/prefix、允许覆盖并通过短生命周期回收。OSS/S3/R2 的远端缓存策略和账单风险
+见 [pipelines-cache.md](pipelines-cache.md)。
+
 Stage 2.3 增加浏览器手动上传闭环。用户在项目的 Artifacts 页面选择已注册的
 Package、版本号和文件；浏览器只访问 `wuling-api`，由主 API 完成项目权限和版本
 唯一性校验后，使用内部令牌把文件转发到 `wuling-artifacts`。成功响应会记录文件

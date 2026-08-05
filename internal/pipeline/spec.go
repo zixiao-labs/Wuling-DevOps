@@ -1,5 +1,7 @@
 package pipeline
 
+import "encoding/json"
+
 // JobSpec is the self-contained execution unit handed to a runner at acquire
 // time. It is intentionally decoupled from the YAML-facing Job shape: the
 // store persists a JobSpec as the job's `definition` JSONB at run-creation, so
@@ -7,8 +9,25 @@ package pipeline
 // and a re-run stays reproducible even if the workflow file later changes.
 type JobSpec struct {
 	Container string            `json:"container,omitempty"`
+	Execution Execution         `json:"execution"`
 	Env       map[string]string `json:"env,omitempty"`
 	Steps     []StepSpec        `json:"steps"`
+}
+
+// UnmarshalJSON keeps persisted job definitions written before execution modes
+// compatible: their missing execution object has the same shared default as a
+// newly parsed workflow.
+func (s *JobSpec) UnmarshalJSON(data []byte) error {
+	type rawJobSpec JobSpec
+	var raw rawJobSpec
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*s = JobSpec(raw)
+	if s.Execution.Mode == "" {
+		s.Execution.Mode = ExecutionModeShared
+	}
+	return nil
 }
 
 // StepSpec is one executable step. Exactly one of Run / Uses is set (enforced
@@ -37,7 +56,12 @@ func (j Job) Spec() JobSpec {
 			TimeoutMinutes: s.TimeoutMinutes,
 		}
 	}
-	return JobSpec{Container: j.Container.Image, Env: copyStringMap(j.Env), Steps: steps}
+	return JobSpec{
+		Container: j.Container.Image,
+		Execution: j.executionSpec(),
+		Env:       copyStringMap(j.Env),
+		Steps:     steps,
+	}
 }
 
 // copyStringMap returns a clone of m (nil stays nil) so a built JobSpec shares

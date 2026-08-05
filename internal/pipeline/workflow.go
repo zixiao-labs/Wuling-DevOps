@@ -31,6 +31,32 @@ func ValidTier(s string) bool {
 	return false
 }
 
+// Execution modes control how a job may be placed on a runner.
+const (
+	ExecutionModeShared    = "shared"
+	ExecutionModeExclusive = "exclusive"
+	ExecutionModeIsolated  = "isolated"
+)
+
+// ValidExecutionMode reports whether s is a supported job execution mode.
+func ValidExecutionMode(s string) bool {
+	switch s {
+	case ExecutionModeShared, ExecutionModeExclusive, ExecutionModeIsolated:
+		return true
+	}
+	return false
+}
+
+// Execution is a job's placement contract. An isolated job is routed only to
+// a runner reserved from Pool; shared and exclusive jobs must leave Pool empty.
+//
+// It is used both on the YAML-facing Job and the runner-facing JobSpec. A Job
+// with no execution block is normalized to shared when its spec is built.
+type Execution struct {
+	Mode string `yaml:"mode" json:"mode,omitempty"`
+	Pool string `yaml:"pool" json:"pool,omitempty"`
+}
+
 // Workflow is a parsed workflow file.
 type Workflow struct {
 	Name string         `json:"name"`
@@ -63,6 +89,7 @@ type Job struct {
 	Name      string            `yaml:"name" json:"name,omitempty"`
 	RunsOn    StringList        `yaml:"runs-on" json:"runs_on,omitempty"`
 	Resource  string            `yaml:"resource" json:"resource,omitempty"`
+	Execution *Execution        `yaml:"execution" json:"execution,omitempty"`
 	Container Container         `yaml:"container" json:"container,omitempty"`
 	Needs     StringList        `yaml:"needs" json:"needs,omitempty"`
 	Strategy  *Strategy         `yaml:"strategy" json:"strategy,omitempty"`
@@ -217,6 +244,9 @@ func (w *Workflow) Validate() error {
 		if job.Resource != "" && !hasExpr(job.Resource) && !ValidTier(job.Resource) {
 			return fmt.Errorf("job %q: resource must be one of low|medium|high", name)
 		}
+		if err := validateExecution(job.executionSpec()); err != nil {
+			return fmt.Errorf("job %q: %w", name, err)
+		}
 		if len(job.Steps) == 0 {
 			return fmt.Errorf("job %q has no steps", name)
 		}
@@ -256,6 +286,38 @@ func (w *Workflow) Validate() error {
 	}
 	if _, err := w.JobOrder(); err != nil {
 		return err
+	}
+	return nil
+}
+
+// executionSpec returns the effective execution contract for a job. The
+// pointer on Job preserves whether YAML authored an execution block; the spec
+// always carries an explicit mode so runners and persisted definitions never
+// need to infer the shared default.
+func (j Job) executionSpec() Execution {
+	if j.Execution == nil {
+		return Execution{Mode: ExecutionModeShared}
+	}
+	e := *j.Execution
+	if e.Mode == "" {
+		e.Mode = ExecutionModeShared
+	}
+	return e
+}
+
+func validateExecution(e Execution) error {
+	if !ValidExecutionMode(e.Mode) {
+		return fmt.Errorf("execution.mode must be one of shared|exclusive|isolated")
+	}
+	switch e.Mode {
+	case ExecutionModeIsolated:
+		if strings.TrimSpace(e.Pool) == "" {
+			return fmt.Errorf("execution.pool is required when execution.mode is isolated")
+		}
+	default:
+		if e.Pool != "" {
+			return fmt.Errorf("execution.pool is only valid when execution.mode is isolated")
+		}
 	}
 	return nil
 }
@@ -443,15 +505,15 @@ var supportedActions = map[string]bool{
 // upload-artifact stay permissive so existing workflows keep parsing.
 var actionInputs = map[string]map[string]bool{
 	"actions/setup-node": {
-		"node-version":           true,
-		"node-version-file":      true,
-		"architecture":           true,
-		"cache":                  true,
-		"cache-dependency-path":  true,
-		"package-manager":        true,
-		"registry-url":           true,
-		"scope":                  true,
-		"always-auth":            true,
+		"node-version":          true,
+		"node-version-file":     true,
+		"architecture":          true,
+		"cache":                 true,
+		"cache-dependency-path": true,
+		"package-manager":       true,
+		"registry-url":          true,
+		"scope":                 true,
+		"always-auth":           true,
 	},
 	"pnpm/action-setup": {
 		"version": true,

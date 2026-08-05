@@ -79,13 +79,14 @@ func (t TierSpec) ContainerLimits() (cpus int, memory string) {
 
 // Pool binds one provider + tier and the labels its runners advertise.
 type Pool struct {
-	Name     string   `yaml:"name"`
-	Provider string   `yaml:"provider"` // aliyun|aws|proxmox|vcenter
-	Tier     string   `yaml:"tier"`
-	OS       string   `yaml:"os"` // linux (default) | windows; macos is manual-only
-	Labels   []string `yaml:"labels"`
-	Min      int      `yaml:"min"`
-	Max      int      `yaml:"max"`
+	Name           string   `yaml:"name"`
+	Provider       string   `yaml:"provider"` // aliyun|aws|proxmox|vcenter
+	Tier           string   `yaml:"tier"`
+	OS             string   `yaml:"os"` // linux (default) | windows; macos is manual-only
+	Labels         []string `yaml:"labels"`
+	Min            int      `yaml:"min"`
+	Max            int      `yaml:"max"`
+	RunnerDataDisk string   `yaml:"runner_data_disk"` // named cloud data disk used for runner workspaces
 
 	Aliyun  *AliyunPool  `yaml:"aliyun"`
 	AWS     *AWSPool     `yaml:"aws"`
@@ -93,11 +94,27 @@ type Pool struct {
 	VCenter *VCenterPool `yaml:"vcenter"`
 }
 
+const maxDataDisks = 16
+
+// DataDisk describes a named non-root disk attached when a cloud instance is
+// launched. Category maps to ECS disk category or EBS volume type. Aliyun uses
+// PerformanceLevel; AWS uses Encrypted and (optionally) DeviceName.
+type DataDisk struct {
+	Name               string `yaml:"name"`
+	Size               string `yaml:"size"`
+	Category           string `yaml:"category"`
+	PerformanceLevel   string `yaml:"performance_level"`
+	Encrypted          bool   `yaml:"encrypted"`
+	DeviceName         string `yaml:"device_name"`
+	DeleteWithInstance bool   `yaml:"delete_with_instance"`
+}
+
 // AliyunPool configures an Alibaba Cloud ECS pool.
 type AliyunPool struct {
 	Region  string `yaml:"region"`
 	ZoneID  string `yaml:"zone_id"`
 	ImageID string `yaml:"image_id"`
+	VPCID   string `yaml:"vpc_id"` // validated for topology/diagnostics; ECS uses VSwitchID to launch
 
 	// InstanceType pins one ECS spec. InstanceTypes is an ordered fallback
 	// list tried left-to-right on OperationDenied.NoStock.
@@ -113,8 +130,11 @@ type AliyunPool struct {
 	SystemDiskSize             string `yaml:"system_disk_size"`
 	SystemDiskCategory         string `yaml:"system_disk_category"`
 	SystemDiskPerformanceLevel string `yaml:"system_disk_performance_level"`
-	DataDiskSize               string `yaml:"data_disk_size"`
-	DataDiskCategory           string `yaml:"data_disk_category"`
+	// DataDiskSize/DataDiskCategory are the v1 single-disk compatibility
+	// fields. New configurations should use DataDisks so each disk is named.
+	DataDiskSize     string     `yaml:"data_disk_size"`
+	DataDiskCategory string     `yaml:"data_disk_category"`
+	DataDisks        []DataDisk `yaml:"data_disks"`
 
 	InstanceChargeType       string  `yaml:"instance_charge_type"` // PostPaid | PrePaid
 	Spot                     bool    `yaml:"spot"`
@@ -137,14 +157,16 @@ type AliyunPool struct {
 
 // AWSPool configures an AWS EC2 pool.
 type AWSPool struct {
-	Region             string   `yaml:"region"`
-	AMI                string   `yaml:"ami"`
-	InstanceType       string   `yaml:"instance_type"`
-	SubnetID           string   `yaml:"subnet_id"`
-	SecurityGroupIDs   []string `yaml:"security_group_ids"`
-	IAMInstanceProfile string   `yaml:"iam_instance_profile"`
-	Spot               bool     `yaml:"spot"`
-	CredentialsSecret  string   `yaml:"credentials_secret"`
+	Region             string     `yaml:"region"`
+	AMI                string     `yaml:"ami"`
+	InstanceType       string     `yaml:"instance_type"`
+	VPCID              string     `yaml:"vpc_id"` // validated for topology/diagnostics; EC2 uses SubnetID to launch
+	SubnetID           string     `yaml:"subnet_id"`
+	SecurityGroupIDs   []string   `yaml:"security_group_ids"`
+	DataDisks          []DataDisk `yaml:"data_disks"`
+	IAMInstanceProfile string     `yaml:"iam_instance_profile"`
+	Spot               bool       `yaml:"spot"`
+	CredentialsSecret  string     `yaml:"credentials_secret"`
 }
 
 // ProxmoxPool configures a Proxmox VE pool (clone a template VM).
@@ -214,6 +236,9 @@ func (c *Config) IdleTimeoutOr(def time.Duration) time.Duration {
 }
 
 func (c *Config) validate() error {
+	if c.Version != 0 && c.Version != 1 && c.Version != 2 {
+		return fmt.Errorf("runner-config version must be 1 or 2 (got %d)", c.Version)
+	}
 	seen := map[string]bool{}
 	for i := range c.Pools {
 		p := &c.Pools[i]
@@ -232,14 +257,22 @@ func (c *Config) validate() error {
 		if p.Min < 0 || p.Max < 0 || (p.Max > 0 && p.Min > p.Max) {
 			return fmt.Errorf("pool %q: require 0 <= min <= max", p.Name)
 		}
-		if err := p.validateProvider(); err != nil {
+		if err := p.validateProvider(c.Version); err != nil {
 			return err
+		}
+		if c.Version < 2 {
+			if p.RunnerDataDisk != "" {
+				return fmt.Errorf("pool %q: runner_data_disk requires runner-config version: 2", p.Name)
+			}
+			if len(p.dataDisks()) > 0 {
+				return fmt.Errorf("pool %q: named data_disks requires runner-config version: 2; use aliyun.data_disk_size for the v1 single-disk format", p.Name)
+			}
 		}
 	}
 	return nil
 }
 
-func (p *Pool) validateProvider() error {
+func (p *Pool) validateProvider(version int) error {
 	count := 0
 	for _, set := range []bool{p.Aliyun != nil, p.AWS != nil, p.Proxmox != nil, p.VCenter != nil} {
 		if set {
@@ -257,12 +290,15 @@ func (p *Pool) validateProvider() error {
 		if p.Aliyun == nil {
 			return fmt.Errorf("pool %q: provider is aliyun but the aliyun: block is missing", p.Name)
 		}
-		if err := p.validateAliyun(); err != nil {
+		if err := p.validateAliyun(version); err != nil {
 			return err
 		}
 	case ProviderAWS:
 		if p.AWS == nil {
 			return fmt.Errorf("pool %q: provider is aws but the aws: block is missing", p.Name)
+		}
+		if err := p.validateAWS(version); err != nil {
+			return err
 		}
 	case ProviderProxmox:
 		if p.Proxmox == nil {
@@ -274,6 +310,9 @@ func (p *Pool) validateProvider() error {
 		}
 	default:
 		return fmt.Errorf("pool %q: provider must be aliyun|aws|proxmox|vcenter", p.Name)
+	}
+	if err := p.validateDataDisks(); err != nil {
+		return err
 	}
 	// Cloud credentials live in an org Secret referenced by name. Without one the
 	// autoscaler cannot authenticate and the provider API answers 401, so fail
@@ -306,8 +345,24 @@ func (p *Pool) validateProvider() error {
 	return nil
 }
 
-func (p *Pool) validateAliyun() error {
+func (p *Pool) validateAliyun(version int) error {
 	a := p.Aliyun
+	if version >= 2 {
+		for _, required := range []struct {
+			field string
+			value string
+		}{
+			{"region", a.Region},
+			{"image_id", a.ImageID},
+			{"vpc_id", a.VPCID},
+			{"vswitch_id", a.VSwitchID},
+			{"security_group_id", a.SecurityGroupID},
+		} {
+			if strings.TrimSpace(required.value) == "" {
+				return fmt.Errorf("pool %q: aliyun.%s is required when version >= 2", p.Name, required.field)
+			}
+		}
+	}
 	if a.PasswordInherit && a.PasswordSecret != "" {
 		return fmt.Errorf("pool %q: password_inherit 与 password_secret 互斥", p.Name)
 	}
@@ -320,14 +375,22 @@ func (p *Pool) validateAliyun() error {
 	if a.SpotDuration != nil && (*a.SpotDuration < 0 || *a.SpotDuration > 6) {
 		return fmt.Errorf("pool %q: spot_duration 只能是 0~6", p.Name)
 	}
-	if a.InstanceType != "" && len(a.InstanceTypes) > 0 {
+	if strings.TrimSpace(a.InstanceType) != "" && len(a.InstanceTypes) > 0 {
 		return fmt.Errorf("pool %q: instance_type 与 instance_types 二选一", p.Name)
 	}
-	if a.InstanceType == "" && len(a.InstanceTypes) == 0 {
+	if strings.TrimSpace(a.InstanceType) == "" && len(a.InstanceTypes) == 0 {
 		return fmt.Errorf("pool %q: 必须设置 instance_type 或 instance_types", p.Name)
 	}
-	if len(a.Tags) > 16 {
-		return fmt.Errorf("pool %q: tags 最多 16 条（ECS 上限 20，其中 4 条由 autoscaler 占用）", p.Name)
+	for _, instanceType := range a.InstanceTypes {
+		if strings.TrimSpace(instanceType) == "" {
+			return fmt.Errorf("pool %q: instance_types 不能包含空值", p.Name)
+		}
+	}
+	if a.DataDiskSize != "" && len(a.DataDisks) > 0 {
+		return fmt.Errorf("pool %q: data_disk_size/data_disk_category 与 data_disks 不能同时设置", p.Name)
+	}
+	if len(a.Tags) > 14 {
+		return fmt.Errorf("pool %q: tags 最多 14 条（ECS 上限 20，其中 6 条由 autoscaler/隔离审计占用）", p.Name)
 	}
 	for k := range a.Tags {
 		if strings.HasPrefix(k, "aliyun") || strings.HasPrefix(k, "acs:") {
@@ -335,6 +398,142 @@ func (p *Pool) validateAliyun() error {
 		}
 	}
 	return nil
+}
+
+func (p *Pool) validateAWS(version int) error {
+	if version < 2 {
+		return nil
+	}
+	a := p.AWS
+	for _, required := range []struct {
+		field string
+		value string
+	}{
+		{"region", a.Region},
+		{"ami", a.AMI},
+		{"instance_type", a.InstanceType},
+		{"vpc_id", a.VPCID},
+		{"subnet_id", a.SubnetID},
+	} {
+		if strings.TrimSpace(required.value) == "" {
+			return fmt.Errorf("pool %q: aws.%s is required when version >= 2", p.Name, required.field)
+		}
+	}
+	if len(a.SecurityGroupIDs) == 0 {
+		return fmt.Errorf("pool %q: aws.security_group_ids requires at least one security group when version >= 2", p.Name)
+	}
+	for _, groupID := range a.SecurityGroupIDs {
+		if strings.TrimSpace(groupID) == "" {
+			return fmt.Errorf("pool %q: aws.security_group_ids cannot contain empty values when version >= 2", p.Name)
+		}
+	}
+	return nil
+}
+
+func (p *Pool) validateDataDisks() error {
+	disks := p.dataDisks()
+	if len(disks) > maxDataDisks {
+		return fmt.Errorf("pool %q: data_disks 最多 %d 块", p.Name, maxDataDisks)
+	}
+
+	names := make(map[string]struct{}, len(disks))
+	deviceNames := make(map[string]struct{}, len(disks))
+	for i, disk := range disks {
+		name := strings.TrimSpace(disk.Name)
+		if name == "" {
+			return fmt.Errorf("pool %q: data_disks[%d].name is required", p.Name, i)
+		}
+		if _, exists := names[name]; exists {
+			return fmt.Errorf("pool %q: duplicate data disk name %q", p.Name, name)
+		}
+		names[name] = struct{}{}
+		if _, ok := ParseSizeGiB(disk.Size); !ok {
+			return fmt.Errorf("pool %q: data_disks[%d] %q has invalid size %q", p.Name, i, name, disk.Size)
+		}
+
+		switch p.Provider {
+		case ProviderAliyun:
+			if disk.Encrypted {
+				return fmt.Errorf("pool %q: data_disks[%d] encrypted is supported only by aws", p.Name, i)
+			}
+			if disk.DeviceName != "" {
+				return fmt.Errorf("pool %q: data_disks[%d] device_name is supported only by aws", p.Name, i)
+			}
+		case ProviderAWS:
+			if disk.PerformanceLevel != "" {
+				return fmt.Errorf("pool %q: data_disks[%d] performance_level is supported only by aliyun", p.Name, i)
+			}
+			deviceName := awsDataDiskDeviceName(disk, i)
+			if _, exists := deviceNames[deviceName]; exists {
+				return fmt.Errorf("pool %q: duplicate aws data disk device_name %q", p.Name, deviceName)
+			}
+			deviceNames[deviceName] = struct{}{}
+		}
+	}
+
+	if p.RunnerDataDisk == "" {
+		return nil
+	}
+	runnerDataDisk := strings.TrimSpace(p.RunnerDataDisk)
+	if runnerDataDisk == "" {
+		return fmt.Errorf("pool %q: runner_data_disk cannot be blank", p.Name)
+	}
+	if _, exists := names[runnerDataDisk]; !exists {
+		return fmt.Errorf("pool %q: runner_data_disk %q does not match a configured data disk", p.Name, p.RunnerDataDisk)
+	}
+	runnerSizeGiB, ok := p.runnerDataDiskSizeGiB()
+	if !ok {
+		return fmt.Errorf("pool %q: runner_data_disk %q has no valid capacity", p.Name, p.RunnerDataDisk)
+	}
+	for _, disk := range disks {
+		if strings.TrimSpace(disk.Name) == runnerDataDisk {
+			// A runner workspace is never a durable cloud volume. Retaining it
+			// after an ephemeral VM terminates both leaks billed storage and
+			// weakens the isolated-mode guarantee that future jobs cannot reuse
+			// its work/tools/state data.
+			if !disk.DeleteWithInstance {
+				return fmt.Errorf("pool %q: runner_data_disk %q must set delete_with_instance: true", p.Name, p.RunnerDataDisk)
+			}
+			continue
+		}
+		sizeGiB, ok := ParseSizeGiB(disk.Size)
+		if ok && sizeGiB == runnerSizeGiB {
+			// The guest cannot reliably map a cloud-side logical disk name to
+			// Linux NVMe or Windows disk numbers. Require a unique capacity so
+			// bootstrapping can select exactly the intended raw non-root disk
+			// rather than risking another attached volume.
+			return fmt.Errorf("pool %q: runner_data_disk %q must have a capacity unique among data_disks", p.Name, p.RunnerDataDisk)
+		}
+	}
+	return nil
+}
+
+func (p *Pool) dataDisks() []DataDisk {
+	switch p.Provider {
+	case ProviderAliyun:
+		if p.Aliyun != nil {
+			return p.Aliyun.DataDisks
+		}
+	case ProviderAWS:
+		if p.AWS != nil {
+			return p.AWS.DataDisks
+		}
+	}
+	return nil
+}
+
+func (p Pool) runnerDataDiskSizeGiB() (int, bool) {
+	name := strings.TrimSpace(p.RunnerDataDisk)
+	if name == "" {
+		return 0, false
+	}
+	for _, disk := range p.dataDisks() {
+		if strings.TrimSpace(disk.Name) != name {
+			continue
+		}
+		return ParseSizeGiB(disk.Size)
+	}
+	return 0, false
 }
 
 // PasswordSecretName returns the org-secret name holding the instance login

@@ -1053,3 +1053,80 @@ export interface PutRunnerConfigRequest {
   message?: string;
   base_blob_sha?: string;
 }
+
+// ---------------- Admin runner self-checks ----------------
+
+export type RunnerSelfCheckPhase = "preflight" | "provision" | "wait_runner" | "execute" | "cleanup";
+
+export type RunnerSelfCheckState =
+  | "preflight"
+  | "queued"
+  | "provisioning"
+  | "waiting_for_runner"
+  | "executing"
+  | "cleanup_pending"
+  | "succeeded"
+  | "failed"
+  | "cleaned"
+  | "not_run";
+
+export type RunnerSelfCheckCheckStatus = "passed" | "failed" | "unsupported" | "error" | "not_run";
+export type RunnerSelfCheckReadiness = "ready" | "blocked";
+
+/** Metadata-only; messages never contain secret values or raw config. */
+export interface RunnerSelfCheckCheck {
+  name: string;
+  status: RunnerSelfCheckCheckStatus;
+  message: string;
+}
+
+export interface RunnerSelfCheckPool {
+  pool_name: string;
+  provider?: string;
+  os?: "linux" | "windows";
+  phase: RunnerSelfCheckPhase;
+  state: RunnerSelfCheckState;
+  readiness: RunnerSelfCheckReadiness;
+  checks: RunnerSelfCheckCheck[];
+  runner_probe_state: RunnerSelfCheckState;
+  runner_probe_note: string;
+}
+
+export interface RunnerSelfCheck {
+  id: string;
+  org_id: string;
+  requested_by: string;
+  pool_name: string;
+  provider: string;
+  os: "linux" | "windows";
+  phase: RunnerSelfCheckPhase;
+  state: RunnerSelfCheckState;
+  checks: RunnerSelfCheckCheck[];
+  summary?: string;
+  run_id?: string;
+  job_id?: string;
+  runner_id?: string;
+  external_id?: string;
+  cleanup_attempts: number;
+  cleanup_last_error?: string;
+  next_cleanup_at?: string;
+  created_at: string;
+  started_at?: string;
+  finished_at?: string;
+  cleaned_at?: string;
+  updated_at: string;
+}
+
+export interface RunnerSelfCheckStart {
+  org_slug: string;
+  requested_at: string;
+  config_check: RunnerSelfCheckCheck;
+  checks: RunnerSelfCheck[];
+  blocked_pools?: RunnerSelfCheckPool[];
+}
+
+export interface RunnerSelfCheckRequest {
+  org_slug: string;
+  /** Omit or leave empty to run every configured pool that passes preflight. */
+  pool_names?: string[];
+}

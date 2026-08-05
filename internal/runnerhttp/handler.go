@@ -25,6 +25,7 @@ import (
 	"github.com/zixiao-labs/wuling-devops/internal/model"
 	"github.com/zixiao-labs/wuling-devops/internal/orgconfig"
 	"github.com/zixiao-labs/wuling-devops/internal/pipelinestore"
+	"github.com/zixiao-labs/wuling-devops/internal/runnercheck"
 	"github.com/zixiao-labs/wuling-devops/internal/runnerstore"
 	"github.com/zixiao-labs/wuling-devops/internal/secretstore"
 	"github.com/zixiao-labs/wuling-devops/internal/userstore"
@@ -36,8 +37,11 @@ type Handler struct {
 	Runners   *runnerstore.Store
 	Pipelines *pipelinestore.Store
 	Secrets   *secretstore.Store
-	Verifier  *auth.Verifier
-	OAT       auth.OATResolver
+	// SelfChecks intercepts only internal audit jobs so they receive a
+	// one-time probe value instead of an organization's normal secret set.
+	SelfChecks *runnercheck.Service
+	Verifier   *auth.Verifier
+	OAT        auth.OATResolver
 
 	// RegistrationTTL bounds how long a minted registration token is valid.
 	RegistrationTTL time.Duration

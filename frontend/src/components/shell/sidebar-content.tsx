@@ -105,6 +105,7 @@ function RootSidebar({ isAdmin }: { isAdmin: boolean }) {
         <SidebarSection label="管理员">
           <NavItem to="/admin/users" icon={Persons} label="用户审批" />
           <NavItem to="/admin/oauth-apps" icon={At} label="OAuth 应用" />
+          <NavItem to="/admin/runner-self-check" icon={Cpu} label="Runner 自检" />
         </SidebarSection>
       ) : null}
     </>
@@ -243,6 +244,9 @@ function AdminSidebar({ isSuper }: { isSuper: boolean }) {
       </SidebarSection>
       <SidebarSection label="应用">
         <NavItem to="/admin/oauth-apps" icon={At} label="OAuth 应用" />
+      </SidebarSection>
+      <SidebarSection label="运行">
+        <NavItem to="/admin/runner-self-check" icon={Cpu} label="Runner 自检" />
       </SidebarSection>
       {!isSuper ? (
         <SidebarSection>
