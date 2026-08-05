@@ -599,9 +599,14 @@ func (s *Store) RequeueStaleJobs(ctx context.Context, reapAfter time.Duration) (
 				return acted, err
 			}
 		} else {
+			// Clear reserved_runner_id for isolated jobs so the autoscaler can
+			// reclaim the stale VM (reservation-released) and provision a fresh
+			// one. Leaving the reservation would permanently pin the job to a
+			// dead runner while excluding it from QueuedIsolatedDemand.
 			if _, err := s.pool.Exec(ctx, `
 				UPDATE pipeline_jobs
-				SET status = 'queued', runner_id = NULL, started_at = NULL, attempt = attempt + 1
+				SET status = 'queued', runner_id = NULL, started_at = NULL,
+				    attempt = attempt + 1, reserved_runner_id = NULL
 				WHERE id = $1 AND status = 'running'
 			`, st.id); err != nil {
 				return acted, apperr.Internal(err)
@@ -690,7 +695,10 @@ func (s *Store) QueuedIsolatedDemand(ctx context.Context, orgID uuid.UUID) ([]Is
 		                            ORDER BY j.ordinal ASC, j.name ASC) AS rn,
 		         (SELECT count(*) FROM pipeline_jobs s
 		          WHERE s.run_id = j.run_id AND s.job_key = j.job_key
-		            AND s.status = 'running') AS running
+		            AND (
+		              s.status = 'running'
+		              OR (s.status = 'queued' AND s.reserved_runner_id IS NOT NULL)
+		            )) AS occupied
 		  FROM pipeline_jobs j
 		  WHERE j.org_id = $1
 		    AND j.status = 'queued'
@@ -699,7 +707,7 @@ func (s *Store) QueuedIsolatedDemand(ctx context.Context, orgID uuid.UUID) ([]Is
 		    AND `+dispatchableNeedsSQL+`
 		) t
 		WHERE t.max_parallel = 0
-		   OR t.rn <= GREATEST(t.max_parallel - t.running, 0)
+		   OR t.rn <= GREATEST(t.max_parallel - t.occupied, 0)
 		ORDER BY t.queued_at ASC, t.ordinal ASC, t.name ASC
 	`, orgID)
 	if err != nil {

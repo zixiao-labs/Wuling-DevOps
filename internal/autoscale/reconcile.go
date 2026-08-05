@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/zixiao-labs/wuling-devops/internal/apperr"
+	"github.com/zixiao-labs/wuling-devops/internal/model"
 	"github.com/zixiao-labs/wuling-devops/internal/orgconfig"
 	"github.com/zixiao-labs/wuling-devops/internal/pipelinestore"
 	"github.com/zixiao-labs/wuling-devops/internal/runnerstore"
@@ -250,7 +251,7 @@ func (r *Reconciler) reconcileOrg(ctx context.Context, orgID uuid.UUID) error {
 		return err
 	}
 
-	pendingByPool := assignDemand(cfg.Pools, demand)
+	pendingByPool := assignDemand(cfg.Pools, demand, cfg.DefaultTier)
 	isolatedByPool := groupIsolatedDemand(isolatedDemand)
 	runnersByPool := groupRunners(runners)
 
@@ -358,7 +359,22 @@ func (r *Reconciler) reconcileIsolatedPool(
 			remaining++
 			continue
 		}
-		if reason == "acquire-timeout" {
+		if releaseReservation {
+			// Claim cleanup ownership before any provider call. If the reserved
+			// runner acquired the job between our unlocked status read and now,
+			// Release returns false and we must not terminate a live worker.
+			released, err := r.Pipelines.ReleaseIsolatedReservation(ctx, *rn.IsolatedJobID, rn.ID)
+			if err != nil {
+				r.Log.Warn("release isolated reservation failed; cleanup will retry",
+					"pool", pool.Name, "runner", rn.ID, "job", *rn.IsolatedJobID, "err", err)
+				r.markIsolatedCleanupPending(ctx, *rn.IsolatedJobID)
+				remaining++
+				continue
+			}
+			if !released {
+				remaining++
+				continue
+			}
 			r.markIsolatedProvisioningFailure(ctx, *rn.IsolatedJobID)
 		}
 
@@ -392,15 +408,6 @@ func (r *Reconciler) reconcileIsolatedPool(
 				continue
 			}
 		}
-		if releaseReservation {
-			if _, err := r.Pipelines.ReleaseIsolatedReservation(ctx, *rn.IsolatedJobID, rn.ID); err != nil {
-				r.Log.Warn("release isolated reservation failed; cleanup will retry",
-					"pool", pool.Name, "runner", rn.ID, "job", *rn.IsolatedJobID, "err", err)
-				r.markIsolatedCleanupPending(ctx, *rn.IsolatedJobID)
-				remaining++
-				continue
-			}
-		}
 		if err := r.Runners.Delete(ctx, orgID, rn.ID); err != nil {
 			r.Log.Warn("delete isolated runner row failed; cleanup will retry",
 				"pool", pool.Name, "runner", rn.ID, "reason", reason, "err", err)
@@ -421,13 +428,14 @@ func (r *Reconciler) reconcileIsolatedPool(
 		r.Log.Info("released isolated runner", "pool", pool.Name, "runner", rn.Name, "reason", reason)
 	}
 
+	poolTier := effectivePoolTier(cfg, pool)
 	for _, job := range demand {
 		if pool.Max > 0 && inFlight >= pool.Max {
 			break
 		}
-		if pool.Tier != "" && job.Tier != "" && pool.Tier != job.Tier {
+		if job.Tier != "" && poolTier != job.Tier {
 			r.Log.Warn("isolated job pool tier does not match job tier",
-				"pool", pool.Name, "job", job.JobID, "pool_tier", pool.Tier, "job_tier", job.Tier)
+				"pool", pool.Name, "job", job.JobID, "pool_tier", poolTier, "job_tier", job.Tier)
 			continue
 		}
 		if !labelsSatisfied(pool.Labels, job.RunsOn) {
@@ -462,6 +470,19 @@ func (r *Reconciler) reconcileIsolatedPool(
 	return remaining, launched
 }
 
+// effectivePoolTier is the tier stamped onto ephemeral runners for a pool.
+// An omitted pool.tier falls back to the config default (then medium) so
+// AcquireJob's exact tier match cannot strand an isolated reservation.
+func effectivePoolTier(cfg *Config, pool Pool) string {
+	if pool.Tier != "" {
+		return pool.Tier
+	}
+	if cfg != nil && cfg.DefaultTier != "" {
+		return cfg.DefaultTier
+	}
+	return model.TierMedium
+}
+
 // launchIsolatedOne persists a runner/job binding before starting a VM. That
 // ordering is the safety boundary: an instance can only register and acquire
 // its one reserved job, never unrelated queued work.
@@ -476,8 +497,9 @@ func (r *Reconciler) launchIsolatedOne(
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 
+	poolTier := effectivePoolTier(cfg, pool)
 	runner, err := r.Runners.CreateIsolatedEphemeralRunner(
-		ctx, orgID, "", pool.Labels, pool.Tier, pool.Provider, pool.Name, pool.OS, jobID,
+		ctx, orgID, "", pool.Labels, poolTier, pool.Provider, pool.Name, pool.OS, jobID,
 	)
 	if err != nil {
 		return false, err
@@ -492,7 +514,7 @@ func (r *Reconciler) launchIsolatedOne(
 		return false, nil
 	}
 
-	tier := cfg.TierSpecFor(pool.Tier)
+	tier := cfg.TierSpecFor(poolTier)
 	userData := BuildUserDataForPool(r.ServerURL, runner.Token, pool, tier, runner.Name)
 	inst, err := p.Launch(ctx, LaunchSpec{
 		Pool:          pool,
@@ -650,11 +672,12 @@ func (r *Reconciler) launchOne(ctx context.Context, orgID uuid.UUID, cfg *Config
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 
-	runner, err := r.Runners.CreateEphemeralRunner(ctx, orgID, "", pool.Labels, pool.Tier, pool.Provider, pool.Name, pool.OS)
+	poolTier := effectivePoolTier(cfg, pool)
+	runner, err := r.Runners.CreateEphemeralRunner(ctx, orgID, "", pool.Labels, poolTier, pool.Provider, pool.Name, pool.OS)
 	if err != nil {
 		return err
 	}
-	tier := cfg.TierSpecFor(pool.Tier)
+	tier := cfg.TierSpecFor(poolTier)
 	userData := BuildUserDataForPool(r.ServerURL, runner.Token, pool, tier, runner.Name)
 	inst, err := p.Launch(ctx, LaunchSpec{
 		Pool:       pool,
@@ -750,15 +773,22 @@ func isNotFoundError(err error) bool {
 }
 
 // assignDemand greedily assigns each queued job to the first pool (in config
-// order) whose tier matches and whose labels are a superset of the job's
-// runs-on, returning per-pool pending counts. First-match prevents one job
-// from inflating several overlapping pools.
-func assignDemand(pools []Pool, demand []pipelinestore.QueuedJob) map[string]int {
+// order) whose effective tier matches and whose labels are a superset of the
+// job's runs-on, returning per-pool pending counts. First-match prevents one
+// job from inflating several overlapping pools.
+func assignDemand(pools []Pool, demand []pipelinestore.QueuedJob, defaultTier string) map[string]int {
 	out := map[string]int{}
 	for _, job := range demand {
 		for i := range pools {
 			p := pools[i]
-			if p.Tier != "" && p.Tier != job.Tier {
+			poolTier := p.Tier
+			if poolTier == "" {
+				poolTier = defaultTier
+			}
+			if poolTier == "" {
+				poolTier = model.TierMedium
+			}
+			if poolTier != job.Tier {
 				continue
 			}
 			if !labelsSatisfied(p.Labels, job.RunsOn) {

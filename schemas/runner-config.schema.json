@@ -407,7 +407,7 @@
     },
     "pool": {
       "type": "object",
-      "required": ["name", "provider", "tier"],
+      "required": ["name", "provider"],
       "additionalProperties": false,
       "properties": {
         "name": {

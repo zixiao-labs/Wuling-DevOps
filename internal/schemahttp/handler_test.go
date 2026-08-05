@@ -50,9 +50,11 @@ func TestWorkflowSchemaRequiresPoolForIsolatedMode(t *testing.T) {
 	execution := definitions["executionConfig"].(map[string]any)
 	oneOf := execution["oneOf"].([]any)
 	sharedBranch := oneOf[0].(map[string]any)
+	require.Contains(t, sharedBranch["required"], "mode")
 	sharedMode := sharedBranch["properties"].(map[string]any)["mode"].(map[string]any)
 	require.ElementsMatch(t, []any{"shared", "exclusive"}, sharedMode["enum"].([]any))
 	isolatedBranch := oneOf[1].(map[string]any)
+	require.Contains(t, isolatedBranch["required"], "mode")
 	require.Contains(t, isolatedBranch["required"], "pool")
 	require.Equal(t, "isolated", isolatedBranch["properties"].(map[string]any)["mode"].(map[string]any)["const"])
 }

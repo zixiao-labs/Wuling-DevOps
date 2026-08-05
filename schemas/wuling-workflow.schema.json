@@ -432,13 +432,14 @@
       },
       "oneOf": [
         {
-          "not": {
-            "required": ["pool"]
-          },
+          "required": ["mode"],
           "properties": {
             "mode": {
               "enum": ["shared", "exclusive"]
             }
+          },
+          "not": {
+            "required": ["pool"]
           }
         },
         {

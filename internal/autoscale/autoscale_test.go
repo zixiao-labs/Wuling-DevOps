@@ -253,11 +253,29 @@ func TestAssignDemandFirstMatch(t *testing.T) {
 		{Tier: "low", RunsOn: []string{"linux"}},              // -> c
 		{Tier: "high", RunsOn: nil},                           // -> unmatched
 	}
-	got := assignDemand(pools, demand)
+	got := assignDemand(pools, demand, "")
 	// First-match with overlapping pools: pool "a" absorbs both medium jobs,
 	// "b" gets none, "c" gets the low job.
 	if got["a"] != 2 || got["b"] != 0 || got["c"] != 1 {
 		t.Errorf("assignment = %+v", got)
+	}
+}
+
+func TestAssignDemandUsesEffectiveTier(t *testing.T) {
+	pools := []Pool{
+		{Name: "untiered", Labels: []string{"linux"}},
+	}
+	demand := []pipelinestore.QueuedJob{
+		{Tier: "high", RunsOn: []string{"linux"}},
+		{Tier: "medium", RunsOn: []string{"linux"}},
+	}
+	got := assignDemand(pools, demand, "")
+	if got["untiered"] != 1 {
+		t.Errorf("untiered pool should only absorb medium jobs, got %+v", got)
+	}
+	gotDefault := assignDemand(pools, demand, "high")
+	if gotDefault["untiered"] != 1 {
+		t.Errorf("default_tier=high should absorb the high job, got %+v", gotDefault)
 	}
 }
 
@@ -592,6 +610,9 @@ func TestAWSNamedDataDiskParams(t *testing.T) {
 		OrgID:      uuid.MustParse("00000000-0000-0000-0000-000000000001"),
 		RunnerID:   runnerID,
 	})
+	if got := tagged.Get("ClientToken"); got != runnerID.String() {
+		t.Errorf("AWS ClientToken = %q, want runner id", got)
+	}
 	if got := tagged.Get("TagSpecification.1.Tag.6.Key"); got != "wuling-runner-id" {
 		t.Errorf("runner-id recovery tag key = %q", got)
 	}

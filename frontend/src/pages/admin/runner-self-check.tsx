@@ -57,7 +57,7 @@ function AdminRunnerSelfCheck() {
 
   const normalizedOrgSlug = orgSlug.trim();
   const poolNames = parsePoolNames(poolNamesInput);
-  const hasActiveCheck = checks.some((check) => isActiveLifecycleState(check.state));
+  const hasActiveCheck = checks.some((check) => isActiveLifecycle(check));
 
   useEffect(() => {
     if (!normalizedOrgSlug || !hasActiveCheck) return;
@@ -400,8 +400,11 @@ function mergeChecks(incoming: RunnerSelfCheck[], current: RunnerSelfCheck[]): R
   return [...byID.values()].sort((a, b) => b.created_at.localeCompare(a.created_at));
 }
 
-function isActiveLifecycleState(state: RunnerSelfCheck["state"]): boolean {
-  return state === "queued" || state === "provisioning" || state === "waiting_for_runner" || state === "executing" || state === "cleanup_pending";
+function isActiveLifecycle(check: RunnerSelfCheck): boolean {
+  // Probe success/failure still waits for VM cleanup. Keep polling until the
+  // durable cleaned_at stamp arrives (MarkStartFailed also stamps it so
+  // pre-VM failures do not spin forever).
+  return !check.cleaned_at;
 }
 
 function lifecycleLabel(state: RunnerSelfCheck["state"]): string {

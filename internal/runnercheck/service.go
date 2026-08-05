@@ -261,6 +261,7 @@ func poolPreflight(pool autoscale.Pool, secretNames map[string]struct{}, secretL
 			Message: "已配置 Runner 非系统数据盘；只有初始化、格式化和挂载成功后 Runner 才会启动。",
 		})
 	}
+	checks = append(checks, retainDiskCheck(pool))
 	readiness := ReadinessReady
 	for _, check := range checks {
 		if check.Status != CheckPassed {
@@ -401,5 +402,32 @@ func osNetworkCheck(pool autoscale.Pool) Check {
 		Name:    "os_network_structure",
 		Status:  CheckPassed,
 		Message: "OS 与基础网络字段结构完整；未进行云端连通性、认证或 VM 操作。",
+	}
+}
+
+// retainDiskCheck blocks real self-check VMs that would leave billed volumes
+// behind after the temporary instance is destroyed.
+func retainDiskCheck(pool autoscale.Pool) Check {
+	var disks []autoscale.DataDisk
+	switch {
+	case pool.Aliyun != nil:
+		disks = pool.Aliyun.DataDisks
+	case pool.AWS != nil:
+		disks = pool.AWS.DataDisks
+	}
+	for _, disk := range disks {
+		if !disk.DeleteWithInstance {
+			return Check{
+				Name:   "ephemeral_data_disks",
+				Status: CheckFailed,
+				Message: "真实自检拒绝 delete_with_instance: false 的数据盘；" +
+					"临时 VM 销毁后遗留卷会持续计费。",
+			}
+		}
+	}
+	return Check{
+		Name:    "ephemeral_data_disks",
+		Status:  CheckPassed,
+		Message: "所有命名数据盘均随实例删除，或该 pool 未配置命名数据盘。",
 	}
 }

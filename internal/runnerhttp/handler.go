@@ -211,6 +211,18 @@ func (h *Handler) deleteRunner(w http.ResponseWriter, r *http.Request) {
 		httpapi.RenderError(w, r, apperr.New(apperr.CodeBadRequest, "invalid runner id"))
 		return
 	}
+	ephemeral, err := h.Runners.IsEphemeral(r.Context(), orgID, runnerID)
+	if err != nil {
+		httpapi.RenderError(w, r, err)
+		return
+	}
+	if ephemeral {
+		// Dropping the runner row would lose the only durable external_id for a
+		// billed VM. Autoscaler reconcile is the cleanup owner for ephemeral
+		// capacity (including isolated self-check VMs).
+		httpapi.RenderError(w, r, apperr.Conflict("ephemeral runners are managed by the autoscaler and cannot be deleted directly"))
+		return
+	}
 	if err := h.Runners.Delete(r.Context(), orgID, runnerID); err != nil {
 		httpapi.RenderError(w, r, err)
 		return

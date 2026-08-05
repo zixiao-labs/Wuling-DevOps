@@ -117,6 +117,17 @@ func (h *Handler) acquire(w http.ResponseWriter, r *http.Request) {
 			h.SelfChecks.MarkProbeExecuting(r.Context(), aj.JobID, ri.RunnerID)
 		}
 	}
+	// Fail closed for internal probes even when the durable audit row is
+	// missing (crash between CreateRun and LinkPipeline). Never fall back to
+	// organization/project secrets for a self-check job.
+	if secrets == nil && isRunnerSelfCheckJob(aj) {
+		_ = h.Pipelines.CompleteJob(r.Context(), aj.JobID, "failed")
+		if h.SelfChecks != nil {
+			h.SelfChecks.CompleteProbe(r.Context(), aj.JobID, "failed")
+		}
+		httpapi.RenderError(w, r, apperr.New(apperr.CodeUnavailable, "runner self-check probe secret is unavailable"))
+		return
+	}
 	if secrets == nil {
 		secrets, err = h.Secrets.ResolveForProject(r.Context(), aj.OrgID, aj.ProjectID)
 		if err != nil {
@@ -269,4 +280,14 @@ func (h *Handler) cloneURL(r *http.Request, org, project, repo string) string {
 		base = scheme + "://" + r.Host
 	}
 	return strings.TrimRight(base, "/") + "/" + org + "/" + project + "/" + repo + ".git"
+}
+
+// isRunnerSelfCheckJob reports whether the acquired job was authored as an
+// internal administrator probe. The env marker is persisted in the job
+// definition at CreateRun time, so it survives a missing audit linkage.
+func isRunnerSelfCheckJob(aj *pipelinestore.AcquiredJob) bool {
+	if aj == nil {
+		return false
+	}
+	return aj.Spec.Env["WULING_SELF_CHECK_KIND"] == "runner-probe-v1"
 }

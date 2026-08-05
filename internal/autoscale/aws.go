@@ -162,6 +162,9 @@ func (p *awsProvider) runInstancesParams(spec LaunchSpec) url.Values {
 	params.Set("InstanceType", p.pool.InstanceType)
 	params.Set("MinCount", "1")
 	params.Set("MaxCount", "1")
+	// ClientToken makes a retried Launch after a client timeout return the
+	// original instance instead of creating a second billed VM.
+	params.Set("ClientToken", spec.IdempotencyKey())
 	params.Set("UserData", base64.StdEncoding.EncodeToString([]byte(spec.UserData)))
 	if p.pool.SubnetID != "" {
 		params.Set("SubnetId", p.pool.SubnetID)
