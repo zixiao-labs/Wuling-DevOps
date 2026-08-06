@@ -65,6 +65,8 @@ impl Executor {
     pub async fn run_job(&self, job: AcquiredJob) {
         let job_id = job.job_id.clone();
         info!(job_id, name = %job.job_name, run = job.run_number, "starting job");
+        self.api
+            .start_log_redaction(&job_id, job.secrets.values().cloned());
         let conclusion = match self.execute(&job).await {
             Ok(failed) => {
                 if failed {
@@ -85,6 +87,9 @@ impl Executor {
                 "failed"
             }
         };
+        if let Err(e) = self.api.finish_log_redaction(&job_id).await {
+            warn!(job_id, error = %e, "failed to flush redacted log suffix");
+        }
         if let Err(e) = self.api.complete(&job_id, conclusion).await {
             warn!(job_id, error = %e, "failed to report completion");
         }
@@ -106,6 +111,23 @@ impl Executor {
         }
         for (k, v) in &job.secrets {
             base_env.push((k.clone(), v.clone()));
+        }
+        // The autoscaler sets this only after its OS-specific data-disk setup
+        // completed. Keep it out of ordinary workloads; the internal
+        // self-check uses it as a non-secret attestation that the runner
+        // started on the configured non-OS work disk.
+        if job
+            .spec
+            .env
+            .get("WULING_SELF_CHECK_KIND")
+            .map(String::as_str)
+            == Some("runner-probe-v1")
+            && matches!(
+                std::env::var("WULING_RUNNER_DATA_DISK_READY").as_deref(),
+                Ok("1")
+            )
+        {
+            base_env.push(("WULING_RUNNER_DATA_DISK_READY".to_string(), "1".to_string()));
         }
         let mut job_env = JobEnv::new(base_env);
         let env_pairs = job_env.pairs();

@@ -698,6 +698,9 @@ func (j Job) matrixRefs() []string {
 	}
 	add(j.Name)
 	add(j.Resource)
+	if j.Execution != nil {
+		add(j.Execution.Pool)
+	}
 	add(j.Container.Image)
 	for _, l := range j.RunsOn {
 		add(l)
@@ -733,6 +736,11 @@ func (j Job) Resolve(ctx MatrixContext) Job {
 	out := j
 	out.Name = Interpolate(j.Name, ctx)
 	out.Resource = Interpolate(j.Resource, ctx)
+	if j.Execution != nil {
+		execution := *j.Execution
+		execution.Pool = Interpolate(execution.Pool, ctx)
+		out.Execution = &execution
+	}
 	out.Container.Image = Interpolate(j.Container.Image, ctx)
 	out.RunsOn = make(StringList, len(j.RunsOn))
 	for i, l := range j.RunsOn {
@@ -837,7 +845,7 @@ type ExpandedJob struct {
 // Expand resolves every job's strategy.matrix into concrete legs in
 // `needs`-topological order (every leg of a job precedes every leg of any job
 // that needs it), interpolating `${{ matrix.* }}` into runs-on, resource,
-// container, env and steps. defaultTier is the org fallback consumed by
+// execution.pool, container, env and steps. defaultTier is the org fallback consumed by
 // EffectiveTier. It is the single entry point CreateRun uses.
 func (w *Workflow) Expand(defaultTier string) ([]ExpandedJob, error) {
 	order, err := w.JobOrder() // topo-sort of LOGICAL job ids
@@ -864,6 +872,9 @@ func (w *Workflow) Expand(defaultTier string) ([]ExpandedJob, error) {
 			// typo'd matrix tier to the org default with no error at all.
 			if rj.Resource != "" && !ValidTier(rj.Resource) {
 				return nil, fmt.Errorf("job %q leg %q: resource resolved to %q, must be one of low|medium|high", id, legName, rj.Resource)
+			}
+			if err := validateExecution(rj.executionSpec()); err != nil {
+				return nil, fmt.Errorf("job %q leg %q: %w", id, legName, err)
 			}
 			if len(out) >= MaxRunJobs {
 				return nil, fmt.Errorf("workflow %q expands to more than %d jobs (cap reached at job %q)", w.Name, MaxRunJobs, id)

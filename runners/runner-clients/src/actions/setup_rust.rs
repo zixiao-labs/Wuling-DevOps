@@ -123,7 +123,11 @@ pub async fn run(ctx: &mut ActionCtx<'_>) -> Result<bool> {
     for t in &targets {
         cmd_parts.push(format!("-t {t}"));
     }
-    let script = cmd_parts.join(" \\\n  ");
+    // This runs through the host shell on Windows as well as Linux. A POSIX
+    // backslash-newline continuation becomes a literal `\` argument in
+    // PowerShell, causing rustup-init to reject the command. The arguments are
+    // already assembled as one command, so a single space works on both.
+    let script = join_install_command(&cmd_parts);
 
     let lock_key = format!("rustup/{}", ctx.state.display());
     let _guard = ctx.tools.lock_key(&lock_key).await;
@@ -184,6 +188,10 @@ fn normalize_channel(s: &str) -> String {
     s.trim().trim_start_matches("rust:").to_string()
 }
 
+fn join_install_command(parts: &[String]) -> String {
+    parts.join(" ")
+}
+
 fn read_toolchain_file(workspace: &Path) -> Result<Option<RustToolchainSection>> {
     let toml_path = workspace.join("rust-toolchain.toml");
     if toml_path.exists() {
@@ -222,4 +230,21 @@ async fn init_checksum(tools: &crate::toolcache::ToolCache, url: &str) -> Result
         bail!("empty sha256 sidecar for {url}");
     }
     Ok(Checksum::Sha256Hex(hex))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::join_install_command;
+
+    #[test]
+    fn install_command_uses_cross_shell_spacing() {
+        assert_eq!(
+            join_install_command(&[
+                r#""C:\Program Files\rustup-init.exe" -y"#.into(),
+                "--default-toolchain 1.85.0".into(),
+                "-c clippy".into(),
+            ]),
+            r#""C:\Program Files\rustup-init.exe" -y --default-toolchain 1.85.0 -c clippy"#
+        );
+    }
 }

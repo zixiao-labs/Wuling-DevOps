@@ -177,6 +177,39 @@ jobs:
 run 的解析快照。（注意：Runner 侧的 `secrets` / `env` 表达式插值目前**尚未实装**，机密是以
 进程环境变量的形式注入的，脚本里请直接写 `$NPM_TOKEN`。）
 
+### 3.2 执行边界（`execution`）
+
+每个 job 可声明执行边界；不写时是 `shared`：
+
+```yaml
+jobs:
+  publish:
+    runs-on: [linux]
+    execution:
+      mode: exclusive
+    steps:
+      - run: ./scripts/publish.sh
+
+  untrusted-build:
+    runs-on: [windows]
+    execution:
+      mode: isolated
+      pool: aws-windows
+    steps:
+      - run: cargo xtask ci
+```
+
+- `shared`：默认模式。Runner 可按其并发配置领取多个兼容 job。
+- `exclusive`：控制面在事务内锁定 Runner，并要求其没有其它 running job；同一 Runner
+  上的 shared job 也会阻塞 exclusive job，反之亦然。
+- `isolated`：必须显式给出 `pool`。控制面为该 job 创建一台新的该 pool 临时 ECS/EC2
+  Runner，任务完成、失败、取消或超时后销毁 VM 与 Runner 行。它不是嵌套虚拟化，也不会
+  复用静态 Runner、work/tools/state 目录或本地 cache。
+
+`isolated` 会增加启动延迟和云实例费用，且 pool 的 `max` 仍然是硬上限。适合不可信代码、
+发布凭据隔离或会污染宿主的工具；普通构建优先使用 `shared`，需要独占硬件/daemon 时用
+`exclusive`。Linux/Windows Rust 示例见 [pipelines-rust-xtask.md](pipelines-rust-xtask.md)。
+
 ---
 
 ## 4. Secrets
@@ -216,9 +249,9 @@ run 的解析快照。（注意：Runner 侧的 `secrets` / `env` 表达式插�
 | `POST /api/v1/runner/heartbeat` | 续活（更新 `last_seen_at`、状态）。 |
 | `POST /api/v1/runner/jobs/acquire` | 长轮询领取一个匹配 labels/tier 且 `needs` 已满足的 queued job；原子置为 running 并绑定 runner。返回 job + steps + 解密后的 secrets + 仓库检出信息（clone URL + 临时 token + sha）。 |
 | `POST /api/v1/runner/jobs/{id}/logs` | 追加日志块（`?step=<n>` 可选），落盘。 |
-| `PATCH /api/v1/runner/jobs/{id}` | 上报 step 级状态变更（开始/结束/结论）。 |
+| `PATCH /api/v1/runner/jobs/{id}/steps/{number}` | 上报 step 级状态变更（开始/结束/结论）。 |
 | `POST /api/v1/runner/jobs/{id}/complete` | 终结 job（success/failed/canceled），触发 run 汇总与下游 job 解锁。 |
-| `POST /api/v1/runner/jobs/{id}/artifacts` | 上传 artifact（tar 流；Stage 1 落盘）。 |
+| `POST /api/v1/runner/jobs/{id}/artifacts/{name}` | 上传 artifact（tar 流；Stage 1 落盘）。 |
 
 派发用 `SELECT … FOR UPDATE SKIP LOCKED` 原子摘取，避免多 runner 抢同一 job。
 控制面有 **reaper**：`running` 的 job 若其 runner 超过 `WULING_RUNNER_REAP_AFTER`（默认 90s）
@@ -251,6 +284,33 @@ autoscaler 同一套解析器校验 YAML，通过后以当前用户身份直接�
 - `pools[]`：每个池绑定一个 `provider` + `tier`，带 `os`（`linux` 默认 / `windows`；macOS 仅手动、
   不可 autoscale）、`labels`、`min`、`max`，以及 provider 专属字段；云凭证以 `credentials_secret`
   （org Secret 名）引用。
+- `version: 2`：阿里云和 AWS pool 都必须显式填写 `vpc_id`，并分别用
+  `vswitch_id` / `subnet_id` 和安全组作为实际 RunInstances 参数。`vpc_id` 用于拓扑归属、
+  管理员自检和防止把配置误认为跨 VPC 可用；置备前控制面会查询 vSwitch/subnet 与安全组并验证它们
+  均属于该 VPC；阿里云若填写 `zone_id`，还会验证它与 vSwitch 的可用区一致。provider 的
+  RunInstances API 本身并不接受 `vpc_id` 代替 vSwitch/subnet。
+- `data_disks`：v2 可在 `aliyun:` 或 `aws:` 下声明命名的非系统盘；`runner_data_disk`
+  位于 pool 顶层，必须匹配其中一个名称，且该盘容量必须在同一 pool 的 `data_disks` 中唯一。
+  Runner 盘还必须设置 `delete_with_instance: true`，避免临时 VM 销毁后遗留计费磁盘或让隔离
+  作业的工作/工具/状态数据在云端残留。
+  云端逻辑名无法可靠映射为 Linux NVMe 或 Windows 磁盘号，因此首启只会选择**容量匹配的**新 RAW
+  非根盘并格式化，将 work/tools/state 迁到该盘；识别失败会阻止 Runner 上线，绝不静默回退到
+  OS 盘。Windows 固定使用 `W:\wuling-runner`，Linux 使用 `/var/lib/wuling-runner`。
+  其它数据盘若显式设置 `delete_with_instance: false` 会在 VM 终止后保留并继续计费；这是有意的
+  持久化选择，必须由运维方自行盘点和删除，隔离 job 不应依赖这些盘保存状态。
+- **v1 迁移**：v1 继续兼容 `aliyun.data_disk_size` / `data_disk_category`，但不支持命名、
+  多盘或 `runner_data_disk`。升级时先为所有阿里云/AWS pool 补 `vpc_id`，再把单盘迁为
+  `data_disks`；首次启用 `runner_data_disk` 会格式化目标 RAW 盘，必须使用新盘或已确认可清空的盘。
+
+镜像必须预装 Linux 的 `lsblk`、`wipefs`、`mkfs.ext4` 或 Windows 的 `Get-Disk` /
+`Initialize-Disk`。若配置多个新数据盘，Runner 数据盘容量必须唯一；其余 RAW 盘可以存在，
+但不会由 Runner 初始化，须由镜像或后续受控步骤管理。
+
+云凭证的最小权限除创建/销毁实例外，还必须允许拓扑预检与实例恢复查询：AWS 需要
+`ec2:DescribeSubnets`、`ec2:DescribeSecurityGroups` 与 `ec2:DescribeInstances`；阿里云需要
+`ecs:DescribeVSwitchAttributes`、`ecs:DescribeSecurityGroupAttribute` 与 `ecs:DescribeInstances`。
+拓扑只读权限缺失时，v2 pool 会在任何计费实例创建前失败；`DescribeInstances` 用于在
+`SetExternalID` 失败后按 `wuling-runner-id` 标签找回实例，避免账单泄漏。
 
 ---
 
@@ -260,7 +320,8 @@ autoscaler 同一套解析器校验 YAML，通过后以当前用户身份直接�
 `WULING_AUTOSCALER_INTERVAL`（默认 `20s`）对每个 org 执行 reconcile：
 
 1. 读该 org `config` 仓库的 `runner-config.yaml`（每次 reconcile 从 git 重新读取）。
-2. 统计每个 (tier, labels) 维度上**当前没有合适在线 runner 承接**的 queued job 数。
+2. 统计每个 (tier, labels) 维度上**当前没有合适在线 runner 承接**的 shared/exclusive queued job 数；
+   `isolated` job 按显式 `execution.pool` 单独保留，不能被通用容量池错误领取。
 3. **扩容**：匹配的 pool 若未达 `max`，调用 `Provider.Launch(spec)` 拉起实例，并通过 user-data
    注入「服务端地址 + 持久 runner token + labels/tier」，新机自举后上线。引导脚本随 `pool.os`
    **和 `pool.provider`** 而变：Linux 走 cloud-init（写 `runner.env` + `systemctl enable --now`，
@@ -283,6 +344,12 @@ autoscaler 同一套解析器校验 YAML，通过后以当前用户身份直接�
 4. **缩容**：`ephemeral` 且 `provider==该池` 的 runner，若**空闲（无运行中 job）时长 > `idle_timeout`**
    且池内存活数 > `min`，调用 `Provider.Terminate(externalID)` 释放并删除 runner 行。
 5. `min` 维持热备：池内存活不足 `min` 时补足（即便当前无排队）。
+
+`isolated` job 的置备会先在数据库中把一个新建 ephemeral Runner 预留给该 job，再调用
+provider。普通 job 无法领取这台 Runner；VM 注册、心跳并领取预留 job 后，完成路径会立即
+走终止/删除重试，而不是等待 `idle_timeout`。若 provider 调用或首启失败，预留会释放并保留
+可审计的失败状态，后续 reconcile 可以安全重试；即使 VM 已注册但未在首启时限内领取它唯一的
+job，也会被回收并改由新 VM 重试，避免空闲隔离机持续计费。
 
 Provider 接口（`internal/autoscale`）：
 
@@ -368,6 +435,9 @@ Autoscaler 注入的 `runner.env`（Linux 在 `/etc/wuling-runner/`、`chmod 600
 | `WULING_RUNNER_CPUS` | 池 tier 的 vCPU 上限（注入 job 容器 `--cpus`；0/缺省 = 不限） |
 | `WULING_RUNNER_MEMORY` | 池 tier 内存上限减 host 预留（15% 或至少 1Gi）；注入 job 容器 |
 | `WULING_RUNNER_PIDS_LIMIT` | 固定 `4096`（Linux 容器 fork-bomb 防护；Windows 容器/宿主执行不适用） |
+| `WULING_RUNNER_WORK_DIR` | `runner_data_disk` 启用时为 Linux `/var/lib/wuling-runner/work`、Windows `W:\wuling-runner\work` |
+| `WULING_RUNNER_TOOLS_DIR` | `runner_data_disk` 启用时位于同一数据盘的 `tools` 目录 |
+| `WULING_RUNNER_STATE_DIR` | `runner_data_disk` 启用时位于同一数据盘的 `state` 目录 |
 
 宿主直接执行的 job（macOS、未声明 `container:` 的 Windows）不受上述容器限制约束。
 
@@ -398,6 +468,8 @@ runner 二进制还认 `WULING_RUNNER_OS`（默认取构建目标：win/mac 构�
   明文机密不进 git、不进解析快照、不进普通 API 响应。
 - 派发给 runner 的仓库检出 token 为**最小权限、短期**（仅该 repo 读）。
 - 云凭证以 Secret 名引用，GitOps 配置可公开评审。
+- Runner 以 job 为单位流式脱敏所有已注入 Secret 和 runner bearer token；跨 HTTP 日志 chunk
+  的匹配会保留后缀，避免被拆分的值意外写入日志。仍不要在脚本中主动打印 Secret。
 
 ---
 

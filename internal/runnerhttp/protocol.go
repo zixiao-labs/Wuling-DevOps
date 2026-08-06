@@ -100,10 +100,43 @@ func (h *Handler) acquire(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	secrets, err := h.Secrets.ResolveForProject(r.Context(), aj.OrgID, aj.ProjectID)
-	if err != nil {
-		httpapi.RenderError(w, r, err)
+	var secrets map[string]string
+	isProbe := false
+	if h.SelfChecks != nil {
+		var probeErr error
+		var probeSecrets map[string]string
+		probeSecrets, isProbe, probeErr = h.SelfChecks.ProbeSecretsForJob(r.Context(), aj.JobID)
+		if probeErr != nil {
+			// Acquire has already atomically claimed the job. Finalize it rather
+			// than leaving a one-shot VM indefinitely busy when its encrypted
+			// diagnostic value cannot be read.
+			_ = h.Pipelines.CompleteJob(r.Context(), aj.JobID, "failed")
+			h.SelfChecks.CompleteProbe(r.Context(), aj.JobID, "failed")
+			httpapi.RenderError(w, r, probeErr)
+			return
+		}
+		if isProbe {
+			secrets = probeSecrets
+			h.SelfChecks.MarkProbeExecuting(r.Context(), aj.JobID, ri.RunnerID)
+		}
+	}
+	// Fail closed for internal probes even when the durable audit row is
+	// missing (crash between CreateRun and LinkPipeline). Never fall back to
+	// organization/project secrets for a self-check job.
+	if (isProbe || isRunnerSelfCheckJob(aj)) && secrets == nil {
+		_ = h.Pipelines.CompleteJob(r.Context(), aj.JobID, "failed")
+		if h.SelfChecks != nil {
+			h.SelfChecks.CompleteProbe(r.Context(), aj.JobID, "failed")
+		}
+		httpapi.RenderError(w, r, apperr.New(apperr.CodeUnavailable, "runner self-check probe secret is unavailable"))
 		return
+	}
+	if !isProbe && secrets == nil {
+		secrets, err = h.Secrets.ResolveForProject(r.Context(), aj.OrgID, aj.ProjectID)
+		if err != nil {
+			httpapi.RenderError(w, r, err)
+			return
+		}
 	}
 	resp := acquireResponse{
 		AcquiredJob: aj,
@@ -211,6 +244,9 @@ func (h *Handler) complete(w http.ResponseWriter, r *http.Request) {
 		httpapi.RenderError(w, r, err)
 		return
 	}
+	if h.SelfChecks != nil {
+		h.SelfChecks.CompleteProbe(r.Context(), jc.JobID, req.Conclusion)
+	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -247,4 +283,14 @@ func (h *Handler) cloneURL(r *http.Request, org, project, repo string) string {
 		base = scheme + "://" + r.Host
 	}
 	return strings.TrimRight(base, "/") + "/" + org + "/" + project + "/" + repo + ".git"
+}
+
+// isRunnerSelfCheckJob reports whether the acquired job was authored as an
+// internal administrator probe. The env marker is persisted in the job
+// definition at CreateRun time, so it survives a missing audit linkage.
+func isRunnerSelfCheckJob(aj *pipelinestore.AcquiredJob) bool {
+	if aj == nil {
+		return false
+	}
+	return aj.Spec.Env["WULING_SELF_CHECK_KIND"] == "runner-probe-v1"
 }

@@ -620,6 +620,41 @@ func TestResolveKeepsNilMapsNil(t *testing.T) {
 	}
 }
 
+func TestExpandResolvesExecutionPoolPerMatrixLeg(t *testing.T) {
+	w := mustParse(t, `
+name: execution-matrix
+on: push
+jobs:
+  build:
+    execution:
+      mode: isolated
+      pool: "dedicated-${{ matrix.arch }}"
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps: [{run: make}]
+`)
+	legs, err := w.Expand("medium")
+	if err != nil {
+		t.Fatalf("Expand: %v", err)
+	}
+	if len(legs) != 2 {
+		t.Fatalf("legs = %d, want 2", len(legs))
+	}
+	for i, wantPool := range []string{"dedicated-amd64", "dedicated-arm64"} {
+		got := legs[i].Spec.Execution
+		if got.Mode != ExecutionModeIsolated || got.Pool != wantPool {
+			t.Errorf("leg %d execution = %+v, want mode=%q pool=%q", i, got, ExecutionModeIsolated, wantPool)
+		}
+	}
+
+	// Resolve must clone the YAML-facing execution block, otherwise the second
+	// leg's substitution would mutate the authored workflow snapshot.
+	if got := w.Jobs["build"].Execution.Pool; got != "dedicated-${{ matrix.arch }}" {
+		t.Errorf("authored execution pool was mutated: %q", got)
+	}
+}
+
 // ----------------------------------------------------------------------------
 // Expand
 // ----------------------------------------------------------------------------

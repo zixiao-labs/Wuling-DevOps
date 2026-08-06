@@ -1,0 +1,515 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Wuling DevOps runner-config.yaml",
+  "description": "Organization-level Runner and autoscaler configuration. Supports legacy v1 and v2 VPC/data-disk fields. Server-side validation remains authoritative for cloud credentials, cloud topology, capacity, and provider behavior.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "enum": [1, 2],
+      "description": "Version 1 is accepted for migration. Version 2 enables explicit VPC and named data-disk configuration."
+    },
+    "default_tier": {
+      "$ref": "#/definitions/resourceTier"
+    },
+    "idle_timeout": {
+      "$ref": "#/definitions/duration"
+    },
+    "tiers": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "low": {
+          "$ref": "#/definitions/tierSpec"
+        },
+        "medium": {
+          "$ref": "#/definitions/tierSpec"
+        },
+        "high": {
+          "$ref": "#/definitions/tierSpec"
+        }
+      }
+    },
+    "pools": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/pool"
+      }
+    }
+  },
+  "definitions": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "secretName": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+      "description": "Name of an organization Secret; never put the secret value in this file."
+    },
+    "resourceTier": {
+      "type": "string",
+      "enum": ["low", "medium", "high"]
+    },
+    "size": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*(?:\\.[0-9]+)?(?:[KkMmGgTt](?:[Ii])?[Bb]?|[Bb])?$",
+      "description": "Positive storage or memory size, such as 80Gi, 81920Mi, 80G, or 80."
+    },
+    "duration": {
+      "type": "string",
+      "pattern": "^(?:0|(?:(?:[0-9]+(?:\\.[0-9]+)?|\\.[0-9]+)(?:ns|us|µs|ms|s|m|h))+)$",
+      "description": "Positive Go-style duration, such as 30s, 5m, or 1h30m."
+    },
+    "tierSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cpu": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "memory": {
+          "$ref": "#/definitions/size"
+        },
+        "storage": {
+          "$ref": "#/definitions/size"
+        }
+      }
+    },
+    "dataDisk": {
+      "type": "object",
+      "required": ["name", "size"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/definitions/identifier"
+        },
+        "size": {
+          "$ref": "#/definitions/size"
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ECS disk category or EBS volume type, for example cloud_essd or gp3."
+        },
+        "performance_level": {
+          "type": "string",
+          "enum": ["PL0", "PL1", "PL2", "PL3", "PL4"]
+        },
+        "device_name": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "encrypted": {
+          "type": "boolean"
+        },
+        "delete_with_instance": {
+          "type": "boolean",
+          "description": "Delete this volume with the temporary VM. Must be true for the disk selected by runner_data_disk."
+        }
+      }
+    },
+    "runnerDataDisk": {
+      "description": "Name of the configured v2 data_disks entry formatted as the Runner work/tools/state disk on first boot. Its capacity must be unique among data_disks so Linux/Windows bootstrap can safely identify the raw guest disk.",
+      "allOf": [
+        { "$ref": "#/definitions/identifier" }
+      ]
+    },
+    "aliyun": {
+      "type": "object",
+      "required": ["credentials_secret"],
+      "additionalProperties": false,
+      "properties": {
+        "region": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "zone_id": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "vpc_id": {
+          "type": "string",
+          "pattern": "^vpc-[A-Za-z0-9]+$",
+          "description": "v2 explicit VPC binding, verified by administrator self-check."
+        },
+        "image_id": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "instance_type": {
+          "$ref": "#/definitions/identifier"
+        },
+        "instance_types": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/definitions/identifier"
+          }
+        },
+        "instance_type_family": {
+          "$ref": "#/definitions/identifier"
+        },
+        "vswitch_id": {
+          "type": "string",
+          "pattern": "^vsw-[A-Za-z0-9]+$"
+        },
+        "security_group_id": {
+          "type": "string",
+          "pattern": "^sg-[A-Za-z0-9]+$"
+        },
+        "internet_max_bandwidth_out": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "internet_charge_type": {
+          "type": "string",
+          "enum": ["PayByTraffic", "PayByBandwidth"]
+        },
+        "system_disk_size": {
+          "$ref": "#/definitions/size"
+        },
+        "system_disk_category": {
+          "type": "string",
+          "enum": [
+            "cloud",
+            "cloud_efficiency",
+            "cloud_ssd",
+            "cloud_essd",
+            "cloud_essd_entry",
+            "cloud_auto"
+          ]
+        },
+        "system_disk_performance_level": {
+          "type": "string",
+          "enum": ["PL0", "PL1", "PL2", "PL3", "PL4"]
+        },
+        "data_disk_size": {
+          "description": "Legacy v1 single data-disk size.",
+          "allOf": [
+            { "$ref": "#/definitions/size" }
+          ]
+        },
+        "data_disk_category": {
+          "type": "string",
+          "enum": [
+            "cloud",
+            "cloud_efficiency",
+            "cloud_ssd",
+            "cloud_essd",
+            "cloud_essd_entry",
+            "cloud_auto"
+          ],
+          "description": "Legacy v1 single data-disk category."
+        },
+        "data_disks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/dataDisk"
+          },
+          "description": "v2 named ECS data disks."
+        },
+        "instance_charge_type": {
+          "type": "string",
+          "enum": ["PostPaid", "PrePaid"]
+        },
+        "spot": {
+          "type": "boolean"
+        },
+        "spot_strategy": {
+          "type": "string",
+          "enum": ["NoSpot", "SpotWithPriceLimit", "SpotAsPriceGo"]
+        },
+        "spot_price_limit": {
+          "type": "number",
+          "minimum": 0
+        },
+        "spot_duration": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 6
+        },
+        "spot_interruption_behavior": {
+          "type": "string",
+          "enum": ["Terminate", "Stop"]
+        },
+        "auto_release_hours": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "password_secret": {
+          "$ref": "#/definitions/secretName"
+        },
+        "password_inherit": {
+          "type": "boolean"
+        },
+        "key_pair_name": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "ram_role_name": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "resource_group_id": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "tags": {
+          "type": "object",
+          "maxProperties": 14,
+          "description": "Extra ECS instance tags. Six tag slots are reserved for autoscaler ownership, runner-id recovery, and isolated-job audit tags.",
+          "propertyNames": {
+            "pattern": "^(?!(?:aliyun|acs:))[A-Za-z0-9][A-Za-z0-9._:/=+@-]*$"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "credentials_secret": {
+          "$ref": "#/definitions/secretName"
+        }
+      },
+      "oneOf": [
+        {
+          "required": ["instance_type"],
+          "not": {
+            "required": ["instance_types"]
+          }
+        },
+        {
+          "required": ["instance_types"],
+          "not": {
+            "required": ["instance_type"]
+          }
+        }
+      ]
+    },
+    "aws": {
+      "type": "object",
+      "required": ["credentials_secret"],
+      "additionalProperties": false,
+      "properties": {
+        "region": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "vpc_id": {
+          "type": "string",
+          "pattern": "^vpc-[A-Za-z0-9]+$",
+          "description": "v2 explicit VPC binding, verified by administrator self-check."
+        },
+        "ami": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "instance_type": {
+          "$ref": "#/definitions/identifier"
+        },
+        "subnet_id": {
+          "type": "string",
+          "pattern": "^subnet-[A-Za-z0-9]+$"
+        },
+        "security_group_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^sg-[A-Za-z0-9]+$"
+          }
+        },
+        "iam_instance_profile": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "spot": {
+          "type": "boolean"
+        },
+        "data_disks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/dataDisk"
+          },
+          "description": "v2 named EBS data disks."
+        },
+        "credentials_secret": {
+          "$ref": "#/definitions/secretName"
+        }
+      }
+    },
+    "proxmox": {
+      "type": "object",
+      "required": ["credentials_secret"],
+      "additionalProperties": false,
+      "properties": {
+        "api_url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "node": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "template_vmid": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "storage": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "bridge": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "full_clone": {
+          "type": "boolean"
+        },
+        "insecure_tls": {
+          "type": "boolean"
+        },
+        "credentials_secret": {
+          "$ref": "#/definitions/secretName"
+        }
+      }
+    },
+    "vcenter": {
+      "type": "object",
+      "required": ["credentials_secret"],
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "datacenter": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "cluster": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "datastore": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "resource_pool": {
+          "type": "string"
+        },
+        "folder": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "template": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "network": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "insecure_tls": {
+          "type": "boolean"
+        },
+        "credentials_secret": {
+          "$ref": "#/definitions/secretName"
+        }
+      }
+    },
+    "pool": {
+      "type": "object",
+      "required": ["name", "provider"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^\\S(?:.*\\S)?$"
+        },
+        "provider": {
+          "type": "string",
+          "enum": ["aliyun", "aws", "proxmox", "vcenter"]
+        },
+        "tier": {
+          "$ref": "#/definitions/resourceTier"
+        },
+        "os": {
+          "type": "string",
+          "enum": ["linux", "windows"]
+        },
+        "labels": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^\\S(?:.*\\S)?$"
+          }
+        },
+        "min": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "runner_data_disk": {
+          "$ref": "#/definitions/runnerDataDisk"
+        },
+        "aliyun": {
+          "$ref": "#/definitions/aliyun"
+        },
+        "aws": {
+          "$ref": "#/definitions/aws"
+        },
+        "proxmox": {
+          "$ref": "#/definitions/proxmox"
+        },
+        "vcenter": {
+          "$ref": "#/definitions/vcenter"
+        }
+      },
+      "oneOf": [
+        {
+          "required": ["aliyun"],
+          "properties": {
+            "provider": {
+              "const": "aliyun"
+            },
+            "aws": false,
+            "proxmox": false,
+            "vcenter": false
+          }
+        },
+        {
+          "required": ["aws"],
+          "properties": {
+            "provider": {
+              "const": "aws"
+            },
+            "aliyun": false,
+            "proxmox": false,
+            "vcenter": false
+          }
+        },
+        {
+          "required": ["proxmox"],
+          "properties": {
+            "provider": {
+              "const": "proxmox"
+            },
+            "aliyun": false,
+            "aws": false,
+            "vcenter": false
+          }
+        },
+        {
+          "required": ["vcenter"],
+          "properties": {
+            "provider": {
+              "const": "vcenter"
+            },
+            "aliyun": false,
+            "aws": false,
+            "proxmox": false
+          }
+        }
+      ]
+    }
+  }
+}

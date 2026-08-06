@@ -40,7 +40,7 @@
                   └─────────────┘  └──────────────────┘
 
   static frontend (Nasti build → dist/) — Caddy 直接吐 / nginx 静态托管
-  help SSR (/help/*) — Node 容器渲染；Caddy 502 时回退 dist/help/ 预渲染副本
+  help (/help/*) — 预渲染静态页（dist/help/**）；/help/search 可选走 Node SSR
 ```
 
 **对外端口：**

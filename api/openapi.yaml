@@ -962,6 +962,63 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /api/v1/admin/runner-self-checks:
+    get:
+      summary: List durable Runner self-check lifecycles (admin)
+      description: |
+        Lists restart-safe, per-pool self-check records for one organization.
+        Requires an active global admin. Each record may represent a billable
+        isolated VM and never contains secret values, raw config content, or
+        raw command logs.
+      parameters:
+        - in: query
+          name: org_slug
+          required: true
+          schema: { type: string, minLength: 2, maxLength: 64 }
+      responses:
+        "200":
+          description: newest-first durable self-check records
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunnerSelfCheckList" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+        "503":
+          description: runner self-check service is unavailable
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    post:
+      summary: Start a real Runner/autoscaler self-check (admin)
+      description: |
+        Parses the current organization runner-config.yaml, validates safe
+        local prerequisites, then queues one explicit-pool isolated probe per
+        ready selected pool. The autoscaler provisions a temporary VM, waits
+        for its Runner, executes a command and one-time secret/redaction
+        probe, then destroys the VM. This can incur cloud-provider charges.
+        Existing organization secrets are never injected into the probe.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RunnerSelfCheckRequest" }
+      responses:
+        "200":
+          description: preflight result and durable probe records queued asynchronously
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunnerSelfCheckStart" }
+        "400": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
+        "409":
+          description: a selected pool already has an active self-check
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "503":
+          description: runner self-check service is unavailable
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
   # ---------------- orgs ----------------
 
   /api/v1/orgs:
@@ -4211,6 +4268,121 @@ components:
           type: string
           pattern: "^([0-9a-fA-F]{40})?$"
           description: blob_sha from a prior GET; the empty string asserts the file does not exist yet. Required unless If-Match is sent.
+
+    RunnerSelfCheckPhase:
+      type: string
+      enum: [preflight, provision, wait_runner, execute, cleanup]
+
+    RunnerSelfCheckState:
+      type: string
+      enum: [preflight, queued, provisioning, waiting_for_runner, executing, cleanup_pending, succeeded, failed, cleaned, not_run]
+
+    RunnerSelfCheckCheckStatus:
+      type: string
+      enum: [passed, failed, unsupported, error, not_run]
+
+    RunnerSelfCheckReadiness:
+      type: string
+      enum: [ready, blocked]
+
+    RunnerSelfCheckCheck:
+      type: object
+      required: [name, status, message]
+      properties:
+        name: { type: string, example: credential_secret }
+        status: { $ref: "#/components/schemas/RunnerSelfCheckCheckStatus" }
+        message:
+          type: string
+          description: Metadata-only assertion message; never includes secret values or raw config content.
+
+    RunnerSelfCheckPool:
+      type: object
+      required: [pool_name, phase, state, readiness, checks, runner_probe_state, runner_probe_note]
+      properties:
+        pool_name: { type: string }
+        provider: { type: string, example: aws }
+        os: { type: string, enum: [linux, windows] }
+        phase: { $ref: "#/components/schemas/RunnerSelfCheckPhase" }
+        state: { $ref: "#/components/schemas/RunnerSelfCheckState" }
+        readiness: { $ref: "#/components/schemas/RunnerSelfCheckReadiness" }
+        checks:
+          type: array
+          items: { $ref: "#/components/schemas/RunnerSelfCheckCheck" }
+        runner_probe_state:
+          allOf:
+            - $ref: "#/components/schemas/RunnerSelfCheckState"
+          description: not_run for a pool blocked during local preflight; ready pools are represented by durable RunnerSelfCheck lifecycle records instead.
+        runner_probe_note:
+          type: string
+          description: Safe explanation of why this pool did not queue a real VM probe.
+
+    RunnerSelfCheck:
+      type: object
+      required: [id, org_id, requested_by, pool_name, provider, os, phase, state, checks, cleanup_attempts, created_at, updated_at]
+      description: |
+        Durable, per-pool administrator self-check audit. The control plane
+        stores an encrypted one-time probe value internally, but it is never
+        returned by this schema or written to command logs.
+      properties:
+        id: { type: string, format: uuid }
+        org_id: { type: string, format: uuid }
+        requested_by: { type: string, format: uuid }
+        pool_name: { type: string }
+        provider: { type: string, example: aws }
+        os: { type: string, enum: [linux, windows] }
+        phase: { $ref: "#/components/schemas/RunnerSelfCheckPhase" }
+        state: { $ref: "#/components/schemas/RunnerSelfCheckState" }
+        checks:
+          type: array
+          items: { $ref: "#/components/schemas/RunnerSelfCheckCheck" }
+        summary: { type: string, description: Safe lifecycle summary; never command output. }
+        run_id: { type: string, format: uuid }
+        job_id: { type: string, format: uuid }
+        runner_id: { type: string, format: uuid }
+        external_id: { type: string, description: Cloud instance identifier visible only to global administrators. }
+        cleanup_attempts: { type: integer, minimum: 0 }
+        cleanup_last_error: { type: string, description: Safe cleanup retry summary. }
+        next_cleanup_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        cleaned_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    RunnerSelfCheckList:
+      type: object
+      required: [checks]
+      properties:
+        checks:
+          type: array
+          description: Newest-first durable per-pool records.
+          items: { $ref: "#/components/schemas/RunnerSelfCheck" }
+
+    RunnerSelfCheckStart:
+      type: object
+      required: [org_slug, requested_at, config_check, checks]
+      properties:
+        org_slug: { type: string }
+        requested_at: { type: string, format: date-time }
+        config_check: { $ref: "#/components/schemas/RunnerSelfCheckCheck" }
+        checks:
+          type: array
+          items: { $ref: "#/components/schemas/RunnerSelfCheck" }
+        blocked_pools:
+          type: array
+          description: Selected pools that failed local preflight and therefore did not create a VM.
+          items: { $ref: "#/components/schemas/RunnerSelfCheckPool" }
+
+    RunnerSelfCheckRequest:
+      type: object
+      required: [org_slug]
+      properties:
+        org_slug: { type: string, minLength: 2, maxLength: 64 }
+        pool_names:
+          type: array
+          maxItems: 64
+          description: Omit or send an empty array to run every configured pool that passes local preflight.
+          items: { type: string, minLength: 1, maxLength: 128 }
 
     RegisterRunnerRequest:
       type: object

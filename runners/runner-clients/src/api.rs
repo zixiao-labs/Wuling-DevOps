@@ -2,6 +2,7 @@
 //! mirror the Go JSON on the runner protocol endpoints (see internal/runnerhttp).
 
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -99,6 +100,10 @@ pub struct ApiClient {
     http: reqwest::Client,
     api_base: String,
     token: String,
+    /// Per-job stream redactors. A job's secrets are registered before any
+    /// output is sent, so every execution path that calls append_log (including
+    /// action helpers and container drains) gets the same protection.
+    redactors: Arc<Mutex<HashMap<String, StreamSecretRedactor>>>,
 }
 
 impl ApiClient {
@@ -110,6 +115,7 @@ impl ApiClient {
             http,
             api_base,
             token,
+            redactors: Arc::default(),
         })
     }
 
@@ -177,7 +183,69 @@ impl ApiClient {
         Ok(Some(resp.json().await.context("decode acquired job")?))
     }
 
+    /// Begin redacting the given job's secret values from streamed logs.
+    ///
+    /// Redaction is deliberately maintained by job id rather than by an
+    /// executor-local wrapper: backend and action code also append logs
+    /// directly through this client. Values shorter than four bytes are skipped
+    /// because redacting common shell fragments creates misleading logs while
+    /// offering little practical secret protection.
+    pub fn start_log_redaction(&self, job_id: &str, secrets: impl IntoIterator<Item = String>) {
+        let redactor = StreamSecretRedactor::new(
+            secrets
+                .into_iter()
+                // Git checkout failures can include the runner's bearer token
+                // in an authenticated URL. It is not a job Secret, but has
+                // the same log-redaction requirement.
+                .chain(std::iter::once(self.token.clone())),
+        );
+        if redactor.is_empty() {
+            return;
+        }
+        if let Ok(mut redactors) = self.redactors.lock() {
+            redactors.insert(job_id.to_string(), redactor);
+        }
+    }
+
+    /// Flush a job's buffered log suffix and remove its secret redactor.
+    ///
+    /// A suffix is held between chunks so a secret split across HTTP log
+    /// requests cannot leak. This must run before the final complete callback.
+    pub async fn finish_log_redaction(&self, job_id: &str) -> Result<()> {
+        let tail = {
+            let mut redactors = self
+                .redactors
+                .lock()
+                .map_err(|_| anyhow!("log redactor lock poisoned"))?;
+            match redactors.remove(job_id) {
+                Some(mut redactor) => redactor.redact_chunk(&[], true),
+                None => Vec::new(),
+            }
+        };
+        if tail.is_empty() {
+            return Ok(());
+        }
+        self.post_log(job_id, tail).await
+    }
+
     pub async fn append_log(&self, job_id: &str, data: Vec<u8>) -> Result<()> {
+        let data = {
+            let mut redactors = self
+                .redactors
+                .lock()
+                .map_err(|_| anyhow!("log redactor lock poisoned"))?;
+            match redactors.get_mut(job_id) {
+                Some(redactor) => redactor.redact_chunk(&data, false),
+                None => data,
+            }
+        };
+        if data.is_empty() {
+            return Ok(());
+        }
+        self.post_log(job_id, data).await
+    }
+
+    async fn post_log(&self, job_id: &str, data: Vec<u8>) -> Result<()> {
         let resp = self
             .http
             .post(format!("{}/runner/jobs/{job_id}/logs", self.api_base))
@@ -230,6 +298,73 @@ impl ApiClient {
     }
 }
 
+/// Redacts byte values while preserving enough suffix to recognize a secret
+/// spanning two log chunks. We work on bytes instead of UTF-8 strings because
+/// command output is not guaranteed to be valid Unicode.
+#[derive(Debug)]
+struct StreamSecretRedactor {
+    secrets: Vec<Vec<u8>>,
+    max_secret_len: usize,
+    pending: Vec<u8>,
+}
+
+impl StreamSecretRedactor {
+    fn new(values: impl IntoIterator<Item = String>) -> Self {
+        let mut secrets: Vec<Vec<u8>> = values
+            .into_iter()
+            .map(String::into_bytes)
+            .filter(|value| value.len() >= 4)
+            .collect();
+        secrets.sort();
+        secrets.dedup();
+        secrets.sort_by_key(|value| std::cmp::Reverse(value.len()));
+        let max_secret_len = secrets.iter().map(Vec::len).max().unwrap_or(0);
+        Self {
+            secrets,
+            max_secret_len,
+            pending: Vec::new(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.secrets.is_empty()
+    }
+
+    fn redact_chunk(&mut self, chunk: &[u8], finish: bool) -> Vec<u8> {
+        self.pending.extend_from_slice(chunk);
+        if self.secrets.is_empty() {
+            return std::mem::take(&mut self.pending);
+        }
+
+        // Keep the longest possible secret prefix until the next chunk unless
+        // the stream is complete. Any start before safe_end has enough bytes
+        // available to decide whether it is a secret.
+        let safe_end = if finish {
+            self.pending.len()
+        } else {
+            self.pending
+                .len()
+                .saturating_sub(self.max_secret_len.saturating_sub(1))
+        };
+        let mut out = Vec::with_capacity(safe_end);
+        let mut idx = 0;
+        while idx < safe_end {
+            if let Some(secret) = self.secrets.iter().find(|secret| {
+                idx + secret.len() <= self.pending.len()
+                    && self.pending[idx..idx + secret.len()] == secret[..]
+            }) {
+                out.extend_from_slice(b"[REDACTED]");
+                idx += secret.len();
+            } else {
+                out.push(self.pending[idx]);
+                idx += 1;
+            }
+        }
+        self.pending.drain(..idx);
+        out
+    }
+}
+
 async fn ensure_ok(resp: reqwest::Response, what: &str) -> Result<()> {
     if resp.status().is_success() {
         return Ok(());
@@ -255,4 +390,26 @@ fn encode_path_segment(s: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StreamSecretRedactor;
+
+    #[test]
+    fn redacts_a_secret_split_across_chunks() {
+        let mut redactor = StreamSecretRedactor::new(["SUPERSECRET".to_string()]);
+        let mut out = redactor.redact_chunk(b"prefix SUPER", false);
+        out.extend(redactor.redact_chunk(b"SECRET suffix", false));
+        out.extend(redactor.redact_chunk(&[], true));
+
+        assert_eq!(String::from_utf8(out).unwrap(), "prefix [REDACTED] suffix");
+    }
+
+    #[test]
+    fn keeps_short_values_out_of_the_redaction_set() {
+        let mut redactor = StreamSecretRedactor::new(["abc".to_string()]);
+        let out = redactor.redact_chunk(b"abc", true);
+        assert_eq!(out, b"abc");
+    }
 }

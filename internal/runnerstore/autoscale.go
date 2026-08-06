@@ -13,15 +13,16 @@ import (
 // AutoscaleRunner is the autoscaler's view of an ephemeral runner: enough to
 // decide idle scale-down and to terminate the backing cloud instance.
 type AutoscaleRunner struct {
-	ID         uuid.UUID
-	Name       string
-	PoolName   string
-	Provider   string
-	ExternalID string
-	Status     string // offline|idle|busy
-	LastJobAt  *time.Time
-	LastSeenAt *time.Time
-	CreatedAt  time.Time
+	ID            uuid.UUID
+	Name          string
+	PoolName      string
+	Provider      string
+	ExternalID    string
+	IsolatedJobID *uuid.UUID
+	Status        string // offline|idle|busy
+	LastJobAt     *time.Time
+	LastSeenAt    *time.Time
+	CreatedAt     time.Time
 }
 
 // CreateEphemeralRunner pre-provisions a runner row for an autoscaled instance
@@ -29,6 +30,20 @@ type AutoscaleRunner struct {
 // via user-data so the VM authenticates directly (no register round-trip),
 // which lets the autoscaler own the runner↔instance mapping (SetExternalID).
 func (s *Store) CreateEphemeralRunner(ctx context.Context, orgID uuid.UUID, name string, labels []string, tier, provider, pool, os string) (*model.Runner, error) {
+	return s.createEphemeralRunner(ctx, orgID, name, labels, tier, provider, pool, os, nil)
+}
+
+// CreateIsolatedEphemeralRunner creates capacity dedicated to exactly one
+// isolated job. Unlike ordinary ephemeral capacity it must never be counted as
+// a warm/shared runner or allowed to acquire a different job.
+func (s *Store) CreateIsolatedEphemeralRunner(ctx context.Context, orgID uuid.UUID, name string, labels []string, tier, provider, pool, os string, jobID uuid.UUID) (*model.Runner, error) {
+	if jobID == uuid.Nil {
+		return nil, apperr.Validation("isolated runner requires a job id", nil)
+	}
+	return s.createEphemeralRunner(ctx, orgID, name, labels, tier, provider, pool, os, &jobID)
+}
+
+func (s *Store) createEphemeralRunner(ctx context.Context, orgID uuid.UUID, name string, labels []string, tier, provider, pool, os string, isolatedJobID *uuid.UUID) (*model.Runner, error) {
 	if !validTier(tier) {
 		tier = model.TierMedium
 	}
@@ -50,10 +65,10 @@ func (s *Store) CreateEphemeralRunner(ctx context.Context, orgID uuid.UUID, name
 	}
 	err = s.pool.QueryRow(ctx, `
 		INSERT INTO runners
-		    (id, org_id, name, token_hash, labels, resource_tier, provider, pool_name, ephemeral, os, status)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,TRUE,$9,'offline')
+		    (id, org_id, name, token_hash, labels, resource_tier, provider, pool_name, ephemeral, os, status, isolated_job_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,TRUE,$9,'offline',$10)
 		RETURNING created_at
-	`, runnerID, orgID, name, tokHash, nonNilStrings(r.Labels), tier, provider, pool, os).Scan(&r.CreatedAt)
+	`, runnerID, orgID, name, tokHash, nonNilStrings(r.Labels), tier, provider, pool, os, isolatedJobID).Scan(&r.CreatedAt)
 	if err != nil {
 		return nil, mapInsertErr(err, "runner")
 	}
@@ -64,10 +79,13 @@ func (s *Store) CreateEphemeralRunner(ctx context.Context, orgID uuid.UUID, name
 // SetExternalID records the cloud instance id on a runner row so the
 // autoscaler can terminate it later.
 func (s *Store) SetExternalID(ctx context.Context, runnerID uuid.UUID, externalID string) error {
-	_, err := s.pool.Exec(ctx,
+	tag, err := s.pool.Exec(ctx,
 		`UPDATE runners SET external_id = $2 WHERE id = $1`, runnerID, externalID)
 	if err != nil {
 		return apperr.Internal(err)
+	}
+	if tag.RowsAffected() != 1 {
+		return apperr.NotFound("runner")
 	}
 	return nil
 }
@@ -75,7 +93,7 @@ func (s *Store) SetExternalID(ctx context.Context, runnerID uuid.UUID, externalI
 // ListForAutoscale returns the org's ephemeral runners for reconcile decisions.
 func (s *Store) ListForAutoscale(ctx context.Context, orgID uuid.UUID) ([]AutoscaleRunner, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, name, pool_name, provider, external_id, status, last_job_at, last_seen_at, created_at
+		SELECT id, name, pool_name, provider, external_id, isolated_job_id, status, last_job_at, last_seen_at, created_at
 		FROM runners WHERE org_id = $1 AND ephemeral = TRUE
 	`, orgID)
 	if err != nil {
@@ -86,7 +104,7 @@ func (s *Store) ListForAutoscale(ctx context.Context, orgID uuid.UUID) ([]Autosc
 	for rows.Next() {
 		var a AutoscaleRunner
 		if err := rows.Scan(&a.ID, &a.Name, &a.PoolName, &a.Provider, &a.ExternalID,
-			&a.Status, &a.LastJobAt, &a.LastSeenAt, &a.CreatedAt); err != nil {
+			&a.IsolatedJobID, &a.Status, &a.LastJobAt, &a.LastSeenAt, &a.CreatedAt); err != nil {
 			return nil, apperr.Internal(err)
 		}
 		out = append(out, a)

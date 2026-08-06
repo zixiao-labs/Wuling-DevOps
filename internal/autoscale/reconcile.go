@@ -8,6 +8,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/zixiao-labs/wuling-devops/internal/apperr"
+	"github.com/zixiao-labs/wuling-devops/internal/model"
 	"github.com/zixiao-labs/wuling-devops/internal/orgconfig"
 	"github.com/zixiao-labs/wuling-devops/internal/pipelinestore"
 	"github.com/zixiao-labs/wuling-devops/internal/runnerstore"
@@ -17,9 +19,22 @@ import (
 // ConfigFileName is the runner config blob read from each org's config repo.
 const ConfigFileName = "runner-config.yaml"
 
-// bootTimeout is how long an ephemeral runner may stay 'offline' (never
-// checked in) before the autoscaler reaps it as a failed boot.
+// bootTimeout is how long a newly provisioned VM may wait to register and
+// acquire its reserved isolated job before the autoscaler reaps it. Regular
+// ephemeral pools use the same value for an offline never-checked-in runner.
 const bootTimeout = 5 * time.Minute
+
+// IsolatedLifecycle observes the cloud-resource lifecycle of selected
+// per-job runners. It is intentionally defined in autoscale rather than
+// importing the administrator self-check package, so ordinary isolated jobs
+// retain no dependency on that feature. Implementations must treat unknown
+// job IDs as a no-op.
+type IsolatedLifecycle interface {
+	MarkIsolatedProvisioned(ctx context.Context, jobID, runnerID uuid.UUID, externalID string) error
+	MarkIsolatedProvisioningFailure(ctx context.Context, jobID uuid.UUID, summary string) error
+	MarkIsolatedCleanupPending(ctx context.Context, jobID uuid.UUID, summary string, next time.Time) error
+	MarkIsolatedCleaned(ctx context.Context, jobID uuid.UUID) error
+}
 
 // Reconciler is the autoscaler control loop.
 type Reconciler struct {
@@ -27,6 +42,9 @@ type Reconciler struct {
 	Runners   *runnerstore.Store
 	Secrets   *secretstore.Store
 	Log       *slog.Logger
+	// IsolatedLifecycle is optional; the administrator self-check audit store
+	// uses it to make VM provisioning and cleanup observable across restarts.
+	IsolatedLifecycle IsolatedLifecycle
 
 	// OrgConfig reads each org's runner-config.yaml from its config repo.
 	OrgConfig *orgconfig.Store
@@ -47,8 +65,9 @@ type Reconciler struct {
 }
 
 type poolKey struct {
-	Org  uuid.UUID
-	Pool string
+	Org      uuid.UUID
+	Pool     string
+	Isolated bool // distinct from shared-pool launch backoff
 }
 
 type coolState struct {
@@ -109,6 +128,46 @@ func (r *Reconciler) clearLaunchPenalty(k poolKey) {
 		return
 	}
 	delete(r.cooldown, k)
+}
+
+func (r *Reconciler) markIsolatedProvisioned(ctx context.Context, jobID, runnerID uuid.UUID, externalID string) {
+	if r.IsolatedLifecycle == nil {
+		return
+	}
+	if err := r.IsolatedLifecycle.MarkIsolatedProvisioned(ctx, jobID, runnerID, externalID); err != nil {
+		r.Log.Warn("record isolated runner provisioning lifecycle failed", "job", jobID, "err", err)
+	}
+}
+
+func (r *Reconciler) markIsolatedProvisioningFailure(ctx context.Context, jobID uuid.UUID) {
+	if r.IsolatedLifecycle == nil {
+		return
+	}
+	if err := r.IsolatedLifecycle.MarkIsolatedProvisioningFailure(
+		ctx, jobID, "云实例未能完成创建；autoscaler 将按退避策略重试。",
+	); err != nil {
+		r.Log.Warn("record isolated runner provisioning failure failed", "job", jobID, "err", err)
+	}
+}
+
+func (r *Reconciler) markIsolatedCleanupPending(ctx context.Context, jobID uuid.UUID) {
+	if r.IsolatedLifecycle == nil {
+		return
+	}
+	if err := r.IsolatedLifecycle.MarkIsolatedCleanupPending(
+		ctx, jobID, "临时实例清理未完成；autoscaler 将重试，并继续将其计入池容量。", time.Now().Add(time.Minute),
+	); err != nil {
+		r.Log.Warn("record isolated runner cleanup retry failed", "job", jobID, "err", err)
+	}
+}
+
+func (r *Reconciler) markIsolatedCleaned(ctx context.Context, jobID uuid.UUID) {
+	if r.IsolatedLifecycle == nil {
+		return
+	}
+	if err := r.IsolatedLifecycle.MarkIsolatedCleaned(ctx, jobID); err != nil {
+		r.Log.Warn("record isolated runner cleanup completion failed", "job", jobID, "err", err)
+	}
 }
 
 // Run drives the reconcile loop until ctx is canceled.
@@ -184,19 +243,314 @@ func (r *Reconciler) reconcileOrg(ctx context.Context, orgID uuid.UUID) error {
 	if err != nil {
 		return err
 	}
+	isolatedDemand, err := r.Pipelines.QueuedIsolatedDemand(ctx, orgID)
+	if err != nil {
+		return err
+	}
 	runners, err := r.Runners.ListForAutoscale(ctx, orgID)
 	if err != nil {
 		return err
 	}
 
-	pendingByPool := assignDemand(cfg.Pools, demand)
+	pendingByPool := assignDemand(cfg.Pools, demand, cfg.DefaultTier)
+	isolatedByPool := groupIsolatedDemand(isolatedDemand)
 	runnersByPool := groupRunners(runners)
 
 	for i := range cfg.Pools {
 		pool := cfg.Pools[i]
-		r.reconcilePool(ctx, orgID, cfg, pool, pendingByPool[pool.Name], runnersByPool[pool.Name], idleTimeout)
+		remainingIsolated, launchedIsolated := r.reconcileIsolatedPool(
+			ctx, orgID, cfg, pool, runnersByPool[pool.Name], isolatedByPool[pool.Name],
+		)
+		r.reconcilePool(
+			ctx, orgID, cfg, pool, pendingByPool[pool.Name],
+			sharedPoolRunners(runnersByPool[pool.Name]), idleTimeout,
+			remainingIsolated+launchedIsolated,
+		)
 	}
 	return nil
+}
+
+// providerForPool resolves the organization Secret only when reconciliation
+// needs to make a cloud call. The caller must never include the resolved values
+// in an error returned to the user or in logs.
+func (r *Reconciler) providerForPool(ctx context.Context, orgID uuid.UUID, pool Pool) (Provider, error) {
+	creds, err := r.Secrets.GetOrgValue(ctx, orgID, pool.CredentialSecretName())
+	if err != nil {
+		return nil, err
+	}
+	secrets := ProviderSecrets{Credentials: creds}
+	if pwdName := pool.PasswordSecretName(); pwdName != "" {
+		pwd, err := r.Secrets.GetOrgValue(ctx, orgID, pwdName)
+		if err != nil {
+			return nil, err
+		}
+		secrets.WindowsPassword = pwd
+	}
+	return NewProvider(pool, secrets)
+}
+
+// reconcileIsolatedPool gives every queued isolated job a brand-new VM in its
+// explicitly named pool. Existing isolated runners are excluded from generic
+// capacity, and terminal/failed boots are released immediately rather than
+// waiting for the normal idle timeout.
+//
+// It returns the count of existing isolated VMs still consuming pool capacity
+// plus the number created in this pass; reconcilePool uses that total to honor
+// pool.max while maintaining a separate shared warm floor.
+func (r *Reconciler) reconcileIsolatedPool(
+	ctx context.Context,
+	orgID uuid.UUID,
+	cfg *Config,
+	pool Pool,
+	poolRunners []runnerstore.AutoscaleRunner,
+	demand []pipelinestore.IsolatedJobDemand,
+) (remaining, launched int) {
+	now := time.Now()
+	pk := poolKey{Org: orgID, Pool: pool.Name, Isolated: true}
+	var provider Provider
+	getProvider := func() Provider {
+		if provider != nil {
+			return provider
+		}
+		p, err := r.providerForPool(ctx, orgID, pool)
+		if err != nil {
+			r.Log.Warn("build provider for isolated runner failed", "pool", pool.Name, "err", err)
+			return nil
+		}
+		provider = p
+		return provider
+	}
+
+	// All existing rows count toward pool.max until cleanup succeeds. A failed
+	// deletion deliberately remains counted so repeated provider errors cannot
+	// cause an unbounded billed-VM leak.
+	inFlight := len(poolRunners)
+	for _, rn := range poolRunners {
+		if rn.IsolatedJobID == nil {
+			continue
+		}
+
+		job, err := r.Pipelines.GetIsolatedJobStatus(ctx, *rn.IsolatedJobID)
+		if err != nil && !isNotFoundError(err) {
+			r.Log.Warn("read isolated job state failed", "runner", rn.ID, "job", *rn.IsolatedJobID, "err", err)
+			remaining++
+			continue
+		}
+
+		releaseReservation := false
+		reason := ""
+		switch {
+		case err != nil:
+			reason = "orphaned-job"
+		case job.Terminal():
+			reason = "job-terminal"
+		case job.ReservedRunnerID == nil || *job.ReservedRunnerID != rn.ID:
+			// A reservation was explicitly released or rebound. Never leave
+			// its old VM able to receive shared work.
+			reason = "reservation-released"
+		case job.Status == "queued" && now.Sub(rn.CreatedAt) > bootTimeout:
+			// Registration alone is not success: an isolated VM which checks
+			// in but never acquires its one reserved job would otherwise stay
+			// idle and bill forever. Bound the entire provision-to-acquire
+			// phase, then retry on a brand-new VM.
+			reason = "acquire-timeout"
+			releaseReservation = true
+		}
+		if reason == "" {
+			remaining++
+			continue
+		}
+		if releaseReservation {
+			// Claim cleanup ownership before any provider call. If the reserved
+			// runner acquired the job between our unlocked status read and now,
+			// Release returns false and we must not terminate a live worker.
+			released, err := r.Pipelines.ReleaseIsolatedReservation(ctx, *rn.IsolatedJobID, rn.ID)
+			if err != nil {
+				r.Log.Warn("release isolated reservation failed; cleanup will retry",
+					"pool", pool.Name, "runner", rn.ID, "job", *rn.IsolatedJobID, "err", err)
+				r.markIsolatedCleanupPending(ctx, *rn.IsolatedJobID)
+				remaining++
+				continue
+			}
+			if !released {
+				remaining++
+				continue
+			}
+		}
+
+		externalID := rn.ExternalID
+		if externalID == "" {
+			p := getProvider()
+			if p == nil {
+				remaining++
+				continue
+			}
+			recovered, ok := r.resolveExternalID(ctx, p, rn.ID)
+			if !ok {
+				// Tag lookup failed; keep the row so a later reconcile can retry
+				// instead of deleting the only durable handle on a live VM.
+				remaining++
+				continue
+			}
+			externalID = recovered
+		}
+		if externalID != "" {
+			p := getProvider()
+			if p == nil {
+				remaining++
+				continue
+			}
+			if err := p.Terminate(ctx, externalID); err != nil {
+				r.Log.Warn("terminate isolated runner failed; cleanup will retry",
+					"pool", pool.Name, "runner", rn.ID, "external_id", externalID, "reason", reason, "err", err)
+				r.markIsolatedCleanupPending(ctx, *rn.IsolatedJobID)
+				remaining++
+				continue
+			}
+		}
+		if err := r.Runners.Delete(ctx, orgID, rn.ID); err != nil {
+			r.Log.Warn("delete isolated runner row failed; cleanup will retry",
+				"pool", pool.Name, "runner", rn.ID, "reason", reason, "err", err)
+			r.markIsolatedCleanupPending(ctx, *rn.IsolatedJobID)
+			remaining++
+			continue
+		}
+		inFlight--
+		if releaseReservation {
+			// Record provisioning failure only after cleanup succeeded so the
+			// durable audit order matches the real lifecycle. Failed cleanup
+			// leaves cleanup_pending above instead.
+			r.markIsolatedProvisioningFailure(ctx, *rn.IsolatedJobID)
+			// An acquire timeout re-queues the same job for a fresh VM. In
+			// particular, a self-check's one-time probe value must remain
+			// available to that retry; marking its audit cleaned here would
+			// shred it and make the next reserved runner fail at acquire.
+			r.Log.Info("released isolated runner for retry", "pool", pool.Name, "runner", rn.Name, "reason", reason)
+			continue
+		}
+		r.markIsolatedCleaned(ctx, *rn.IsolatedJobID)
+		r.Log.Info("released isolated runner", "pool", pool.Name, "runner", rn.Name, "reason", reason)
+	}
+
+	poolTier := effectivePoolTier(cfg, pool)
+	for _, job := range demand {
+		if pool.Max > 0 && inFlight >= pool.Max {
+			break
+		}
+		if job.Tier != "" && poolTier != job.Tier {
+			r.Log.Warn("isolated job pool tier does not match job tier",
+				"pool", pool.Name, "job", job.JobID, "pool_tier", poolTier, "job_tier", job.Tier)
+			continue
+		}
+		if !labelsSatisfied(pool.Labels, job.RunsOn) {
+			r.Log.Warn("isolated job pool labels do not satisfy job runs-on",
+				"pool", pool.Name, "job", job.JobID, "runs_on", job.RunsOn)
+			continue
+		}
+		if !r.poolReady(pk, now) {
+			break
+		}
+		p := getProvider()
+		if p == nil {
+			break
+		}
+		created, err := r.launchIsolatedOne(ctx, orgID, cfg, pool, p, job.JobID)
+		if err != nil {
+			r.markIsolatedProvisioningFailure(ctx, job.JobID)
+			cd := r.penalizeLaunch(pk, now, IsAliyunOutOfCapacity(err))
+			r.Log.Warn("launch isolated runner failed", "pool", pool.Name, "job", job.JobID, "err", err, "cooldown", cd)
+			break
+		}
+		if !created {
+			// The job changed state between queued-demand discovery and the
+			// reservation transaction. No VM was started, so move on.
+			continue
+		}
+		r.clearLaunchPenalty(pk)
+		inFlight++
+		launched++
+		r.Log.Info("launched isolated runner", "pool", pool.Name, "provider", pool.Provider, "job", job.JobID)
+	}
+	return remaining, launched
+}
+
+// resolvePoolTier applies pool.Tier → defaultTier → medium fallback so
+// assignDemand and launch paths agree on a pool's effective tier.
+func resolvePoolTier(poolTier, defaultTier string) string {
+	if poolTier != "" {
+		return poolTier
+	}
+	if defaultTier != "" {
+		return defaultTier
+	}
+	return model.TierMedium
+}
+
+// effectivePoolTier is the tier stamped onto ephemeral runners for a pool.
+// An omitted pool.tier falls back to the config default (then medium) so
+// AcquireJob's exact tier match cannot strand an isolated reservation.
+func effectivePoolTier(cfg *Config, pool Pool) string {
+	defaultTier := ""
+	if cfg != nil {
+		defaultTier = cfg.DefaultTier
+	}
+	return resolvePoolTier(pool.Tier, defaultTier)
+}
+
+// launchIsolatedOne persists a runner/job binding before starting a VM. That
+// ordering is the safety boundary: an instance can only register and acquire
+// its one reserved job, never unrelated queued work.
+func (r *Reconciler) launchIsolatedOne(
+	ctx context.Context,
+	orgID uuid.UUID,
+	cfg *Config,
+	pool Pool,
+	p Provider,
+	jobID uuid.UUID,
+) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+
+	poolTier := effectivePoolTier(cfg, pool)
+	runner, err := r.Runners.CreateIsolatedEphemeralRunner(
+		ctx, orgID, "", pool.Labels, poolTier, pool.Provider, pool.Name, pool.OS, jobID,
+	)
+	if err != nil {
+		return false, err
+	}
+	reserved, err := r.Pipelines.ReserveIsolatedJob(ctx, jobID, runner.ID)
+	if err != nil {
+		_ = r.Runners.Delete(ctx, orgID, runner.ID)
+		return false, err
+	}
+	if !reserved {
+		_ = r.Runners.Delete(ctx, orgID, runner.ID)
+		return false, nil
+	}
+
+	tier := cfg.TierSpecFor(poolTier)
+	userData := BuildUserDataForPool(r.ServerURL, runner.Token, pool, tier, runner.Name)
+	inst, err := p.Launch(ctx, LaunchSpec{
+		Pool:          pool,
+		TierSpec:      tier,
+		RunnerName:    runner.Name,
+		UserData:      userData,
+		OrgID:         orgID,
+		RunnerID:      runner.ID,
+		IsolatedJobID: jobID,
+	})
+	if err != nil {
+		// Launch may have created an instance before failing. Keep the runner
+		// row and only release the reservation; later reconcile recovers the
+		// id via wuling-runner-id + resolveExternalID, then terminates.
+		_, _ = r.Pipelines.ReleaseIsolatedReservation(ctx, jobID, runner.ID)
+		return false, err
+	}
+	if err := r.persistExternalIDOrRollback(ctx, orgID, pool, p, runner.ID, inst.ExternalID, &jobID); err != nil {
+		return false, err
+	}
+	r.markIsolatedProvisioned(ctx, jobID, runner.ID, inst.ExternalID)
+	return true, nil
 }
 
 func (r *Reconciler) reconcilePool(
@@ -207,6 +561,7 @@ func (r *Reconciler) reconcilePool(
 	pending int,
 	poolRunners []runnerstore.AutoscaleRunner,
 	idleTimeout time.Duration,
+	isolatedCapacity int,
 ) {
 	// Lazily build the provider only when this pool needs to act.
 	var provider Provider
@@ -214,21 +569,7 @@ func (r *Reconciler) reconcilePool(
 		if provider != nil {
 			return provider
 		}
-		creds, err := r.Secrets.GetOrgValue(ctx, orgID, pool.CredentialSecretName())
-		if err != nil {
-			r.Log.Warn("pool credentials unavailable", "pool", pool.Name, "err", err)
-			return nil
-		}
-		secrets := ProviderSecrets{Credentials: creds}
-		if pwdName := pool.PasswordSecretName(); pwdName != "" {
-			pwd, err := r.Secrets.GetOrgValue(ctx, orgID, pwdName)
-			if err != nil {
-				r.Log.Warn("pool password secret unavailable", "pool", pool.Name, "secret", pwdName, "err", err)
-				return nil
-			}
-			secrets.WindowsPassword = pwd
-		}
-		p, err := NewProvider(pool, secrets)
+		p, err := r.providerForPool(ctx, orgID, pool)
 		if err != nil {
 			r.Log.Warn("build provider failed", "pool", pool.Name, "err", err)
 			return nil
@@ -269,8 +610,14 @@ func (r *Reconciler) reconcilePool(
 	if desired < pool.Min {
 		desired = pool.Min
 	}
-	if pool.Max > 0 && desired > pool.Max {
-		desired = pool.Max
+	if pool.Max > 0 {
+		availableForShared := pool.Max - isolatedCapacity
+		if availableForShared < 0 {
+			availableForShared = 0
+		}
+		if desired > availableForShared {
+			desired = availableForShared
+		}
 	}
 	toLaunch := desired - inFlight
 	for k := 0; k < toLaunch; k++ {
@@ -311,8 +658,16 @@ func (r *Reconciler) reconcilePool(
 		if p == nil {
 			break
 		}
-		if rn.ExternalID != "" {
-			if err := p.Terminate(ctx, rn.ExternalID); err != nil {
+		externalID := rn.ExternalID
+		if externalID == "" {
+			recovered, ok := r.resolveExternalID(ctx, p, rn.ID)
+			if !ok {
+				continue
+			}
+			externalID = recovered
+		}
+		if externalID != "" {
+			if err := p.Terminate(ctx, externalID); err != nil {
 				r.Log.Warn("terminate failed", "pool", pool.Name, "runner", rn.ID, "err", err)
 				continue
 			}
@@ -327,17 +682,18 @@ func (r *Reconciler) reconcilePool(
 }
 
 // launchOne pre-provisions a runner row + token, builds user-data, and asks
-// the provider to start a VM. On provider failure the half-created row is
-// removed so it doesn't linger as phantom capacity.
+// the provider to start a VM. On Launch failure the row is retained so a later
+// reconcile can recover a possibly-created instance via wuling-runner-id.
 func (r *Reconciler) launchOne(ctx context.Context, orgID uuid.UUID, cfg *Config, pool Pool, p Provider) error {
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 
-	runner, err := r.Runners.CreateEphemeralRunner(ctx, orgID, "", pool.Labels, pool.Tier, pool.Provider, pool.Name, pool.OS)
+	poolTier := effectivePoolTier(cfg, pool)
+	runner, err := r.Runners.CreateEphemeralRunner(ctx, orgID, "", pool.Labels, poolTier, pool.Provider, pool.Name, pool.OS)
 	if err != nil {
 		return err
 	}
-	tier := cfg.TierSpecFor(pool.Tier)
+	tier := cfg.TierSpecFor(poolTier)
 	userData := BuildUserDataForPool(r.ServerURL, runner.Token, pool, tier, runner.Name)
 	inst, err := p.Launch(ctx, LaunchSpec{
 		Pool:       pool,
@@ -348,21 +704,61 @@ func (r *Reconciler) launchOne(ctx context.Context, orgID uuid.UUID, cfg *Config
 		RunnerID:   runner.ID,
 	})
 	if err != nil {
-		_ = r.Runners.Delete(ctx, orgID, runner.ID)
 		return err
 	}
-	if err := r.Runners.SetExternalID(ctx, runner.ID, inst.ExternalID); err != nil {
-		// We have a live VM but can't persist its id, so the autoscaler could
-		// never terminate it. Roll both back to avoid an orphaned billed
-		// instance and a half-created runner row.
-		if terr := p.Terminate(ctx, inst.ExternalID); terr != nil {
-			r.Log.Warn("rollback terminate failed after set-external-id error",
-				"pool", pool.Name, "external_id", inst.ExternalID, "err", terr)
+	return r.persistExternalIDOrRollback(ctx, orgID, pool, p, runner.ID, inst.ExternalID, nil)
+}
+
+// persistExternalIDOrRollback stores the cloud instance id. When that write
+// fails it terminates the just-launched VM; if termination also fails, the
+// runner row is retained so a later reconcile can recover the id via
+// RunnerInstanceFinder instead of leaking a billed instance.
+func (r *Reconciler) persistExternalIDOrRollback(
+	ctx context.Context,
+	orgID uuid.UUID,
+	pool Pool,
+	p Provider,
+	runnerID uuid.UUID,
+	externalID string,
+	isolatedJobID *uuid.UUID,
+) error {
+	if err := r.Runners.SetExternalID(ctx, runnerID, externalID); err != nil {
+		if terr := p.Terminate(ctx, externalID); terr != nil {
+			r.Log.Warn("rollback terminate failed after set-external-id error; retaining runner for recovery",
+				"pool", pool.Name, "runner", runnerID, "external_id", externalID, "err", terr)
+			return err
 		}
-		_ = r.Runners.Delete(ctx, orgID, runner.ID)
+		if isolatedJobID != nil {
+			_, _ = r.Pipelines.ReleaseIsolatedReservation(ctx, *isolatedJobID, runnerID)
+		}
+		_ = r.Runners.Delete(ctx, orgID, runnerID)
 		return err
 	}
 	return nil
+}
+
+// resolveExternalID recovers a missing provider instance id from immutable
+// runner tags. ok=false means the lookup itself failed and the caller should
+// retry later rather than delete the only durable handle on a possibly live VM.
+// ok=true with an empty string means no instance was found (safe to drop).
+func (r *Reconciler) resolveExternalID(ctx context.Context, p Provider, runnerID uuid.UUID) (string, bool) {
+	finder, ok := p.(RunnerInstanceFinder)
+	if !ok {
+		return "", true
+	}
+	inst, found, err := finder.FindRunnerInstance(ctx, runnerID)
+	if err != nil {
+		r.Log.Warn("recover runner instance id failed", "runner", runnerID, "err", err)
+		return "", false
+	}
+	if !found || inst.ExternalID == "" {
+		return "", true
+	}
+	if err := r.Runners.SetExternalID(ctx, runnerID, inst.ExternalID); err != nil {
+		r.Log.Warn("persist recovered runner instance id failed",
+			"runner", runnerID, "external_id", inst.ExternalID, "err", err)
+	}
+	return inst.ExternalID, true
 }
 
 // loadOrgConfig reads + parses an org's runner-config.yaml from its config
@@ -384,16 +780,24 @@ func (r *Reconciler) loadOrgConfig(ctx context.Context, orgID uuid.UUID) (*Confi
 
 // ---- helpers ---------------------------------------------------------------
 
+func isNotFoundError(err error) bool {
+	if apiErr := apperr.As(err); apiErr != nil {
+		return apiErr.Code == apperr.CodeNotFound
+	}
+	return false
+}
+
 // assignDemand greedily assigns each queued job to the first pool (in config
-// order) whose tier matches and whose labels are a superset of the job's
-// runs-on, returning per-pool pending counts. First-match prevents one job
-// from inflating several overlapping pools.
-func assignDemand(pools []Pool, demand []pipelinestore.QueuedJob) map[string]int {
+// order) whose effective tier matches and whose labels are a superset of the
+// job's runs-on, returning per-pool pending counts. First-match prevents one
+// job from inflating several overlapping pools.
+func assignDemand(pools []Pool, demand []pipelinestore.QueuedJob, defaultTier string) map[string]int {
 	out := map[string]int{}
 	for _, job := range demand {
 		for i := range pools {
 			p := pools[i]
-			if p.Tier != "" && p.Tier != job.Tier {
+			poolTier := resolvePoolTier(p.Tier, defaultTier)
+			if poolTier != job.Tier {
 				continue
 			}
 			if !labelsSatisfied(p.Labels, job.RunsOn) {
@@ -410,6 +814,27 @@ func groupRunners(runners []runnerstore.AutoscaleRunner) map[string][]runnerstor
 	out := map[string][]runnerstore.AutoscaleRunner{}
 	for _, rn := range runners {
 		out[rn.PoolName] = append(out[rn.PoolName], rn)
+	}
+	return out
+}
+
+func groupIsolatedDemand(demand []pipelinestore.IsolatedJobDemand) map[string][]pipelinestore.IsolatedJobDemand {
+	out := map[string][]pipelinestore.IsolatedJobDemand{}
+	for _, job := range demand {
+		out[job.Pool] = append(out[job.Pool], job)
+	}
+	return out
+}
+
+// sharedPoolRunners removes per-job reserved machines from ordinary
+// scale-up/down math. An isolated VM is never a warm Runner, even while it is
+// idle between boot and its one assigned acquire request.
+func sharedPoolRunners(runners []runnerstore.AutoscaleRunner) []runnerstore.AutoscaleRunner {
+	out := make([]runnerstore.AutoscaleRunner, 0, len(runners))
+	for _, runner := range runners {
+		if runner.IsolatedJobID == nil {
+			out = append(out, runner)
+		}
 	}
 	return out
 }

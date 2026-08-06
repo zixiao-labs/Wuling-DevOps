@@ -1938,6 +1938,117 @@ export interface paths {
         };
         trace?: never;
     };
+    "/api/v1/admin/runner-self-checks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List durable Runner self-check lifecycles (admin)
+         * @description Lists restart-safe, per-pool self-check records for one organization.
+         *     Requires an active global admin. Each record may represent a billable
+         *     isolated VM and never contains secret values, raw config content, or
+         *     raw command logs.
+         */
+        get: {
+            parameters: {
+                query: {
+                    org_slug: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description newest-first durable self-check records */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RunnerSelfCheckList"];
+                    };
+                };
+                400: components["responses"]["ValidationError"];
+                401: components["responses"]["UnauthorizedError"];
+                403: components["responses"]["ForbiddenError"];
+                404: components["responses"]["NotFoundError"];
+                /** @description runner self-check service is unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Start a real Runner/autoscaler self-check (admin)
+         * @description Parses the current organization runner-config.yaml, validates safe
+         *     local prerequisites, then queues one explicit-pool isolated probe per
+         *     ready selected pool. The autoscaler provisions a temporary VM, waits
+         *     for its Runner, executes a command and one-time secret/redaction
+         *     probe, then destroys the VM. This can incur cloud-provider charges.
+         *     Existing organization secrets are never injected into the probe.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["RunnerSelfCheckRequest"];
+                };
+            };
+            responses: {
+                /** @description preflight result and durable probe records queued asynchronously */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RunnerSelfCheckStart"];
+                    };
+                };
+                400: components["responses"]["ValidationError"];
+                401: components["responses"]["UnauthorizedError"];
+                403: components["responses"]["ForbiddenError"];
+                404: components["responses"]["NotFoundError"];
+                /** @description a selected pool already has an active self-check */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description runner self-check service is unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs": {
         parameters: {
             query?: never;
@@ -2518,6 +2629,110 @@ export interface paths {
             };
         };
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org_slug}/projects/{project_slug}/repos/{repo_slug}/github-link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_slug: components["parameters"]["OrgSlug"];
+                project_slug: components["parameters"]["ProjectSlug"];
+                repo_slug: components["parameters"]["RepoSlug"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Read the GitHub App repo link for this Wuling repo
+         * @description Returns whether this repo is linked to a GitHub repository for webhook
+         *     sync / Checks. Unlinked repos cause webhook handlers to skip events.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                    repo_slug: components["parameters"]["RepoSlug"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description link status */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            linked?: boolean;
+                            owner?: string;
+                            name?: string;
+                            full_name?: string;
+                            /** Format: int64 */
+                            installation_id?: number;
+                        };
+                    };
+                };
+                401: components["responses"]["UnauthorizedError"];
+                404: components["responses"]["NotFoundError"];
+            };
+        };
+        /**
+         * Bind this Wuling repo to a GitHub App installation repository
+         * @description Requires maintainer or above. Webhook push/PR handling only runs for linked repos.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                    repo_slug: components["parameters"]["RepoSlug"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        owner: string;
+                        name: string;
+                        /** Format: int64 */
+                        installation_id: number;
+                    };
+                };
+            };
+            responses: {
+                /** @description linked */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            linked?: boolean;
+                            owner?: string;
+                            name?: string;
+                            full_name?: string;
+                            /** Format: int64 */
+                            installation_id?: number;
+                        };
+                    };
+                };
+                400: components["responses"]["ValidationError"];
+                401: components["responses"]["UnauthorizedError"];
+                403: components["responses"]["ForbiddenError"];
+                404: components["responses"]["NotFoundError"];
+            };
+        };
         post?: never;
         delete?: never;
         options?: never;
@@ -4898,6 +5113,84 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/webhooks/github": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * GitHub App webhook receiver
+         * @description Receives GitHub App deliveries. Authenticated solely by
+         *     `X-Hub-Signature-256` (HMAC-SHA256 of the raw body) against
+         *     `WULING_GITHUB_WEBHOOK_SECRET`. Not mounted when the secret is empty.
+         *     `ping` returns 200; unknown events return 202 until a processor is wired.
+         *     Duplicate `X-GitHub-Delivery` values return 200 with `duplicate: true`.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header: {
+                    /** @description sha256=<hex HMAC of raw body> */
+                    "X-Hub-Signature-256": string;
+                    "X-GitHub-Event": string;
+                    "X-GitHub-Delivery"?: string;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            responses: {
+                /** @description ping handled, or duplicate delivery */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            ok?: boolean;
+                            duplicate?: boolean;
+                        };
+                    };
+                };
+                /** @description event accepted (no processor / deferred) */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            ok?: boolean;
+                            accepted?: boolean;
+                        };
+                    };
+                };
+                /** @description invalid or missing signature */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runner/register": {
         parameters: {
             query?: never;
@@ -7236,6 +7529,100 @@ export interface components {
             message?: string;
             /** @description blob_sha from a prior GET; the empty string asserts the file does not exist yet. Required unless If-Match is sent. */
             base_blob_sha?: string;
+        };
+        /** @enum {string} */
+        RunnerSelfCheckPhase: "preflight" | "provision" | "wait_runner" | "execute" | "cleanup";
+        /** @enum {string} */
+        RunnerSelfCheckState: "preflight" | "queued" | "provisioning" | "waiting_for_runner" | "executing" | "cleanup_pending" | "succeeded" | "failed" | "cleaned" | "not_run";
+        /** @enum {string} */
+        RunnerSelfCheckCheckStatus: "passed" | "failed" | "unsupported" | "error" | "not_run";
+        /** @enum {string} */
+        RunnerSelfCheckReadiness: "ready" | "blocked";
+        RunnerSelfCheckCheck: {
+            /** @example credential_secret */
+            name: string;
+            status: components["schemas"]["RunnerSelfCheckCheckStatus"];
+            /** @description Metadata-only assertion message; never includes secret values or raw config content. */
+            message: string;
+        };
+        RunnerSelfCheckPool: {
+            pool_name: string;
+            /** @example aws */
+            provider?: string;
+            /** @enum {string} */
+            os?: "linux" | "windows";
+            phase: components["schemas"]["RunnerSelfCheckPhase"];
+            state: components["schemas"]["RunnerSelfCheckState"];
+            readiness: components["schemas"]["RunnerSelfCheckReadiness"];
+            checks: components["schemas"]["RunnerSelfCheckCheck"][];
+            /** @description not_run for a pool blocked during local preflight; ready pools are represented by durable RunnerSelfCheck lifecycle records instead. */
+            runner_probe_state: components["schemas"]["RunnerSelfCheckState"];
+            /** @description Safe explanation of why this pool did not queue a real VM probe. */
+            runner_probe_note: string;
+        };
+        /**
+         * @description Durable, per-pool administrator self-check audit. The control plane
+         *     stores an encrypted one-time probe value internally, but it is never
+         *     returned by this schema or written to command logs.
+         */
+        RunnerSelfCheck: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            org_id: string;
+            /** Format: uuid */
+            requested_by: string;
+            pool_name: string;
+            /** @example aws */
+            provider: string;
+            /** @enum {string} */
+            os: "linux" | "windows";
+            phase: components["schemas"]["RunnerSelfCheckPhase"];
+            state: components["schemas"]["RunnerSelfCheckState"];
+            checks: components["schemas"]["RunnerSelfCheckCheck"][];
+            /** @description Safe lifecycle summary; never command output. */
+            summary?: string;
+            /** Format: uuid */
+            run_id?: string;
+            /** Format: uuid */
+            job_id?: string;
+            /** Format: uuid */
+            runner_id?: string;
+            /** @description Cloud instance identifier visible only to global administrators. */
+            external_id?: string;
+            cleanup_attempts: number;
+            /** @description Safe cleanup retry summary. */
+            cleanup_last_error?: string;
+            /** Format: date-time */
+            next_cleanup_at?: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            started_at?: string;
+            /** Format: date-time */
+            finished_at?: string;
+            /** Format: date-time */
+            cleaned_at?: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        RunnerSelfCheckList: {
+            /** @description Newest-first durable per-pool records. */
+            checks: components["schemas"]["RunnerSelfCheck"][];
+        };
+        RunnerSelfCheckStart: {
+            org_slug: string;
+            /** Format: date-time */
+            requested_at: string;
+            config_check: components["schemas"]["RunnerSelfCheckCheck"];
+            checks: components["schemas"]["RunnerSelfCheck"][];
+            /** @description Selected pools that failed local preflight and therefore did not create a VM. */
+            blocked_pools?: components["schemas"]["RunnerSelfCheckPool"][];
+        };
+        RunnerSelfCheckRequest: {
+            org_slug: string;
+            /** @description Omit or send an empty array to run every configured pool that passes local preflight. */
+            pool_names?: string[];
         };
         RegisterRunnerRequest: {
             token: string;

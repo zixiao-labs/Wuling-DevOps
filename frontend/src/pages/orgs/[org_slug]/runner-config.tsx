@@ -26,12 +26,15 @@ import {
   SurfaceHeader,
 } from "@/components/page/primitives";
 
-/** Seed shown when the org has not committed runner-config.yaml yet. */
-const EMPTY_SEED = `# runner-config.yaml — 组织级 Runner / Autoscaler 配置（GitOps）
-# 保存后写入 {org}/config/config 仓库根目录。云凭证用 credentials_secret 引用
-# 「机密」里的名称，不要写明文。完整示例见 runners/config/runner-config.example.yaml。
+const YAML_SCHEMA_MARKER = "# yaml-language-server: $schema=";
 
-version: 1
+/** Seed shown when the org has not committed runner-config.yaml yet. */
+const EMPTY_SEED = (schemaUrl: string) => `# yaml-language-server: $schema=${schemaUrl}
+# runner-config.yaml — 组织级 Runner / Autoscaler 配置（GitOps）
+# 保存后写入 {org}/config/config 仓库根目录。云凭证用 credentials_secret 引用
+# 「机密」里的名称，不要写明文。v2 的网络和磁盘语义由服务端验证。
+
+version: 2
 default_tier: medium
 idle_timeout: 5m
 
@@ -49,9 +52,47 @@ tiers:
     memory: 16Gi
     storage: 160Gi
 
-# 按需添加 pools（aliyun / aws）。保存前请在「机密」里配置 credentials_secret。
-pools: []
+# v2 示例：runner_data_disk 引用 data_disks 中同名且容量唯一的磁盘。
+# 保存前请在「机密」里配置 credentials_secret。
+pools:
+  - name: aliyun-medium
+    provider: aliyun
+    tier: medium
+    os: linux
+    labels: [linux, docker]
+    min: 0
+    max: 5
+    runner_data_disk: runner-work
+    aliyun:
+      region: cn-hangzhou
+      vpc_id: vpc-bp0123456789abcdef
+      image_id: m-xxxxxxxx
+      instance_type: ecs.g7.large
+      vswitch_id: vsw-xxxxxxxx
+      security_group_id: sg-xxxxxxxx
+      data_disks:
+        - name: runner-work
+          size: 100Gi
+          category: cloud_essd
+          performance_level: PL1
+          delete_with_instance: true
+      credentials_secret: ALIYUN_CREDS
 `;
+
+function runnerConfigSchemaUrl(): string {
+  const path = "/.well-known/wuling/schemas/v1/runner-config.json";
+  if (typeof window === "undefined") return path;
+  return new URL(path, window.location.origin).href;
+}
+
+function hasYamlSchemaMarker(yaml: string): boolean {
+  return /^\s*#\s*yaml-language-server:\s*\$schema=\S+/m.test(yaml);
+}
+
+function addYamlSchemaMarker(yaml: string, schemaUrl: string): string {
+  if (hasYamlSchemaMarker(yaml)) return yaml;
+  return `${YAML_SCHEMA_MARKER}${schemaUrl}\n${yaml}`;
+}
 
 const ROLE_RANK: Record<OrgRole, number> = {
   owner: 50,
@@ -73,6 +114,7 @@ function detailString(details: Record<string, unknown> | undefined, key: string)
 export default function RunnerConfigPage() {
   const org = useOrgCtx();
   const secretsHref = `/orgs/${encodeURIComponent(org.slug)}/secrets`;
+  const yamlSchemaUrl = runnerConfigSchemaUrl();
 
   const [meta, setMeta] = useState<RunnerConfig | null>(null);
   const [content, setContent] = useState("");
@@ -91,12 +133,18 @@ export default function RunnerConfigPage() {
   function applyConfig(cfg: RunnerConfig) {
     setMeta(cfg);
     setBlobSha(cfg.blob_sha);
-    const next = cfg.exists ? cfg.content : EMPTY_SEED;
+    const next = cfg.exists ? cfg.content : EMPTY_SEED(yamlSchemaUrl);
     setContent(next);
     // Seeded template is not yet committed — allow Save without requiring an edit.
     setDirty(!cfg.exists);
     setConflict(false);
     setSaveError(null);
+  }
+
+  function onAddYamlSchemaMarker() {
+    setContent((current) => addYamlSchemaMarker(current, yamlSchemaUrl));
+    setDirty(true);
+    setSuccessNote(null);
   }
 
   function load() {
@@ -174,6 +222,7 @@ export default function RunnerConfigPage() {
 
   const parseErrorFromSave = detailString(saveError?.details, "parse_error");
   const configRepoLabel = `${meta.project_slug}/${meta.repo_slug}`;
+  const canAddYamlSchemaMarker = meta.exists && !hasYamlSchemaMarker(content);
 
   return (
     <PageContainer>
@@ -342,6 +391,23 @@ export default function RunnerConfigPage() {
         />
         <SurfaceBody>
           <form onSubmit={onSave} className="flex flex-col gap-3.5">
+            {canAddYamlSchemaMarker ? (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-[var(--surface-secondary)] px-3 py-2">
+                <p className="text-[12px] text-muted">
+                  已加载的 YAML 未包含 schema 标记。可手动添加以在任意仓库获得补全和结构提示。
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onPress={onAddYamlSchemaMarker}
+                  isDisabled={!canEdit || saving}
+                >
+                  添加 YAML schema 标记
+                </Button>
+              </div>
+            ) : null}
+
             <TextField
               name="content"
               value={content}

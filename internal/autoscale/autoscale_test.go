@@ -77,6 +77,8 @@ func TestIdleTimeoutFallback(t *testing.T) {
 
 func TestConfigValidationErrors(t *testing.T) {
 	bad := []string{
+		// unsupported document version
+		"version: 3\npools: []\n",
 		// unknown provider
 		"pools:\n  - {name: p, provider: gcp, tier: low}\n",
 		// two provider blocks
@@ -101,6 +103,144 @@ func TestConfigValidationErrors(t *testing.T) {
 	}
 }
 
+func TestV1NetworkFieldsRemainOptional(t *testing.T) {
+	const legacy = `
+version: 1
+pools:
+  - name: aws-legacy
+    provider: aws
+    aws:
+      credentials_secret: AWS_CREDS
+  - name: aliyun-legacy
+    provider: aliyun
+    aliyun:
+      instance_type: ecs.g7.large
+      credentials_secret: ALIYUN_CREDS
+`
+	if _, err := Parse([]byte(legacy)); err != nil {
+		t.Fatalf("v1 config should not require v2 network fields: %v", err)
+	}
+}
+
+func TestV2CloudNetworkValidation(t *testing.T) {
+	const awsV2 = `
+version: 2
+pools:
+  - name: aws
+    provider: aws
+    aws:
+      region: us-west-2
+      ami: ami-123
+      instance_type: c6i.large
+      vpc_id: vpc-123
+      subnet_id: subnet-123
+      security_group_ids: [sg-123]
+      credentials_secret: AWS_CREDS
+`
+	const aliyunV2 = `
+version: 2
+pools:
+  - name: aliyun
+    provider: aliyun
+    aliyun:
+      region: cn-hangzhou
+      image_id: m-123
+      instance_type: ecs.g7.large
+      vpc_id: vpc-123
+      vswitch_id: vsw-123
+      security_group_id: sg-123
+      credentials_secret: ALIYUN_CREDS
+`
+	for name, config := range map[string]string{"aws": awsV2, "aliyun": aliyunV2} {
+		if _, err := Parse([]byte(config)); err != nil {
+			t.Fatalf("valid v2 %s config: %v", name, err)
+		}
+	}
+
+	tests := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{"aws region", strings.Replace(awsV2, "region: us-west-2", `region: ""`, 1), "aws.region"},
+		{"aws ami", strings.Replace(awsV2, "ami: ami-123", `ami: ""`, 1), "aws.ami"},
+		{"aws instance type", strings.Replace(awsV2, "instance_type: c6i.large", `instance_type: ""`, 1), "aws.instance_type"},
+		{"aws vpc", strings.Replace(awsV2, "vpc_id: vpc-123", `vpc_id: ""`, 1), "aws.vpc_id"},
+		{"aws subnet", strings.Replace(awsV2, "subnet_id: subnet-123", `subnet_id: ""`, 1), "aws.subnet_id"},
+		{"aws security groups", strings.Replace(awsV2, "security_group_ids: [sg-123]", "security_group_ids: []", 1), "security_group_ids"},
+		{"aliyun region", strings.Replace(aliyunV2, "region: cn-hangzhou", `region: ""`, 1), "aliyun.region"},
+		{"aliyun image", strings.Replace(aliyunV2, "image_id: m-123", `image_id: ""`, 1), "aliyun.image_id"},
+		{"aliyun instance type", strings.Replace(aliyunV2, "instance_type: ecs.g7.large", `instance_type: ""`, 1), "instance_type"},
+		{"aliyun vpc", strings.Replace(aliyunV2, "vpc_id: vpc-123", `vpc_id: ""`, 1), "aliyun.vpc_id"},
+		{"aliyun vswitch", strings.Replace(aliyunV2, "vswitch_id: vsw-123", `vswitch_id: ""`, 1), "aliyun.vswitch_id"},
+		{"aliyun security group", strings.Replace(aliyunV2, "security_group_id: sg-123", `security_group_id: ""`, 1), "aliyun.security_group_id"},
+	}
+	for _, tc := range tests {
+		_, err := Parse([]byte(tc.src))
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: Parse error = %v, want %q", tc.name, err, tc.want)
+		}
+	}
+}
+
+func TestV2DataDiskValidation(t *testing.T) {
+	const valid = `
+version: 2
+pools:
+  - name: aws
+    provider: aws
+    runner_data_disk: runner
+    aws:
+      region: us-west-2
+      ami: ami-123
+      instance_type: c6i.large
+      vpc_id: vpc-123
+      subnet_id: subnet-123
+      security_group_ids: [sg-123]
+      data_disks:
+        - name: runner
+          size: 120Gi
+          category: gp3
+          encrypted: true
+          device_name: /dev/sdf
+          delete_with_instance: true
+      credentials_secret: AWS_CREDS
+`
+	if _, err := Parse([]byte(valid)); err != nil {
+		t.Fatalf("valid named data disk: %v", err)
+	}
+	legacyNamedDisks := strings.Replace(valid, "version: 2", "version: 1", 1)
+	if _, err := Parse([]byte(legacyNamedDisks)); err == nil || !strings.Contains(err.Error(), "version: 2") {
+		t.Errorf("v1 named data disks error = %v", err)
+	}
+
+	invalidRunner := strings.Replace(valid, "runner_data_disk: runner", "runner_data_disk: missing", 1)
+	if _, err := Parse([]byte(invalidRunner)); err == nil || !strings.Contains(err.Error(), "runner_data_disk") {
+		t.Errorf("unmatched runner_data_disk error = %v", err)
+	}
+	retainedRunner := strings.Replace(valid, "delete_with_instance: true", "delete_with_instance: false", 1)
+	if _, err := Parse([]byte(retainedRunner)); err == nil || !strings.Contains(err.Error(), "delete_with_instance") {
+		t.Errorf("retained runner_data_disk error = %v", err)
+	}
+	ambiguousRunner := strings.Replace(valid,
+		"          delete_with_instance: true\n",
+		"          delete_with_instance: true\n        - name: cache\n          size: 120Gi\n          category: gp3\n",
+		1,
+	)
+	if _, err := Parse([]byte(ambiguousRunner)); err == nil || !strings.Contains(err.Error(), "unique among data_disks") {
+		t.Errorf("ambiguous runner_data_disk error = %v", err)
+	}
+
+	pool := Pool{
+		Name:     "too-many-disks",
+		Provider: ProviderAWS,
+		AWS:      &AWSPool{DataDisks: make([]DataDisk, maxDataDisks+1)},
+	}
+	if err := pool.validateDataDisks(); err == nil || !strings.Contains(err.Error(), "最多") {
+		t.Errorf("too many data disks error = %v", err)
+	}
+}
+
 func TestAssignDemandFirstMatch(t *testing.T) {
 	pools := []Pool{
 		{Name: "a", Tier: "medium", Labels: []string{"linux", "docker"}},
@@ -113,11 +253,29 @@ func TestAssignDemandFirstMatch(t *testing.T) {
 		{Tier: "low", RunsOn: []string{"linux"}},              // -> c
 		{Tier: "high", RunsOn: nil},                           // -> unmatched
 	}
-	got := assignDemand(pools, demand)
+	got := assignDemand(pools, demand, "")
 	// First-match with overlapping pools: pool "a" absorbs both medium jobs,
 	// "b" gets none, "c" gets the low job.
 	if got["a"] != 2 || got["b"] != 0 || got["c"] != 1 {
 		t.Errorf("assignment = %+v", got)
+	}
+}
+
+func TestAssignDemandUsesEffectiveTier(t *testing.T) {
+	pools := []Pool{
+		{Name: "untiered", Labels: []string{"linux"}},
+	}
+	demand := []pipelinestore.QueuedJob{
+		{Tier: "high", RunsOn: []string{"linux"}},
+		{Tier: "medium", RunsOn: []string{"linux"}},
+	}
+	got := assignDemand(pools, demand, "")
+	if got["untiered"] != 1 {
+		t.Errorf("untiered pool should only absorb medium jobs, got %+v", got)
+	}
+	gotDefault := assignDemand(pools, demand, "high")
+	if gotDefault["untiered"] != 1 {
+		t.Errorf("default_tier=high should absorb the high job, got %+v", gotDefault)
 	}
 }
 
@@ -281,18 +439,20 @@ func TestRunInstancesParams(t *testing.T) {
 		Provider: ProviderAliyun,
 		OS:       "windows",
 		Aliyun: &AliyunPool{
-			Region:                  "cn-hangzhou",
-			ImageID:                 "m-abc",
-			InstanceType:            "ecs.g7.large",
-			VSwitchID:               "vsw-x",
-			SecurityGroupID:         "sg-x",
-			Spot:                    true,
-			SpotStrategy:            "SpotWithPriceLimit",
-			SpotPriceLimit:          0.5,
-			SystemDiskCategory:      "cloud_essd",
-			PasswordInherit:         true,
-			Tags:                    map[string]string{"env": "ci"},
-			CredentialsSecret:       "C",
+			Region:             "cn-hangzhou",
+			ImageID:            "m-abc",
+			InstanceType:       "ecs.g7.large",
+			VSwitchID:          "vsw-x",
+			SecurityGroupID:    "sg-x",
+			Spot:               true,
+			SpotStrategy:       "SpotWithPriceLimit",
+			SpotPriceLimit:     0.5,
+			SystemDiskCategory: "cloud_essd",
+			DataDiskSize:       "100Gi",
+			DataDiskCategory:   "cloud_essd",
+			PasswordInherit:    true,
+			Tags:               map[string]string{"env": "ci"},
+			CredentialsSecret:  "C",
 		},
 	}
 	p := &aliyunProvider{pool: *pool.Aliyun, password: "secret"}
@@ -308,17 +468,22 @@ func TestRunInstancesParams(t *testing.T) {
 	params := p.runInstancesParams(spec, "ecs.g7.large", now)
 
 	for k, want := range map[string]string{
-		"ClientToken":              spec.IdempotencyKey(),
-		"HostName":                 "wdeadbeef",
-		"SystemDisk.Size":          "80",
-		"SystemDisk.Category":      "cloud_essd",
-		"SpotStrategy":             "SpotWithPriceLimit",
-		"SpotPriceLimit":           "0.500",
-		"PasswordInherit":          "true",
-		"Tag.1.Key":                "managed-by",
-		"Tag.5.Key":                "env",
-		"IoOptimized":              "optimized",
-		"InstanceChargeType":       "PostPaid",
+		"ClientToken":                   spec.IdempotencyKey(),
+		"HostName":                      "wdeadbeef",
+		"SystemDisk.Size":               "80",
+		"SystemDisk.Category":           "cloud_essd",
+		"DataDisk.1.Size":               "100",
+		"DataDisk.1.Category":           "cloud_essd",
+		"DataDisk.1.DeleteWithInstance": "true",
+		"SpotStrategy":                  "SpotWithPriceLimit",
+		"SpotPriceLimit":                "0.500",
+		"PasswordInherit":               "true",
+		"Tag.1.Key":                     "managed-by",
+		"Tag.5.Key":                     "wuling-runner-id",
+		"Tag.5.Value":                   spec.RunnerID.String(),
+		"Tag.6.Key":                     "env",
+		"IoOptimized":                   "optimized",
+		"InstanceChargeType":            "PostPaid",
 	} {
 		if params[k] != want {
 			t.Errorf("params[%q] = %q, want %q", k, params[k], want)
@@ -334,6 +499,202 @@ func TestRunInstancesParams(t *testing.T) {
 			t.Errorf("params not stable across calls: %q = %q vs %q", k, v, params2[k])
 		}
 	}
+
+	auditJobID := uuid.MustParse("00000000-0000-0000-0000-000000000099")
+	spec.IsolatedJobID = auditJobID
+	isolated := p.runInstancesParams(spec, "ecs.g7.large", now)
+	if isolated["Tag.6.Key"] != "wuling-isolated-job" || isolated["Tag.6.Value"] != auditJobID.String() {
+		t.Errorf("Aliyun isolated audit tag = %q=%q", isolated["Tag.6.Key"], isolated["Tag.6.Value"])
+	}
+	if isolated["Tag.7.Key"] != "env" {
+		t.Errorf("Aliyun user tags should follow reserved audit tags, got Tag.7.Key=%q", isolated["Tag.7.Key"])
+	}
+}
+
+func TestAliyunNamedDataDiskParams(t *testing.T) {
+	p := &aliyunProvider{pool: AliyunPool{
+		Region:       "cn-hangzhou",
+		ImageID:      "m-abc",
+		InstanceType: "ecs.g7.large",
+		VPCID:        "vpc-123",
+		DataDisks: []DataDisk{
+			{
+				Name:               "runner",
+				Size:               "120Gi",
+				Category:           "cloud_essd",
+				PerformanceLevel:   "PL1",
+				DeleteWithInstance: true,
+			},
+			{
+				Name:               "cache",
+				Size:               "80Gi",
+				Category:           "cloud_efficiency",
+				DeleteWithInstance: false,
+			},
+		},
+	}}
+	params := p.runInstancesParams(LaunchSpec{RunnerName: "runner"}, "ecs.g7.large", time.Now())
+
+	for key, want := range map[string]string{
+		"DataDisk.1.DiskName":           "runner",
+		"DataDisk.1.Size":               "120",
+		"DataDisk.1.Category":           "cloud_essd",
+		"DataDisk.1.PerformanceLevel":   "PL1",
+		"DataDisk.1.DeleteWithInstance": "true",
+		"DataDisk.2.DiskName":           "cache",
+		"DataDisk.2.Size":               "80",
+		"DataDisk.2.Category":           "cloud_efficiency",
+		"DataDisk.2.DeleteWithInstance": "false",
+	} {
+		if params[key] != want {
+			t.Errorf("params[%q] = %q, want %q", key, params[key], want)
+		}
+	}
+	if _, exists := params["VpcId"]; exists {
+		t.Error("VPCID is for config validation and must not be sent to ECS RunInstances")
+	}
+}
+
+func TestAWSNamedDataDiskParams(t *testing.T) {
+	p := &awsProvider{pool: AWSPool{
+		Region:       "us-west-2",
+		AMI:          "ami-123",
+		InstanceType: "c6i.large",
+		VPCID:        "vpc-123",
+		DataDisks: []DataDisk{
+			{
+				Name:               "runner",
+				Size:               "120Gi",
+				Category:           "gp3",
+				Encrypted:          true,
+				DeviceName:         "/dev/sdf",
+				DeleteWithInstance: true,
+			},
+			{
+				Name:               "cache",
+				Size:               "80Gi",
+				Category:           "gp2",
+				DeleteWithInstance: false,
+			},
+		},
+	}}
+	params := p.runInstancesParams(LaunchSpec{RunnerName: "runner"})
+
+	for key, want := range map[string]string{
+		"BlockDeviceMapping.1.DeviceName":              "/dev/sdf",
+		"BlockDeviceMapping.1.Ebs.VolumeSize":          "120",
+		"BlockDeviceMapping.1.Ebs.VolumeType":          "gp3",
+		"BlockDeviceMapping.1.Ebs.DeleteOnTermination": "true",
+		"BlockDeviceMapping.1.Ebs.Encrypted":           "true",
+		"BlockDeviceMapping.2.DeviceName":              "/dev/sdg",
+		"BlockDeviceMapping.2.Ebs.VolumeSize":          "80",
+		"BlockDeviceMapping.2.Ebs.VolumeType":          "gp2",
+		"BlockDeviceMapping.2.Ebs.DeleteOnTermination": "false",
+		"BlockDeviceMapping.2.Ebs.Encrypted":           "false",
+	} {
+		if got := params.Get(key); got != want {
+			t.Errorf("params[%q] = %q, want %q", key, got, want)
+		}
+	}
+	if params.Get("BlockDeviceMapping.0.DeviceName") != "" {
+		t.Error("data disk mapping must not replace the root disk mapping")
+	}
+	if params.Get("VpcId") != "" {
+		t.Error("VPCID is for config validation and must not be sent to EC2 RunInstances")
+	}
+
+	runnerID := uuid.MustParse("00000000-0000-0000-0000-000000000002")
+	jobID := uuid.MustParse("00000000-0000-0000-0000-000000000099")
+	tagged := p.runInstancesParams(LaunchSpec{
+		RunnerName: "runner",
+		OrgID:      uuid.MustParse("00000000-0000-0000-0000-000000000001"),
+		RunnerID:   runnerID,
+	})
+	if got := tagged.Get("ClientToken"); got != runnerID.String() {
+		t.Errorf("AWS ClientToken = %q, want runner id", got)
+	}
+	if got := tagged.Get("TagSpecification.1.Tag.6.Key"); got != "wuling-runner-id" {
+		t.Errorf("runner-id recovery tag key = %q", got)
+	}
+	if got := tagged.Get("TagSpecification.1.Tag.6.Value"); got != runnerID.String() {
+		t.Errorf("runner-id recovery tag value = %q", got)
+	}
+	isolated := p.runInstancesParams(LaunchSpec{
+		RunnerName:    "runner",
+		OrgID:         uuid.MustParse("00000000-0000-0000-0000-000000000001"),
+		RunnerID:      runnerID,
+		IsolatedJobID: jobID,
+	})
+	if got := isolated.Get("TagSpecification.1.Tag.7.Key"); got != "wuling-isolated-job" {
+		t.Errorf("isolated audit tag key = %q", got)
+	}
+	if got := isolated.Get("TagSpecification.1.Tag.7.Value"); got != jobID.String() {
+		t.Errorf("isolated audit tag value = %q", got)
+	}
+}
+
+func TestRunnerDataDiskUserData(t *testing.T) {
+	pool := Pool{
+		Name:           "runner-disk",
+		Provider:       ProviderAWS,
+		RunnerDataDisk: "runner",
+		AWS: &AWSPool{DataDisks: []DataDisk{{
+			Name: "runner", Size: "120Gi", Category: "gp3", DeleteWithInstance: true,
+		}}},
+	}
+	linux := BuildUserData("https://wuling.example.com", "wlrt_secret", pool, mediumTier, "runner-01")
+	for _, want := range []string{
+		"wuling_runner_is_raw_data_disk",
+		"wuling_runner_is_capacity_match",
+		"wuling_runner_expected_data_disk_bytes=128849018880",
+		"expected exactly one non-boot data disk with configured capacity",
+		"mkfs.ext4 -F",
+		"mount \"$runner_data_disk\" /var/lib/wuling-runner",
+		"RequiresMountsFor=/var/lib/wuling-runner",
+		"ConditionPathIsMountPoint=/var/lib/wuling-runner",
+		"WULING_RUNNER_DATA_DISK_READY=1",
+		"WULING_RUNNER_WORK_DIR=/var/lib/wuling-runner/work",
+		"WULING_RUNNER_TOOLS_DIR=/var/lib/wuling-runner/tools",
+		"WULING_RUNNER_STATE_DIR=/var/lib/wuling-runner/state",
+	} {
+		if !strings.Contains(linux, want) {
+			t.Errorf("linux data-disk user-data missing %q\n---\n%s", want, linux)
+		}
+	}
+	legacyLinux := BuildUserData("https://wuling.example.com", "wlrt_secret", Pool{}, mediumTier, "runner-01")
+	if strings.Contains(legacyLinux, "wuling_runner_is_raw_data_disk") ||
+		strings.Contains(legacyLinux, "WULING_RUNNER_WORK_DIR=") ||
+		strings.Contains(legacyLinux, "WULING_RUNNER_DATA_DISK_READY=") {
+		t.Errorf("legacy Linux user-data changed unexpectedly:\n%s", legacyLinux)
+	}
+
+	windowsPool := pool
+	windowsPool.OS = "windows"
+	windows := BuildWindowsUserData("https://wuling.example.com", "wlrt_secret", windowsPool, mediumTier, "runner-01")
+	for _, want := range []string{
+		"Get-Disk | Where-Object",
+		"$_.PartitionStyle -eq 'RAW'",
+		"$wulingRunnerExpectedDataDiskBytes = 128849018880",
+		"exactly one raw, non-boot data disk with configured capacity",
+		"Initialize-Disk",
+		"New-Partition -DiskNumber $runnerDisk.Number -UseMaximumSize -DriveLetter W",
+		"Format-Volume",
+		"$runnerRoot = 'W:\\wuling-runner'",
+		"WULING_RUNNER_DATA_DISK_READY=1",
+		"WULING_RUNNER_WORK_DIR=W:\\wuling-runner\\work",
+		"WULING_RUNNER_TOOLS_DIR=W:\\wuling-runner\\tools",
+		"WULING_RUNNER_STATE_DIR=W:\\wuling-runner\\state",
+	} {
+		if !strings.Contains(windows, want) {
+			t.Errorf("windows data-disk user-data missing %q\n---\n%s", want, windows)
+		}
+	}
+	legacyWindows := BuildWindowsUserData("https://wuling.example.com", "wlrt_secret", Pool{OS: "windows"}, mediumTier, "runner-01")
+	if strings.Contains(legacyWindows, "Get-Disk | Where-Object") ||
+		strings.Contains(legacyWindows, "WULING_RUNNER_WORK_DIR=") ||
+		strings.Contains(legacyWindows, "WULING_RUNNER_DATA_DISK_READY=") {
+		t.Errorf("legacy Windows user-data changed unexpectedly:\n%s", legacyWindows)
+	}
 }
 
 func TestAliyunAPIError(t *testing.T) {
@@ -348,5 +709,85 @@ func TestAliyunAPIError(t *testing.T) {
 	err = &aliyunAPIError{Code: "InvalidInstanceId.NotFound"}
 	if !err.notFound() {
 		t.Error("NotFound should be notFound")
+	}
+}
+
+func TestV2CloudTopologyResponses(t *testing.T) {
+	awsSubnet := []byte(`<DescribeSubnetsResponse><subnetSet><item><subnetId>subnet-a</subnetId><vpcId>vpc-a</vpcId></item></subnetSet></DescribeSubnetsResponse>`)
+	awsGroups := []byte(`<DescribeSecurityGroupsResponse><securityGroupInfo><item><groupId>sg-a</groupId><vpcId>vpc-a</vpcId></item><item><groupId>sg-b</groupId><vpcId>vpc-a</vpcId></item></securityGroupInfo></DescribeSecurityGroupsResponse>`)
+	if err := validateAWSSubnetVPC(awsSubnet, "subnet-a", "vpc-a"); err != nil {
+		t.Fatalf("validateAWSSubnetVPC: %v", err)
+	}
+	if err := validateAWSSecurityGroupVPC(awsGroups, []string{"sg-a", "sg-b"}, "vpc-a"); err != nil {
+		t.Fatalf("validateAWSSecurityGroupVPC: %v", err)
+	}
+	if err := validateAWSSubnetVPC(awsSubnet, "subnet-a", "vpc-other"); err == nil {
+		t.Fatal("AWS subnet in another VPC was accepted")
+	}
+	if err := validateAWSSubnetVPC([]byte(`<DescribeSubnetsResponse><subnetSet><item><subnetId>subnet-other</subnetId><vpcId>vpc-a</vpcId></item></subnetSet></DescribeSubnetsResponse>`), "subnet-a", "vpc-a"); err == nil {
+		t.Fatal("unexpected AWS subnet was accepted")
+	}
+	if err := validateAWSSecurityGroupVPC([]byte(`<DescribeSecurityGroupsResponse><securityGroupInfo><item><groupId>sg-a</groupId><vpcId>vpc-other</vpcId></item></securityGroupInfo></DescribeSecurityGroupsResponse>`), []string{"sg-a"}, "vpc-a"); err == nil {
+		t.Fatal("AWS security group in another VPC was accepted")
+	}
+	if err := validateAWSSecurityGroupVPC([]byte(`<DescribeSecurityGroupsResponse><securityGroupInfo><item><groupId>sg-other</groupId><vpcId>vpc-a</vpcId></item></securityGroupInfo></DescribeSecurityGroupsResponse>`), []string{"sg-a"}, "vpc-a"); err == nil {
+		t.Fatal("unexpected AWS security group was accepted")
+	}
+	if err := validateAWSSecurityGroupVPC([]byte(`<DescribeSecurityGroupsResponse><securityGroupInfo><item><groupId>sg-a</groupId><vpcId>vpc-a</vpcId></item></securityGroupInfo></DescribeSecurityGroupsResponse>`), []string{"sg-a", "sg-b"}, "vpc-a"); err == nil {
+		t.Fatal("AWS security group response missing a configured group was accepted")
+	}
+
+	if err := validateAliyunVSwitchTopology([]byte(`{"VSwitchId":"vsw-a","VpcId":"vpc-a","ZoneId":"cn-hangzhou-i"}`), "vsw-a", "vpc-a", "cn-hangzhou-i"); err != nil {
+		t.Fatalf("validateAliyunVSwitchTopology: %v", err)
+	}
+	if err := validateAliyunVSwitchTopology([]byte(`{"VSwitchId":"vsw-a","VpcId":"vpc-a","ZoneId":"cn-hangzhou-i"}`), "vsw-a", "vpc-a", "cn-hangzhou-j"); err == nil {
+		t.Fatal("Aliyun vswitch in another zone was accepted")
+	}
+	if err := validateAliyunVSwitchTopology([]byte(`{"VSwitchId":"vsw-other","VpcId":"vpc-a","ZoneId":"cn-hangzhou-i"}`), "vsw-a", "vpc-a", "cn-hangzhou-i"); err == nil {
+		t.Fatal("Aliyun vswitch id mismatch was accepted")
+	}
+	if err := validateAliyunSecurityGroupVPC([]byte(`{"SecurityGroupId":"sg-a","VpcId":"vpc-a"}`), "sg-a", "vpc-a"); err != nil {
+		t.Fatalf("validateAliyunSecurityGroupVPC: %v", err)
+	}
+	if err := validateAliyunSecurityGroupVPC([]byte(`{"SecurityGroupId":"sg-a","VpcId":"vpc-other"}`), "sg-a", "vpc-a"); err == nil {
+		t.Fatal("Aliyun security group in another VPC was accepted")
+	}
+}
+
+func TestParseRunnerInstanceRecovery(t *testing.T) {
+	awsBody := []byte(`
+		<DescribeInstancesResponse>
+		  <reservationSet>
+		    <item>
+		      <instancesSet>
+		        <item><instanceId>i-abc</instanceId></item>
+		      </instancesSet>
+		    </item>
+		  </reservationSet>
+		</DescribeInstancesResponse>`)
+	id, found, err := parseAWSRunnerInstance(awsBody)
+	if err != nil || !found || id != "i-abc" {
+		t.Fatalf("parseAWSRunnerInstance = %q found=%v err=%v", id, found, err)
+	}
+
+	aliyunBody := []byte(`{"Instances":{"Instance":[{"InstanceId":"i-hangzhou123"}]}}`)
+	id, found, err = parseAliyunRunnerInstance(aliyunBody)
+	if err != nil || !found || id != "i-hangzhou123" {
+		t.Fatalf("parseAliyunRunnerInstance = %q found=%v err=%v", id, found, err)
+	}
+
+	if _, _, err := parseAWSRunnerInstance([]byte(`
+		<DescribeInstancesResponse>
+		  <reservationSet>
+		    <item><instancesSet>
+		      <item><instanceId>i-1</instanceId></item>
+		      <item><instanceId>i-2</instanceId></item>
+		    </instancesSet></item>
+		  </reservationSet>
+		</DescribeInstancesResponse>`)); err == nil {
+		t.Fatal("multiple AWS instances for one runner id were accepted")
+	}
+	if _, _, err := parseAliyunRunnerInstance([]byte(`{"Instances":{"Instance":[{"InstanceId":"i-1"},{"InstanceId":"i-2"}]}}`)); err == nil {
+		t.Fatal("multiple Aliyun instances for one runner id were accepted")
 	}
 }

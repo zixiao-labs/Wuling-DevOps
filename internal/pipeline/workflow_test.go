@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 )
@@ -115,6 +116,60 @@ func TestEffectiveTier(t *testing.T) {
 		if got := c.job.EffectiveTier(c.def); got != c.want {
 			t.Errorf("case %d: got %q want %q", i, got, c.want)
 		}
+	}
+}
+
+func TestExecutionModes(t *testing.T) {
+	w, err := Parse([]byte(`
+name: execution
+on: push
+jobs:
+  shared:
+    steps: [{run: echo shared}]
+  exclusive:
+    execution: {mode: exclusive}
+    steps: [{run: echo exclusive}]
+  isolated:
+    execution: {mode: isolated, pool: linux-dedicated}
+    steps: [{run: echo isolated}]
+`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	cases := map[string]Execution{
+		"shared":    {Mode: ExecutionModeShared},
+		"exclusive": {Mode: ExecutionModeExclusive},
+		"isolated":  {Mode: ExecutionModeIsolated, Pool: "linux-dedicated"},
+	}
+	for id, want := range cases {
+		if got := w.Jobs[id].Spec().Execution; got != want {
+			t.Errorf("job %q execution = %+v, want %+v", id, got, want)
+		}
+	}
+
+	bad := []string{
+		`execution: {mode: nonsense}`,
+		`execution: {mode: isolated}`,
+		`execution: {mode: isolated, pool: "   "}`,
+		`execution: {mode: shared, pool: any}`,
+		`execution: {mode: exclusive, pool: any}`,
+	}
+	for _, execution := range bad {
+		src := "name: bad\non: push\njobs:\n  job:\n    " + execution + "\n    steps: [{run: echo}]\n"
+		if _, err := Parse([]byte(src)); err == nil {
+			t.Errorf("Parse accepted invalid %s", execution)
+		}
+	}
+}
+
+func TestJobSpecJSONDefaultsExecutionToShared(t *testing.T) {
+	var spec JobSpec
+	if err := json.Unmarshal([]byte(`{"steps":[{"run":"echo legacy"}]}`), &spec); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got := spec.Execution; got != (Execution{Mode: ExecutionModeShared}) {
+		t.Errorf("execution = %+v, want shared default", got)
 	}
 }
 

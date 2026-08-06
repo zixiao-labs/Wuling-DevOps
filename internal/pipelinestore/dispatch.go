@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -69,11 +70,14 @@ const maxAcquireAttempts = 3
 // "Dispatchable" = queued, tier matches the runner exactly, the job's runs-on
 // labels are a subset of the runner's labels, every `needs` dependency has
 // succeeded in all its legs, and the job's matrix group is under its
-// max-parallel cap. The runner's labels/tier are read authoritatively from its
-// row (never trusted from the request) so a runner can't grab work it isn't
-// sized for. Returns (nil, nil) when nothing matches — the runner long-polls
-// again. FOR UPDATE OF j SKIP LOCKED lets concurrent runners scan past each
-// other's claimed rows without blocking.
+// max-parallel cap. An isolated job must first be reserved for this exact
+// runner; an exclusive job is admitted only when the runner has no running
+// work, and blocks additional claims while it runs. The runner's labels/tier
+// are read authoritatively from its locked row (never trusted from the request)
+// so a runner can't grab work it isn't sized for. Returns (nil, nil) when
+// nothing matches — the runner long-polls again. FOR UPDATE OF j SKIP LOCKED
+// lets concurrent runners scan past each other's claimed rows without
+// blocking.
 //
 // A lost max-parallel race retries with the throttled group excluded rather
 // than returning empty: the inner SELECT is LIMIT 1, so a throttled group at
@@ -108,18 +112,32 @@ func (s *Store) acquireOnce(ctx context.Context, runnerID uuid.UUID, excludeKeys
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// Read the runner's org + match spec authoritatively from its row.
+	// Lock the runner for the entire admission decision. Every acquisition for
+	// this runner, including shared work, takes this lock so count-then-claim
+	// for exclusive work cannot race on distinct pipeline_jobs rows.
 	var (
-		orgID  uuid.UUID
-		labels []string
-		tier   string
+		orgID         uuid.UUID
+		labels        []string
+		tier          string
+		poolName      string
+		isolatedJobID *uuid.UUID
 	)
 	if err := tx.QueryRow(ctx,
-		`SELECT org_id, labels, resource_tier FROM runners WHERE id = $1`, runnerID).
-		Scan(&orgID, &labels, &tier); err != nil {
+		`SELECT org_id, labels, resource_tier, pool_name, isolated_job_id FROM runners WHERE id = $1 FOR UPDATE`, runnerID).
+		Scan(&orgID, &labels, &tier, &poolName, &isolatedJobID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, "", apperr.Unauthorized("unknown runner")
 		}
+		return nil, "", apperr.Internal(err)
+	}
+
+	var runningJobs, runningExclusive int
+	if err := tx.QueryRow(ctx, `
+		SELECT count(*),
+		       count(*) FILTER (WHERE execution_mode = 'exclusive')
+		FROM pipeline_jobs
+		WHERE runner_id = $1 AND status = 'running'
+	`, runnerID).Scan(&runningJobs, &runningExclusive); err != nil {
 		return nil, "", apperr.Internal(err)
 	}
 
@@ -148,10 +166,25 @@ func (s *Store) acquireOnce(ctx context.Context, runnerID uuid.UUID, excludeKeys
 		        SELECT count(*) FROM pipeline_jobs sib
 		        WHERE sib.run_id = j.run_id AND sib.job_key = j.job_key AND sib.status = 'running'
 		      ) < j.max_parallel)
-		ORDER BY j.queued_at ASC, j.ordinal ASC, j.name ASC
+		  AND (
+		        (j.execution_mode = 'isolated'
+		         AND j.reserved_runner_id = $5
+		         AND j.execution_pool = $6
+		         AND j.id = $9)
+		        OR
+		        (j.execution_mode <> 'isolated' AND $9 IS NULL)
+		      )
+		  AND (j.execution_mode <> 'exclusive' OR $7 = 0)
+		  AND $8 = 0
+		ORDER BY CASE
+		           WHEN j.execution_mode = 'isolated' AND j.reserved_runner_id = $5 THEN 0
+		           ELSE 1
+		         END,
+		         j.queued_at ASC, j.ordinal ASC, j.name ASC
 		FOR UPDATE OF j SKIP LOCKED
 		LIMIT 1
-	`, orgID, normStrings(labels), tier, normStrings(excludeKeys)).Scan(
+	`, orgID, normStrings(labels), tier, normStrings(excludeKeys), runnerID, poolName,
+		runningJobs, runningExclusive, isolatedJobID).Scan(
 		&aj.JobID, &aj.RunID, &aj.JobName, &aj.JobKey, &matrixRaw, &maxParallel, &specJSON,
 		&aj.RunNumber, &aj.ProjectID, &aj.RepoID, &aj.CommitSHA, &aj.GitRef, &aj.Event,
 		&aj.OrgSlug, &aj.ProjectSlug, &aj.RepoSlug,
@@ -262,7 +295,7 @@ func (s *Store) UpdateStep(ctx context.Context, p UpdateStepParams) error {
 }
 
 // CompleteJob finalizes a job with conclusion (success|failed|canceled), then:
-//   - frees the runner (idle, stamps last_job_at for idle scale-down),
+//   - recomputes the runner's busy/idle state from all of its running jobs,
 //   - cancels the job's still-live matrix siblings when fail-fast is on,
 //   - cascades cancellation to queued jobs whose needs can no longer succeed,
 //   - re-aggregates the run's status, stamping finished_at once all jobs end.
@@ -293,14 +326,6 @@ func (s *Store) CompleteJob(ctx context.Context, jobID uuid.UUID, conclusion str
 	}
 	if err != nil {
 		return apperr.Internal(err)
-	}
-
-	if runnerID != nil {
-		if _, err := tx.Exec(ctx,
-			`UPDATE runners SET status = 'idle', last_job_at = now(), last_seen_at = now() WHERE id = $1`,
-			*runnerID); err != nil {
-			return apperr.Internal(err)
-		}
 	}
 
 	// fail-fast: one failed leg cancels its still-live siblings, before the
@@ -334,6 +359,15 @@ func (s *Store) CompleteJob(ctx context.Context, jobID uuid.UUID, conclusion str
 		}
 	}
 
+	// A runner can carry multiple shared jobs. Recompute from pipeline_jobs
+	// under the same runner row lock AcquireJob uses; setting it idle merely
+	// because this one job ended would let an active runner look free.
+	if runnerID != nil {
+		if err := recomputeRunnerStatuses(ctx, tx, []uuid.UUID{*runnerID}); err != nil {
+			return err
+		}
+	}
+
 	// Re-aggregate run status.
 	var pending, failed, canceled int
 	if err := tx.QueryRow(ctx, `
@@ -364,9 +398,9 @@ func (s *Store) CompleteJob(ctx context.Context, jobID uuid.UUID, conclusion str
 }
 
 // cancelMatrixSiblings implements fail-fast: it cancels every still-live leg of
-// jobKey other than exceptID, cancels those legs' pending steps, and frees the
-// runners they were holding. Freeing the runners matters — a busy runner row
-// that nothing will ever complete skews the autoscaler's idle accounting.
+// jobKey other than exceptID, cancels those legs' pending steps, and recomputes
+// the runners they were holding. Recomputing matters — an unconditional idle
+// update would hide other shared work still running on the same runner.
 //
 // A leg cancelled while still queued gets finished_at with started_at left
 // NULL; that is the same shape CancelRun already produces for queued jobs.
@@ -406,20 +440,61 @@ func cancelMatrixSiblings(ctx context.Context, tx pgx.Tx, runID uuid.UUID, jobKe
 	`, jobIDs); err != nil {
 		return apperr.Internal(err)
 	}
-	return freeRunners(ctx, tx, runnerIDs)
+	return recomputeRunnerStatuses(ctx, tx, runnerIDs)
 }
 
-// freeRunners marks runners idle after their job was cancelled out from under
-// them, stamping last_job_at so the idle scale-down clock starts now.
-func freeRunners(ctx context.Context, tx pgx.Tx, runnerIDs []uuid.UUID) error {
-	if len(runnerIDs) == 0 {
-		return nil
+// recomputeRunnerStatuses derives each affected runner's status from the
+// actual count of running jobs. It locks runner rows in a stable order, which
+// both prevents concurrent AcquireJob calls from racing the count and avoids
+// inter-run cancellation deadlocks.
+func recomputeRunnerStatuses(ctx context.Context, tx pgx.Tx, runnerIDs []uuid.UUID) error {
+	seen := make(map[uuid.UUID]struct{}, len(runnerIDs))
+	ids := make([]uuid.UUID, 0, len(runnerIDs))
+	for _, id := range runnerIDs {
+		if id == uuid.Nil {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE runners SET status = 'idle', last_job_at = now(), last_seen_at = now()
-		WHERE id = ANY($1::uuid[])
-	`, runnerIDs); err != nil {
-		return apperr.Internal(err)
+	sort.Slice(ids, func(i, j int) bool { return ids[i].String() < ids[j].String() })
+
+	for _, runnerID := range ids {
+		var lockedID uuid.UUID
+		if err := tx.QueryRow(ctx,
+			`SELECT id FROM runners WHERE id = $1 FOR UPDATE`, runnerID).
+			Scan(&lockedID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue // the runner was deleted; its job FK is already NULL.
+			}
+			return apperr.Internal(err)
+		}
+
+		var running int
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*) FROM pipeline_jobs
+			WHERE runner_id = $1 AND status = 'running'
+		`, lockedID).Scan(&running); err != nil {
+			return apperr.Internal(err)
+		}
+		if running == 0 {
+			if _, err := tx.Exec(ctx, `
+				UPDATE runners
+				SET status = 'idle', last_job_at = now(), last_seen_at = now()
+				WHERE id = $1
+			`, lockedID); err != nil {
+				return apperr.Internal(err)
+			}
+			continue
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE runners SET status = 'busy', last_seen_at = now() WHERE id = $1
+		`, lockedID); err != nil {
+			return apperr.Internal(err)
+		}
 	}
 	return nil
 }
@@ -444,11 +519,9 @@ func (s *Store) CancelRun(ctx context.Context, runID uuid.UUID) error {
 	if tag.RowsAffected() == 0 {
 		return apperr.New(apperr.CodeConflict, "run is already finished")
 	}
-	// Cancel the non-terminal jobs and collect the runners they were holding:
-	// leaving those rows 'busy' with nothing left to complete them confuses the
-	// autoscaler's idle accounting. RETURNING scopes the free to exactly the
-	// jobs this call cancelled, so a runner already moved on to another job is
-	// untouched.
+	// Cancel the non-terminal jobs and collect the runners they were holding.
+	// Recomputing their state below scopes the update to these rows while still
+	// preserving busy when the runner also owns work from another run.
 	rows, err := tx.Query(ctx, `
 		UPDATE pipeline_jobs SET status = 'canceled', finished_at = now()
 		WHERE run_id = $1 AND status IN ('queued','running')
@@ -472,7 +545,7 @@ func (s *Store) CancelRun(ctx context.Context, runID uuid.UUID) error {
 	if err := rows.Err(); err != nil {
 		return apperr.Internal(err)
 	}
-	if err := freeRunners(ctx, tx, runnerIDs); err != nil {
+	if err := recomputeRunnerStatuses(ctx, tx, runnerIDs); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
@@ -526,9 +599,14 @@ func (s *Store) RequeueStaleJobs(ctx context.Context, reapAfter time.Duration) (
 				return acted, err
 			}
 		} else {
+			// Clear reserved_runner_id for isolated jobs so the autoscaler can
+			// reclaim the stale VM (reservation-released) and provision a fresh
+			// one. Leaving the reservation would permanently pin the job to a
+			// dead runner while excluding it from QueuedIsolatedDemand.
 			if _, err := s.pool.Exec(ctx, `
 				UPDATE pipeline_jobs
-				SET status = 'queued', runner_id = NULL, started_at = NULL, attempt = attempt + 1
+				SET status = 'queued', runner_id = NULL, started_at = NULL,
+				    attempt = attempt + 1, reserved_runner_id = NULL
 				WHERE id = $1 AND status = 'running'
 			`, st.id); err != nil {
 				return acted, apperr.Internal(err)
@@ -547,8 +625,10 @@ type QueuedJob struct {
 }
 
 // QueuedDemand returns the tier/labels of every queued, dependency-satisfied
-// job in an org — i.e. work that could run right now if a matching runner
-// existed. The autoscaler diffs this against online runners to size pools.
+// shared/exclusive job in an org — i.e. work that could run right now if a
+// matching runner existed. Isolated jobs are intentionally excluded: their
+// pool-aware reservation flow is exposed by QueuedIsolatedDemand and must not
+// be turned into generic autoscaler demand.
 //
 // Matrix legs are clamped to their group's remaining max-parallel headroom.
 // Mirroring AcquireJob's admission PREDICATE alone would not be enough: with 20
@@ -568,6 +648,7 @@ func (s *Store) QueuedDemand(ctx context.Context, orgID uuid.UUID) ([]QueuedJob,
 		            AND s.status = 'running') AS running
 		  FROM pipeline_jobs j
 		  WHERE j.org_id = $1 AND j.status = 'queued'
+		    AND j.execution_mode <> 'isolated'
 		    AND `+dispatchableNeedsSQL+`
 		) t
 		WHERE t.max_parallel = 0
@@ -589,6 +670,104 @@ func (s *Store) QueuedDemand(ctx context.Context, orgID uuid.UUID) ([]QueuedJob,
 		return nil, apperr.Internal(err)
 	}
 	return out, nil
+}
+
+// IsolatedJobDemand is one dispatchable isolated job awaiting a runner
+// reservation. A reconcile loop can use Pool to launch or select capacity,
+// then atomically bind that capacity with ReserveIsolatedJob.
+type IsolatedJobDemand struct {
+	JobID  uuid.UUID
+	Pool   string
+	Tier   string
+	RunsOn []string
+}
+
+// QueuedIsolatedDemand lists dependency-satisfied isolated jobs that have no
+// reservation yet. Like QueuedDemand, matrix legs are limited to their
+// currently available max-parallel slots; no provider action happens here.
+func (s *Store) QueuedIsolatedDemand(ctx context.Context, orgID uuid.UUID) ([]IsolatedJobDemand, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT t.id, t.execution_pool, t.resource_tier, t.runs_on
+		FROM (
+		  SELECT j.id, j.execution_pool, j.resource_tier, j.runs_on,
+		         j.queued_at, j.ordinal, j.name, j.max_parallel,
+		         row_number() OVER (PARTITION BY j.run_id, j.job_key
+		                            ORDER BY j.ordinal ASC, j.name ASC) AS rn,
+		         (SELECT count(*) FROM pipeline_jobs s
+		          WHERE s.run_id = j.run_id AND s.job_key = j.job_key
+		            AND (
+		              s.status = 'running'
+		              OR (s.status = 'queued' AND s.reserved_runner_id IS NOT NULL)
+		            )) AS occupied
+		  FROM pipeline_jobs j
+		  WHERE j.org_id = $1
+		    AND j.status = 'queued'
+		    AND j.execution_mode = 'isolated'
+		    AND j.reserved_runner_id IS NULL
+		    AND `+dispatchableNeedsSQL+`
+		) t
+		WHERE t.max_parallel = 0
+		   OR t.rn <= GREATEST(t.max_parallel - t.occupied, 0)
+		ORDER BY t.queued_at ASC, t.ordinal ASC, t.name ASC
+	`, orgID)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	defer rows.Close()
+
+	out := make([]IsolatedJobDemand, 0)
+	for rows.Next() {
+		var demand IsolatedJobDemand
+		if err := rows.Scan(&demand.JobID, &demand.Pool, &demand.Tier, &demand.RunsOn); err != nil {
+			return nil, apperr.Internal(err)
+		}
+		out = append(out, demand)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, apperr.Internal(err)
+	}
+	return out, nil
+}
+
+// ReserveIsolatedJob atomically assigns an unreserved queued isolated job to a
+// runner from its declared pool. False means the job is no longer reservable
+// (already reserved/claimed/finished, or the runner belongs to another pool).
+func (s *Store) ReserveIsolatedJob(ctx context.Context, jobID, runnerID uuid.UUID) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE pipeline_jobs j
+		SET reserved_runner_id = $2
+		FROM runners r
+		WHERE j.id = $1
+		  AND j.status = 'queued'
+		  AND j.execution_mode = 'isolated'
+		  AND j.reserved_runner_id IS NULL
+		  AND r.id = $2
+		  AND r.org_id = j.org_id
+		  AND r.pool_name = j.execution_pool
+		  AND r.isolated_job_id = j.id
+	`, jobID, runnerID)
+	if err != nil {
+		return false, apperr.Internal(err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// ReleaseIsolatedReservation clears a still-queued job's reservation after a
+// failed provisioning attempt. It never unassigns a job that has already been
+// claimed by the intended runner.
+func (s *Store) ReleaseIsolatedReservation(ctx context.Context, jobID, runnerID uuid.UUID) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE pipeline_jobs
+		SET reserved_runner_id = NULL
+		WHERE id = $1
+		  AND status = 'queued'
+		  AND execution_mode = 'isolated'
+		  AND reserved_runner_id = $2
+	`, jobID, runnerID)
+	if err != nil {
+		return false, apperr.Internal(err)
+	}
+	return tag.RowsAffected() == 1, nil
 }
 
 // OrgsWithQueuedJobs lists orgs that have at least one queued job. The

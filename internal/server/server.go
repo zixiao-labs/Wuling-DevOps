@@ -39,8 +39,10 @@ import (
 	"github.com/zixiao-labs/wuling-devops/internal/pipelinetrigger"
 	"github.com/zixiao-labs/wuling-devops/internal/repohttp"
 	"github.com/zixiao-labs/wuling-devops/internal/repostore"
+	"github.com/zixiao-labs/wuling-devops/internal/runnercheck"
 	"github.com/zixiao-labs/wuling-devops/internal/runnerhttp"
 	"github.com/zixiao-labs/wuling-devops/internal/runnerstore"
+	"github.com/zixiao-labs/wuling-devops/internal/schemahttp"
 	"github.com/zixiao-labs/wuling-devops/internal/secrethttp"
 	"github.com/zixiao-labs/wuling-devops/internal/secretstore"
 	"github.com/zixiao-labs/wuling-devops/internal/stage2http"
@@ -67,6 +69,9 @@ type Deps struct {
 	Stage2    *stage2store.Store
 	Artifacts *artifactclient.Client
 	OrgConfig *orgconfig.Store
+	// RunnerSelfChecks is the durable audit store shared with the autoscaler.
+	// It is optional for callers that do not expose administrator self-checks.
+	RunnerSelfChecks *runnercheck.AuditStore
 }
 
 // New returns a router fully wired with all current Stage-1 domains.
@@ -106,6 +111,24 @@ func New(d Deps) http.Handler {
 	seedFirstPartyClient(context.Background(), d.Log, oauthStore, d.Cfg.OAuth.DesktopClientID)
 
 	bearerResolver := auth.BearerResolver{JWT: verifier, OAT: oauthH}
+	// Typed-nil *Store values must not be stored in interface fields: a nil
+	// concrete pointer inside a non-nil interface defeats runnercheck's nil
+	// checks. Mirror the Insights wiring below.
+	var selfCheckConfigs runnercheck.ConfigReader
+	if d.OrgConfig != nil {
+		selfCheckConfigs = d.OrgConfig
+	}
+	var selfCheckSecrets runnercheck.SecretLister
+	if d.Secrets != nil {
+		selfCheckSecrets = d.Secrets
+	}
+	selfChecks := runnercheck.NewLifecycleService(
+		selfCheckConfigs,
+		selfCheckSecrets,
+		d.RunnerSelfChecks,
+		d.Pipelines,
+		d.Cfg.Autoscale.Enabled,
+	)
 
 	r := chi.NewRouter()
 	r.Use(httpapi.RequestIDMiddleware)
@@ -131,6 +154,11 @@ func New(d Deps) http.Handler {
 	// /.well-known/wuling-clients is the IdP discovery doc. Lives at the
 	// root because clients look there before they know any /api paths.
 	r.Get("/.well-known/wuling-clients", oauthH.WellKnownHandler())
+	// Versioned public schemas are consumed by the Red Hat YAML Language
+	// Server in arbitrary repositories, so they must not require API auth.
+	schemaH := schemahttp.Handler{}
+	r.Get("/.well-known/wuling/schemas/v1/workflow.json", schemaH.Workflow)
+	r.Get("/.well-known/wuling/schemas/v1/runner-config.json", schemaH.RunnerConfig)
 
 	// JSON API at /api/v1.
 	r.Route("/api/v1", func(api chi.Router) {
@@ -166,6 +194,10 @@ func New(d Deps) http.Handler {
 			adm.Use(requireAdmin(d.Store))
 			(&authhttp.AdminHandler{Store: d.Store, Verifier: verifier}).MountInner(adm)
 			oauthH.MountAdmin(adm)
+			(&runnerhttp.AdminRunnerSelfCheckHandler{
+				Orgs:   d.Store,
+				Checks: selfChecks,
+			}).MountInner(adm)
 		})
 
 		// OAuth Provider role. The token / authorize / device endpoints are
@@ -235,6 +267,7 @@ func New(d Deps) http.Handler {
 				CloneBaseURL:    d.Cfg.OAuth.PublicBaseURL,
 				DefaultTier:     model.TierMedium,
 				OrgConfig:       d.OrgConfig,
+				SelfChecks:      selfChecks,
 			}).Mount(api)
 		}
 		if d.Stage2 != nil {

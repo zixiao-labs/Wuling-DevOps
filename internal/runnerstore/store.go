@@ -280,6 +280,21 @@ func (s *Store) Delete(ctx context.Context, orgID, runnerID uuid.UUID) error {
 	return nil
 }
 
+// IsEphemeral reports whether the runner is autoscaler-managed capacity.
+func (s *Store) IsEphemeral(ctx context.Context, orgID, runnerID uuid.UUID) (bool, error) {
+	var ephemeral bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT ephemeral FROM runners WHERE id = $1 AND org_id = $2
+	`, runnerID, orgID).Scan(&ephemeral)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, apperr.NotFound("runner")
+	}
+	if err != nil {
+		return false, apperr.Internal(err)
+	}
+	return ephemeral, nil
+}
+
 // ----------------------------------------------------------------------------
 // token helpers
 // ----------------------------------------------------------------------------
