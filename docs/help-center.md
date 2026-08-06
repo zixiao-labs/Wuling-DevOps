@@ -61,7 +61,7 @@ npm run build        # dist/ + dist-help/
 npm run help:smoke   # 预渲染到 dist/help/ 并校验 sw.js 绕过 /help
 ```
 
-生产部署：`Dockerfile.frontend` 在 builder 阶段运行 `node dist-help/prerender.js dist`，Caddy 在 help 容器不可用时从静态卷提供相同 HTML。
+生产部署：`Dockerfile.frontend` 在 builder 阶段运行 `node dist-help/prerender.js dist`，把文档 HTML、`_assets/` 与 `sitemap.xml` 写入 `dist/help/**`。Caddy/nginx 直接托管这些静态文件；`/help/search?q=` 仍可反代到 help 容器做无 JS 搜索，容器不可用时回退到预渲染的搜索壳页。
 
 ## 架构要点
 

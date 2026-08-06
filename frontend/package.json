@@ -10,7 +10,7 @@
     "api:types": "openapi-typescript ../api/openapi.yaml -o src/api/schema.gen.ts",
     "typecheck": "tsc --noEmit && npm run typecheck:help",
     "typecheck:help": "tsc -p tsconfig.help.json --noEmit",
-    "help:smoke": "test -f dist-help/server.js && test -f dist-help/enhance.js && node dist-help/prerender.js dist && grep -q help-root dist/help/index.html && grep -q '/help' dist/sw.js",
+    "help:smoke": "test -f dist-help/server.js && test -f dist-help/enhance.js && node dist-help/prerender.js dist && grep -q help-root dist/help/index.html && test -f dist/help/_assets/enhance.js && test -f dist/help/_assets/search-index.json && test -f dist/help/search/index.html && test -f dist/help/sitemap.xml && grep -q '/help' dist/sw.js",
     "test": "lightning run --root .",
     "test:watch": "lightning watch --root .",
     "lint": "eslint .",
