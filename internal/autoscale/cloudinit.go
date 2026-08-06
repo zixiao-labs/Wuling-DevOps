@@ -145,8 +145,9 @@ func BuildWindowsUserData(serverURL, token string, pool Pool, tier TierSpec, run
 // writeLinuxRunnerDataDiskSetup emits a fail-closed setup sequence. Capacity is
 // matched as whole GiB cloud volumes (AWS/Aliyun VolumeSize units), never by
 // rounding a sub-GiB quantity up and hoping the guest reports that larger size.
-// Disks that already have the correct ext4 fstab entry are mounted without
-// reformatting so user-data reruns can continue into runner.env setup.
+// Disks already at /var/lib/wuling-runner (or unmounted with the matching
+// ext4 fstab entry) are accepted without reformatting so user-data reruns
+// can continue into runner.env setup.
 func writeLinuxRunnerDataDiskSetup(b *strings.Builder, expectedGiB int) {
 	expectedBytes := int64(expectedGiB) * (1 << 30)
 	fmt.Fprintf(b, "wuling_runner_expected_data_disk_bytes=%d\n", expectedBytes)
@@ -164,14 +165,17 @@ wuling_runner_is_raw_data_disk() {
   [ "$(lsblk -dn -o TYPE "$disk" 2>/dev/null)" = "disk" ] || return 1
   [ "$(lsblk -nr -o TYPE "$disk" 2>/dev/null | wc -l | tr -d '[:space:]')" = "1" ] || return 1
   [ "$(lsblk -dn -o RO "$disk" 2>/dev/null | tr -d '[:space:]')" = "0" ] || return 1
-  if lsblk -nr -o MOUNTPOINT "$disk" 2>/dev/null | awk 'NF { found=1 } END { exit !found }'; then
+  local mountpoint
+  mountpoint="$(lsblk -nr -o MOUNTPOINT "$disk" 2>/dev/null | awk 'NF { print; exit }')"
+  # Already mounted elsewhere cannot be the runner workspace disk.
+  if [ -n "$mountpoint" ] && [ "$mountpoint" != "/var/lib/wuling-runner" ]; then
     return 1
   fi
   local fstype
   fstype="$(lsblk -dn -o FSTYPE "$disk" 2>/dev/null | tr -d '[:space:]')"
-  if [ -n "$fstype" ]; then
-    # An already-formatted ext4 workspace with the expected fstab entry is
-    # eligible for remount on user-data rerun; anything else stays rejected.
+  if [ -n "$fstype" ] || [ -n "$mountpoint" ]; then
+    # Formatted (and optionally already mounted at the workspace): require
+    # ext4 + expected fstab so user-data reruns remount without mkfs.
     [ "$fstype" = "ext4" ] || return 1
     local uuid
     uuid="$(blkid -s UUID -o value "$disk" 2>/dev/null)"

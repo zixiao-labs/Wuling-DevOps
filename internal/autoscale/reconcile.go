@@ -474,17 +474,27 @@ func (r *Reconciler) reconcileIsolatedPool(
 	return remaining, launched
 }
 
+// resolvePoolTier applies pool.Tier → defaultTier → medium fallback so
+// assignDemand and launch paths agree on a pool's effective tier.
+func resolvePoolTier(poolTier, defaultTier string) string {
+	if poolTier != "" {
+		return poolTier
+	}
+	if defaultTier != "" {
+		return defaultTier
+	}
+	return model.TierMedium
+}
+
 // effectivePoolTier is the tier stamped onto ephemeral runners for a pool.
 // An omitted pool.tier falls back to the config default (then medium) so
 // AcquireJob's exact tier match cannot strand an isolated reservation.
 func effectivePoolTier(cfg *Config, pool Pool) string {
-	if pool.Tier != "" {
-		return pool.Tier
+	defaultTier := ""
+	if cfg != nil {
+		defaultTier = cfg.DefaultTier
 	}
-	if cfg != nil && cfg.DefaultTier != "" {
-		return cfg.DefaultTier
-	}
-	return model.TierMedium
+	return resolvePoolTier(pool.Tier, defaultTier)
 }
 
 // launchIsolatedOne persists a runner/job binding before starting a VM. That
@@ -530,8 +540,10 @@ func (r *Reconciler) launchIsolatedOne(
 		IsolatedJobID: jobID,
 	})
 	if err != nil {
+		// Launch may have created an instance before failing. Keep the runner
+		// row and only release the reservation; later reconcile recovers the
+		// id via wuling-runner-id + resolveExternalID, then terminates.
 		_, _ = r.Pipelines.ReleaseIsolatedReservation(ctx, jobID, runner.ID)
-		_ = r.Runners.Delete(ctx, orgID, runner.ID)
 		return false, err
 	}
 	if err := r.persistExternalIDOrRollback(ctx, orgID, pool, p, runner.ID, inst.ExternalID, &jobID); err != nil {
@@ -670,8 +682,8 @@ func (r *Reconciler) reconcilePool(
 }
 
 // launchOne pre-provisions a runner row + token, builds user-data, and asks
-// the provider to start a VM. On provider failure the half-created row is
-// removed so it doesn't linger as phantom capacity.
+// the provider to start a VM. On Launch failure the row is retained so a later
+// reconcile can recover a possibly-created instance via wuling-runner-id.
 func (r *Reconciler) launchOne(ctx context.Context, orgID uuid.UUID, cfg *Config, pool Pool, p Provider) error {
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
@@ -692,7 +704,6 @@ func (r *Reconciler) launchOne(ctx context.Context, orgID uuid.UUID, cfg *Config
 		RunnerID:   runner.ID,
 	})
 	if err != nil {
-		_ = r.Runners.Delete(ctx, orgID, runner.ID)
 		return err
 	}
 	return r.persistExternalIDOrRollback(ctx, orgID, pool, p, runner.ID, inst.ExternalID, nil)
@@ -785,13 +796,7 @@ func assignDemand(pools []Pool, demand []pipelinestore.QueuedJob, defaultTier st
 	for _, job := range demand {
 		for i := range pools {
 			p := pools[i]
-			poolTier := p.Tier
-			if poolTier == "" {
-				poolTier = defaultTier
-			}
-			if poolTier == "" {
-				poolTier = model.TierMedium
-			}
+			poolTier := resolvePoolTier(p.Tier, defaultTier)
 			if poolTier != job.Tier {
 				continue
 			}
