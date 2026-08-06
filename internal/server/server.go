@@ -111,9 +111,20 @@ func New(d Deps) http.Handler {
 	seedFirstPartyClient(context.Background(), d.Log, oauthStore, d.Cfg.OAuth.DesktopClientID)
 
 	bearerResolver := auth.BearerResolver{JWT: verifier, OAT: oauthH}
+	// Typed-nil *Store values must not be stored in interface fields: a nil
+	// concrete pointer inside a non-nil interface defeats runnercheck's nil
+	// checks. Mirror the Insights wiring below.
+	var selfCheckConfigs runnercheck.ConfigReader
+	if d.OrgConfig != nil {
+		selfCheckConfigs = d.OrgConfig
+	}
+	var selfCheckSecrets runnercheck.SecretLister
+	if d.Secrets != nil {
+		selfCheckSecrets = d.Secrets
+	}
 	selfChecks := runnercheck.NewLifecycleService(
-		d.OrgConfig,
-		d.Secrets,
+		selfCheckConfigs,
+		selfCheckSecrets,
 		d.RunnerSelfChecks,
 		d.Pipelines,
 		d.Cfg.Autoscale.Enabled,

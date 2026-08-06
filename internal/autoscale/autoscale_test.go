@@ -645,8 +645,9 @@ func TestRunnerDataDiskUserData(t *testing.T) {
 	linux := BuildUserData("https://wuling.example.com", "wlrt_secret", pool, mediumTier, "runner-01")
 	for _, want := range []string{
 		"wuling_runner_is_raw_data_disk",
+		"wuling_runner_is_capacity_match",
 		"wuling_runner_expected_data_disk_bytes=128849018880",
-		"expected exactly one raw non-boot data disk with configured capacity",
+		"expected exactly one non-boot data disk with configured capacity",
 		"mkfs.ext4 -F",
 		"mount \"$runner_data_disk\" /var/lib/wuling-runner",
 		"RequiresMountsFor=/var/lib/wuling-runner",
@@ -732,12 +733,18 @@ func TestV2CloudTopologyResponses(t *testing.T) {
 	if err := validateAWSSecurityGroupVPC([]byte(`<DescribeSecurityGroupsResponse><securityGroupInfo><item><groupId>sg-other</groupId><vpcId>vpc-a</vpcId></item></securityGroupInfo></DescribeSecurityGroupsResponse>`), []string{"sg-a"}, "vpc-a"); err == nil {
 		t.Fatal("unexpected AWS security group was accepted")
 	}
+	if err := validateAWSSecurityGroupVPC([]byte(`<DescribeSecurityGroupsResponse><securityGroupInfo><item><groupId>sg-a</groupId><vpcId>vpc-a</vpcId></item></securityGroupInfo></DescribeSecurityGroupsResponse>`), []string{"sg-a", "sg-b"}, "vpc-a"); err == nil {
+		t.Fatal("AWS security group response missing a configured group was accepted")
+	}
 
 	if err := validateAliyunVSwitchTopology([]byte(`{"VSwitchId":"vsw-a","VpcId":"vpc-a","ZoneId":"cn-hangzhou-i"}`), "vsw-a", "vpc-a", "cn-hangzhou-i"); err != nil {
 		t.Fatalf("validateAliyunVSwitchTopology: %v", err)
 	}
 	if err := validateAliyunVSwitchTopology([]byte(`{"VSwitchId":"vsw-a","VpcId":"vpc-a","ZoneId":"cn-hangzhou-i"}`), "vsw-a", "vpc-a", "cn-hangzhou-j"); err == nil {
 		t.Fatal("Aliyun vswitch in another zone was accepted")
+	}
+	if err := validateAliyunVSwitchTopology([]byte(`{"VSwitchId":"vsw-other","VpcId":"vpc-a","ZoneId":"cn-hangzhou-i"}`), "vsw-a", "vpc-a", "cn-hangzhou-i"); err == nil {
+		t.Fatal("Aliyun vswitch id mismatch was accepted")
 	}
 	if err := validateAliyunSecurityGroupVPC([]byte(`{"SecurityGroupId":"sg-a","VpcId":"vpc-a"}`), "sg-a", "vpc-a"); err != nil {
 		t.Fatalf("validateAliyunSecurityGroupVPC: %v", err)

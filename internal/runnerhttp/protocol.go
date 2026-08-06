@@ -101,8 +101,11 @@ func (h *Handler) acquire(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var secrets map[string]string
+	isProbe := false
 	if h.SelfChecks != nil {
-		probeSecrets, isProbe, probeErr := h.SelfChecks.ProbeSecretsForJob(r.Context(), aj.JobID)
+		var probeErr error
+		var probeSecrets map[string]string
+		probeSecrets, isProbe, probeErr = h.SelfChecks.ProbeSecretsForJob(r.Context(), aj.JobID)
 		if probeErr != nil {
 			// Acquire has already atomically claimed the job. Finalize it rather
 			// than leaving a one-shot VM indefinitely busy when its encrypted
@@ -120,7 +123,7 @@ func (h *Handler) acquire(w http.ResponseWriter, r *http.Request) {
 	// Fail closed for internal probes even when the durable audit row is
 	// missing (crash between CreateRun and LinkPipeline). Never fall back to
 	// organization/project secrets for a self-check job.
-	if secrets == nil && isRunnerSelfCheckJob(aj) {
+	if (isProbe || isRunnerSelfCheckJob(aj)) && secrets == nil {
 		_ = h.Pipelines.CompleteJob(r.Context(), aj.JobID, "failed")
 		if h.SelfChecks != nil {
 			h.SelfChecks.CompleteProbe(r.Context(), aj.JobID, "failed")
@@ -128,7 +131,7 @@ func (h *Handler) acquire(w http.ResponseWriter, r *http.Request) {
 		httpapi.RenderError(w, r, apperr.New(apperr.CodeUnavailable, "runner self-check probe secret is unavailable"))
 		return
 	}
-	if secrets == nil {
+	if !isProbe && secrets == nil {
 		secrets, err = h.Secrets.ResolveForProject(r.Context(), aj.OrgID, aj.ProjectID)
 		if err != nil {
 			httpapi.RenderError(w, r, err)

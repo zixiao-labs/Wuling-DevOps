@@ -61,10 +61,27 @@ function AdminRunnerSelfCheck() {
 
   useEffect(() => {
     if (!normalizedOrgSlug || !hasActiveCheck) return;
-    const timer = window.setInterval(() => {
-      void admin.runnerSelfChecks.list(normalizedOrgSlug).then(setChecks).catch(() => undefined);
-    }, 5000);
-    return () => window.clearInterval(timer);
+    let requestSeq = 0;
+    const controller = new AbortController();
+    const poll = () => {
+      const seq = ++requestSeq;
+      void admin.runnerSelfChecks
+        .list(normalizedOrgSlug, controller.signal)
+        .then((next) => {
+          if (controller.signal.aborted || seq !== requestSeq) return;
+          setChecks(next);
+        })
+        .catch((err) => {
+          if (controller.signal.aborted || seq !== requestSeq) return;
+          setApiError(err as ApiError);
+        });
+    };
+    poll();
+    const timer = window.setInterval(poll, 5000);
+    return () => {
+      controller.abort();
+      window.clearInterval(timer);
+    };
   }, [hasActiveCheck, normalizedOrgSlug]);
 
   if (!user) return null;

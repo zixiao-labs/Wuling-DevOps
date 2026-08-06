@@ -237,7 +237,7 @@ func (c *Config) IdleTimeoutOr(def time.Duration) time.Duration {
 
 func (c *Config) validate() error {
 	if c.Version != 0 && c.Version != 1 && c.Version != 2 {
-		return fmt.Errorf("runner-config version must be 1 or 2 (got %d)", c.Version)
+		return fmt.Errorf("runner-config version must be 0, 1, or 2 (got %d); 0 means undeclared", c.Version)
 	}
 	seen := map[string]bool{}
 	for i := range c.Pools {
@@ -463,6 +463,9 @@ func (p *Pool) validateDataDisks() error {
 			if disk.PerformanceLevel != "" {
 				return fmt.Errorf("pool %q: data_disks[%d] performance_level is supported only by aliyun", p.Name, i)
 			}
+			if err := validateAWSDataDiskDeviceName(disk.DeviceName, p.Name, i); err != nil {
+				return err
+			}
 			deviceName := awsDataDiskDeviceName(disk, i)
 			if _, exists := deviceNames[deviceName]; exists {
 				return fmt.Errorf("pool %q: duplicate aws data disk device_name %q", p.Name, deviceName)
@@ -471,12 +474,12 @@ func (p *Pool) validateDataDisks() error {
 		}
 	}
 
-	if p.RunnerDataDisk == "" {
-		return nil
-	}
 	runnerDataDisk := strings.TrimSpace(p.RunnerDataDisk)
 	if runnerDataDisk == "" {
-		return fmt.Errorf("pool %q: runner_data_disk cannot be blank", p.Name)
+		if p.RunnerDataDisk != "" {
+			return fmt.Errorf("pool %q: runner_data_disk cannot be blank", p.Name)
+		}
+		return nil
 	}
 	if _, exists := names[runnerDataDisk]; !exists {
 		return fmt.Errorf("pool %q: runner_data_disk %q does not match a configured data disk", p.Name, p.RunnerDataDisk)

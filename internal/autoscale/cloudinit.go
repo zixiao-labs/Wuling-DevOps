@@ -17,11 +17,12 @@ import (
 // without a register round-trip — the autoscaler already owns the runner row.
 func BuildUserData(serverURL, token string, pool Pool, tier TierSpec, runnerName string) string {
 	labels := strings.Join(pool.Labels, ",")
+	sizeGiB, hasDataDisk := pool.runnerDataDiskSizeGiB()
+	hasDataDisk = hasDataDisk && sizeGiB > 0
 	var b strings.Builder
 	b.WriteString("#!/bin/bash\n")
 	b.WriteString("set -e\n")
-	if pool.hasRunnerDataDisk() {
-		sizeGiB, _ := pool.runnerDataDiskSizeGiB()
+	if hasDataDisk {
 		writeLinuxRunnerDataDiskSetup(&b, sizeGiB)
 	}
 	// The env file holds the runner's bearer token — keep it root-only. umask
@@ -34,7 +35,7 @@ func BuildUserData(serverURL, token string, pool Pool, tier TierSpec, runnerName
 	fmt.Fprintf(&b, "WULING_RUNNER_NAME=%s\n", runnerName)
 	fmt.Fprintf(&b, "WULING_RUNNER_LABELS=%s\n", labels)
 	b.WriteString("WULING_RUNNER_CONCURRENCY=1\n")
-	if pool.hasRunnerDataDisk() {
+	if hasDataDisk {
 		// The runner forwards this non-secret bootstrap attestation only to
 		// the internal self-check job. Its systemd mount condition makes a
 		// successful runner process evidence that the configured work disk
@@ -98,12 +99,13 @@ func windowsUserDataWrapper(provider string) (prologue, epilogue string) {
 // mounted. ProgramData is machine-scoped and always present.
 func BuildWindowsUserData(serverURL, token string, pool Pool, tier TierSpec, runnerName string) string {
 	labels := strings.Join(pool.Labels, ",")
+	sizeGiB, hasDataDisk := pool.runnerDataDiskSizeGiB()
+	hasDataDisk = hasDataDisk && sizeGiB > 0
 	prologue, epilogue := windowsUserDataWrapper(pool.Provider)
 	var b strings.Builder
 	b.WriteString(prologue)
 	b.WriteString("$ErrorActionPreference = 'Stop'\n")
-	if pool.hasRunnerDataDisk() {
-		sizeGiB, _ := pool.runnerDataDiskSizeGiB()
+	if hasDataDisk {
 		writeWindowsRunnerDataDiskSetup(&b, sizeGiB)
 	}
 	b.WriteString("$dir = 'C:\\ProgramData\\wuling-runner'\n")
@@ -117,7 +119,7 @@ func BuildWindowsUserData(serverURL, token string, pool Pool, tier TierSpec, run
 	fmt.Fprintf(&b, "WULING_RUNNER_NAME=%s\n", runnerName)
 	fmt.Fprintf(&b, "WULING_RUNNER_LABELS=%s\n", labels)
 	b.WriteString("WULING_RUNNER_CONCURRENCY=1\n")
-	if pool.hasRunnerDataDisk() {
+	if hasDataDisk {
 		// The PowerShell setup runs before this environment file is written,
 		// so this is an attestation that the non-system disk setup completed.
 		b.WriteString("WULING_RUNNER_DATA_DISK_READY=1\n")
@@ -140,18 +142,24 @@ func BuildWindowsUserData(serverURL, token string, pool Pool, tier TierSpec, run
 	return b.String()
 }
 
-func (p Pool) hasRunnerDataDisk() bool {
-	return strings.TrimSpace(p.RunnerDataDisk) != ""
-}
-
-// writeLinuxRunnerDataDiskSetup emits a fail-closed setup sequence. It accepts
-// only the uniquely sized whole, writable disk with neither partitions nor
-// filesystem signatures, so a boot/root disk can never become the Runner
-// workspace even when other application data disks are attached.
+// writeLinuxRunnerDataDiskSetup emits a fail-closed setup sequence. Capacity is
+// matched as whole GiB cloud volumes (AWS/Aliyun VolumeSize units), never by
+// rounding a sub-GiB quantity up and hoping the guest reports that larger size.
+// Disks that already have the correct ext4 fstab entry are mounted without
+// reformatting so user-data reruns can continue into runner.env setup.
 func writeLinuxRunnerDataDiskSetup(b *strings.Builder, expectedGiB int) {
 	expectedBytes := int64(expectedGiB) * (1 << 30)
 	fmt.Fprintf(b, "wuling_runner_expected_data_disk_bytes=%d\n", expectedBytes)
-	b.WriteString(`wuling_runner_is_raw_data_disk() {
+	b.WriteString(`wuling_runner_disk_bytes() {
+  lsblk -bdn -o SIZE "$1" 2>/dev/null | tr -d '[:space:]'
+}
+
+wuling_runner_is_capacity_match() {
+  local disk="$1"
+  [ "$(wuling_runner_disk_bytes "$disk")" = "$wuling_runner_expected_data_disk_bytes" ]
+}
+
+wuling_runner_is_raw_data_disk() {
   local disk="$1"
   [ "$(lsblk -dn -o TYPE "$disk" 2>/dev/null)" = "disk" ] || return 1
   [ "$(lsblk -nr -o TYPE "$disk" 2>/dev/null | wc -l | tr -d '[:space:]')" = "1" ] || return 1
@@ -159,40 +167,62 @@ func writeLinuxRunnerDataDiskSetup(b *strings.Builder, expectedGiB int) {
   if lsblk -nr -o MOUNTPOINT "$disk" 2>/dev/null | awk 'NF { found=1 } END { exit !found }'; then
     return 1
   fi
-  [ -z "$(lsblk -dn -o FSTYPE "$disk" 2>/dev/null | tr -d '[:space:]')" ] || return 1
+  local fstype
+  fstype="$(lsblk -dn -o FSTYPE "$disk" 2>/dev/null | tr -d '[:space:]')"
+  if [ -n "$fstype" ]; then
+    # An already-formatted ext4 workspace with the expected fstab entry is
+    # eligible for remount on user-data rerun; anything else stays rejected.
+    [ "$fstype" = "ext4" ] || return 1
+    local uuid
+    uuid="$(blkid -s UUID -o value "$disk" 2>/dev/null)"
+    [ -n "$uuid" ] || return 1
+    grep -Fqx "UUID=$uuid /var/lib/wuling-runner ext4 defaults 0 2" /etc/fstab
+    return $?
+  fi
   local signatures
   signatures="$(wipefs --noheadings --output TYPE "$disk" 2>/dev/null)" || return 1
   [ -z "$signatures" ]
 }
 
-wuling_runner_raw_disks=()
+wuling_runner_candidate_disks=()
 while IFS= read -r disk; do
-  disk_bytes="$(lsblk -bdn -o SIZE "$disk" 2>/dev/null | tr -d '[:space:]')"
-  if [ "$disk_bytes" = "$wuling_runner_expected_data_disk_bytes" ] && wuling_runner_is_raw_data_disk "$disk"; then
-    wuling_runner_raw_disks+=("$disk")
+  if wuling_runner_is_capacity_match "$disk" && wuling_runner_is_raw_data_disk "$disk"; then
+    wuling_runner_candidate_disks+=("$disk")
   fi
 done < <(lsblk -dnpo NAME,TYPE | awk '$2 == "disk" { print $1 }')
-if [ "${#wuling_runner_raw_disks[@]}" -ne 1 ]; then
-  echo "wuling-runner: expected exactly one raw non-boot data disk with configured capacity" >&2
+if [ "${#wuling_runner_candidate_disks[@]}" -ne 1 ]; then
+  echo "wuling-runner: expected exactly one non-boot data disk with configured capacity" >&2
   exit 1
 fi
-runner_data_disk="${wuling_runner_raw_disks[0]}"
-if ! command -v mkfs.ext4 >/dev/null 2>&1; then
-  echo "wuling-runner: mkfs.ext4 is required for runner_data_disk" >&2
-  exit 1
+runner_data_disk="${wuling_runner_candidate_disks[0]}"
+runner_data_disk_uuid="$(blkid -s UUID -o value "$runner_data_disk" 2>/dev/null || true)"
+runner_data_disk_fstab=""
+if [ -n "$runner_data_disk_uuid" ]; then
+  runner_data_disk_fstab="UUID=$runner_data_disk_uuid /var/lib/wuling-runner ext4 defaults 0 2"
 fi
-mkfs.ext4 -F "$runner_data_disk" >/dev/null
-runner_data_disk_uuid="$(blkid -s UUID -o value "$runner_data_disk")"
-if [ -z "$runner_data_disk_uuid" ]; then
-  echo "wuling-runner: could not read runner_data_disk UUID" >&2
-  exit 1
+if [ -n "$runner_data_disk_fstab" ] && grep -Fqx "$runner_data_disk_fstab" /etc/fstab; then
+  mkdir -p /var/lib/wuling-runner
+  if ! mountpoint -q /var/lib/wuling-runner; then
+    mount "$runner_data_disk" /var/lib/wuling-runner
+  fi
+else
+  if ! command -v mkfs.ext4 >/dev/null 2>&1; then
+    echo "wuling-runner: mkfs.ext4 is required for runner_data_disk" >&2
+    exit 1
+  fi
+  mkfs.ext4 -F "$runner_data_disk" >/dev/null
+  runner_data_disk_uuid="$(blkid -s UUID -o value "$runner_data_disk")"
+  if [ -z "$runner_data_disk_uuid" ]; then
+    echo "wuling-runner: could not read runner_data_disk UUID" >&2
+    exit 1
+  fi
+  runner_data_disk_fstab="UUID=$runner_data_disk_uuid /var/lib/wuling-runner ext4 defaults 0 2"
+  if ! grep -Fqx "$runner_data_disk_fstab" /etc/fstab; then
+    printf '%s\n' "$runner_data_disk_fstab" >>/etc/fstab
+  fi
+  mkdir -p /var/lib/wuling-runner
+  mount "$runner_data_disk" /var/lib/wuling-runner
 fi
-runner_data_disk_fstab="UUID=$runner_data_disk_uuid /var/lib/wuling-runner ext4 defaults 0 2"
-if ! grep -Fqx "$runner_data_disk_fstab" /etc/fstab; then
-  printf '%s\n' "$runner_data_disk_fstab" >>/etc/fstab
-fi
-mkdir -p /var/lib/wuling-runner
-mount "$runner_data_disk" /var/lib/wuling-runner
 if ! mountpoint -q /var/lib/wuling-runner; then
   echo "wuling-runner: runner_data_disk did not mount" >&2
   exit 1

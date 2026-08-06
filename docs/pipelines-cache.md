@@ -50,18 +50,78 @@ steps:
     run: |
       os="$(uname -s | tr '[:upper:]' '[:lower:]')"
       arch="$(uname -m)"
-      key="ci-cache/${os}/${arch}/rust/$(sha256sum Cargo.lock | cut -d ' ' -f1)"
-      cache_fetch "$key.tar.zst" .ci-cache/download || true
-      test ! -f .ci-cache/download || tar --zstd -xf .ci-cache/download
+      # Prefer a pinned channel from rust-toolchain.toml; fall back to rustc -Vv.
+      toolchain="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' rust-toolchain.toml 2>/dev/null | head -n1)"
+      if [ -z "$toolchain" ]; then
+        toolchain="$(rustc -Vv | sed -n 's/^release: //p')"
+      fi
+      key="ci-cache/${os}/${arch}/rust/${toolchain}/$(sha256sum Cargo.lock | cut -d ' ' -f1)"
+      mkdir -p .ci-cache
+      tmp="$(mktemp -d .ci-cache/download.XXXXXX)"
+      if cache_fetch "$key.tar.zst" "$tmp/archive.tar.zst"; then
+        # Reject absolute paths, parent traversal, and unsafe symlinks before extract.
+        if tar --zstd -tvf "$tmp/archive.tar.zst" | awk '
+          {
+            # GNU tar -tv lines: permissions ... name [-> link-target]
+            name=$0
+            sub(/^[^ ]+ +[^ ]+ +[^ ]+ +[^ ]+ +[^ ]+ +[^ ]+ +[^ ]+ +/, "", name)
+            target=""
+            if (name ~ / -> /) {
+              split(name, parts, / -> /)
+              name=parts[1]
+              target=parts[2]
+            }
+            if (name ~ /^\// || name ~ /(^|\/)\.\.(\/|$)/) exit 1
+            if (name !~ /^(registry\/|git\/|target\/)/) exit 1
+            if (target != "" && (target ~ /^\// || target ~ /(^|\/)\.\.(\/|$)/)) exit 1
+          }
+        '; then
+          mkdir -p "$tmp/extract"
+          tar --zstd -xf "$tmp/archive.tar.zst" -C "$tmp/extract"
+          # Atomically replace only the Cargo and target cache trees we restore.
+          if [ -d "$tmp/extract/registry" ]; then
+            rm -rf "$CARGO_HOME/registry.new"
+            mv "$tmp/extract/registry" "$CARGO_HOME/registry.new"
+            rm -rf "$CARGO_HOME/registry"
+            mv "$CARGO_HOME/registry.new" "$CARGO_HOME/registry"
+          fi
+          if [ -d "$tmp/extract/git" ]; then
+            rm -rf "$CARGO_HOME/git.new"
+            mv "$tmp/extract/git" "$CARGO_HOME/git.new"
+            rm -rf "$CARGO_HOME/git"
+            mv "$CARGO_HOME/git.new" "$CARGO_HOME/git"
+          fi
+          if [ -d "$tmp/extract/target" ]; then
+            rm -rf target.new
+            mv "$tmp/extract/target" target.new
+            rm -rf target
+            mv target.new target
+          fi
+        fi
+      fi
+      rm -rf "$tmp"
   - name: Build
     run: cargo build --locked
   - name: Save dependency cache
     run: |
       os="$(uname -s | tr '[:upper:]' '[:lower:]')"
       arch="$(uname -m)"
-      key="ci-cache/${os}/${arch}/rust/$(sha256sum Cargo.lock | cut -d ' ' -f1)"
-      tar --zstd -cf .ci-cache/upload.tar.zst .cargo/registry .cargo/git target/debug/.fingerprint
-      cache_store_atomic "$key.tar.zst" .ci-cache/upload.tar.zst
+      toolchain="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' rust-toolchain.toml 2>/dev/null | head -n1)"
+      if [ -z "$toolchain" ]; then
+        toolchain="$(rustc -Vv | sed -n 's/^release: //p')"
+      fi
+      key="ci-cache/${os}/${arch}/rust/${toolchain}/$(sha256sum Cargo.lock | cut -d ' ' -f1)"
+      mkdir -p .ci-cache
+      paths=()
+      # Pack only trees that exist so a missing $CARGO_HOME/git does not fail tar.
+      [ -d "$CARGO_HOME/registry" ] && paths+=(-C "$CARGO_HOME" registry)
+      [ -d "$CARGO_HOME/git" ] && paths+=(-C "$CARGO_HOME" git)
+      # target/ restore/pack stays independent of the Cargo home caches.
+      [ -d target/debug/.fingerprint ] && paths+=(target/debug/.fingerprint)
+      if [ "${#paths[@]}" -gt 0 ]; then
+        tar --zstd -cf .ci-cache/upload.tar.zst "${paths[@]}" || true
+        cache_store_atomic "$key.tar.zst" .ci-cache/upload.tar.zst || true
+      fi
 ```
 
 每个 `run:` 都是独立 shell，所以保存步骤会重新计算 key；不要依赖前一个步骤的 shell

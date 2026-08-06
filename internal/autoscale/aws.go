@@ -129,12 +129,14 @@ func validateAWSSecurityGroupVPC(body []byte, groupIDs []string, vpcID string) e
 	if err := xml.Unmarshal(body, &groupResp); err != nil {
 		return fmt.Errorf("parse DescribeSecurityGroups response: %w", err)
 	}
-	if len(groupResp.Groups) != len(groupIDs) {
-		return fmt.Errorf("DescribeSecurityGroups returned %d groups, want %d", len(groupResp.Groups), len(groupIDs))
-	}
 	expected := make(map[string]struct{}, len(groupIDs))
 	for _, id := range groupIDs {
 		expected[id] = struct{}{}
+	}
+	// Compare against the deduplicated configured set so repeated
+	// security_group_ids only represent one expected group.
+	if len(groupResp.Groups) != len(expected) {
+		return fmt.Errorf("DescribeSecurityGroups returned %d groups, want %d", len(groupResp.Groups), len(expected))
 	}
 	for _, group := range groupResp.Groups {
 		if _, ok := expected[group.ID]; !ok {
@@ -212,9 +214,25 @@ func (p *awsProvider) runInstancesParams(spec LaunchSpec) url.Values {
 	return params
 }
 
+// validateAWSDataDiskDeviceName rejects common AMI root device names so a
+// configured data disk cannot overwrite the root volume mapping. Auto-generated
+// /dev/sdf–/dev/sdx names remain available via awsDataDiskDeviceName.
+func validateAWSDataDiskDeviceName(deviceName, poolName string, index int) error {
+	name := strings.TrimSpace(deviceName)
+	if name == "" {
+		return nil
+	}
+	switch name {
+	case "/dev/xvda", "/dev/sda", "/dev/sda1":
+		return fmt.Errorf("pool %q: data_disks[%d] device_name %q collides with a common AMI root device", poolName, index, name)
+	}
+	return nil
+}
+
 // awsDataDiskDeviceName supplies a deterministic non-root mapping when an
 // operator does not set device_name. AWS device names are advisory on Nitro
 // instances, but still identify the EBS mapping in the RunInstances request.
+// Callers must reject root device names via validateAWSDataDiskDeviceName first.
 func awsDataDiskDeviceName(disk DataDisk, index int) string {
 	if disk.DeviceName != "" {
 		return disk.DeviceName

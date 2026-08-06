@@ -310,8 +310,10 @@
           "$ref": "#/definitions/stringValue"
         },
         "cache": {
-          "$ref": "#/definitions/stringValue",
-          "description": "Structurally accepted for compatibility; it does not currently enable Rust dependency caching."
+          "description": "Structurally accepted for compatibility; it does not currently enable Rust dependency caching.",
+          "allOf": [
+            { "$ref": "#/definitions/stringValue" }
+          ]
         },
         "rustflags": {
           "$ref": "#/definitions/stringValue"

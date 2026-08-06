@@ -137,19 +137,22 @@ func TestPreflightReportsInvalidConfigWithoutParserEcho(t *testing.T) {
 }
 
 func TestMemoryHistoryRetainsBoundedNewestFirstCopies(t *testing.T) {
-	history := NewMemoryHistory(2)
+	history := NewMemoryHistory(3)
 	orgID := uuid.New()
 	history.Append(orgID, Result{ID: "first", Pools: []PoolCheck{{PoolName: "one", Checks: []Check{{Name: "x"}}}}})
 	history.Append(orgID, Result{ID: "second"})
 	history.Append(orgID, Result{ID: "third"})
 
 	results := history.List(orgID)
-	require.Len(t, results, 2)
+	require.Len(t, results, 3)
 	assert.Equal(t, "third", results[0].ID)
 	assert.Equal(t, "second", results[1].ID)
+	assert.Equal(t, "first", results[2].ID)
 
 	results[0].ID = "mutated"
 	assert.Equal(t, "third", history.List(orgID)[0].ID)
+	results[2].Pools[0].Checks[0].Name = "mutated-nested"
+	assert.Equal(t, "x", history.List(orgID)[2].Pools[0].Checks[0].Name)
 }
 
 func checkByName(t *testing.T, checks []Check, name string) Check {

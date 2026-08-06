@@ -302,6 +302,7 @@ func (j Job) executionSpec() Execution {
 	if e.Mode == "" {
 		e.Mode = ExecutionModeShared
 	}
+	e.Pool = strings.TrimSpace(e.Pool)
 	return e
 }
 

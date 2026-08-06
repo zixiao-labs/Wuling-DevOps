@@ -116,7 +116,9 @@
     },
     "runnerDataDisk": {
       "description": "Name of the configured v2 data_disks entry formatted as the Runner work/tools/state disk on first boot. Its capacity must be unique among data_disks so Linux/Windows bootstrap can safely identify the raw guest disk.",
-      "$ref": "#/definitions/identifier"
+      "allOf": [
+        { "$ref": "#/definitions/identifier" }
+      ]
     },
     "aliyun": {
       "type": "object",
@@ -187,8 +189,10 @@
           "enum": ["PL0", "PL1", "PL2", "PL3", "PL4"]
         },
         "data_disk_size": {
-          "$ref": "#/definitions/size",
-          "description": "Legacy v1 single data-disk size."
+          "description": "Legacy v1 single data-disk size.",
+          "allOf": [
+            { "$ref": "#/definitions/size" }
+          ]
         },
         "data_disk_category": {
           "type": "string",

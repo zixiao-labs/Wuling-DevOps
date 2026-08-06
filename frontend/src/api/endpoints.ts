@@ -198,10 +198,12 @@ export const admin = {
       apiPatch<User>(`/api/v1/admin/users/${enc(userID)}`, body),
   },
   runnerSelfChecks: {
-    list: (orgSlug: string) =>
-      apiGet<{ checks: RunnerSelfCheck[] }>("/api/v1/admin/runner-self-checks", {
-        org_slug: orgSlug,
-      }).then((r) => r.checks),
+    list: (orgSlug: string, signal?: AbortSignal) =>
+      apiGet<{ checks: RunnerSelfCheck[] }>(
+        "/api/v1/admin/runner-self-checks",
+        { org_slug: orgSlug },
+        signal,
+      ).then((r) => r.checks),
     run: (body: RunnerSelfCheckRequest) =>
       apiPost<RunnerSelfCheckStart>("/api/v1/admin/runner-self-checks", body),
   },

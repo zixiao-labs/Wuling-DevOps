@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -68,7 +69,7 @@ type CreateAuditParams struct {
 	PoolName    string
 	Provider    string
 	OS          string
-	Checks      any
+	Checks      []Check
 	ProbeSecret string
 }
 
@@ -436,7 +437,17 @@ func truncateSummary(s string) string {
 	if len(s) <= max {
 		return s
 	}
-	return s[:max] + "…"
+	if utf8.ValidString(s[:max]) {
+		return s[:max] + "…"
+	}
+	i := max
+	for i > 0 && !utf8.RuneStart(s[i]) {
+		i--
+	}
+	if i == 0 {
+		return "…"
+	}
+	return s[:i] + "…"
 }
 
 type auditScanner interface {

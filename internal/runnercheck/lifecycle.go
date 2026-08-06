@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -172,22 +173,27 @@ func (s *Service) Start(ctx context.Context, req Request) (*StartResult, error) 
 		probe := &prepared[i]
 		run, jobID, err := s.createProbeRun(ctx, req, project, repo, file.CommitSHA, probe.pool)
 		if err != nil {
-			if markErr := s.Audits.MarkStartFailed(ctx, probe.audit.ID, "无法创建内部 Runner 探针任务；未创建云实例。"); markErr != nil {
-				return nil, markErr
+			failSummary := "无法创建内部 Runner 探针任务；未创建云实例。"
+			for _, pending := range prepared[i:] {
+				_ = s.Audits.MarkStartFailed(ctx, pending.audit.ID, failSummary)
+				pending.audit.Phase = PhaseCleanup
+				pending.audit.State = StateFailed
+				pending.audit.Summary = failSummary
+				out.Checks = append(out.Checks, *pending.audit)
 			}
-			probe.audit.Phase = PhaseCleanup
-			probe.audit.State = StateFailed
-			probe.audit.Summary = "无法创建内部 Runner 探针任务；未创建云实例。"
-			out.Checks = append(out.Checks, *probe.audit)
-			continue
+			return nil, err
 		}
 		if err := s.Audits.LinkPipeline(ctx, probe.audit.ID, run.ID, jobID); err != nil {
 			// The pipeline job exists but has not yet been handed to a runner.
 			// Canceling it avoids an untracked billed VM if the audit linkage
-			// cannot be committed.
-			_ = s.Pipelines.CancelRun(ctx, run.ID)
+			// cannot be committed. Record cancel failures so cleanup retries can
+			// still see an uncanceled queued run.
+			failSummary := "无法关联内部 Runner 探针任务；未创建云实例。"
+			if cancelErr := s.Pipelines.CancelRun(ctx, run.ID); cancelErr != nil {
+				failSummary = "无法关联内部 Runner 探针任务；取消排队任务失败，清理将重试。"
+			}
 			for _, pending := range prepared[i:] {
-				_ = s.Audits.MarkStartFailed(ctx, pending.audit.ID, "无法关联内部 Runner 探针任务；未创建云实例。")
+				_ = s.Audits.MarkStartFailed(ctx, pending.audit.ID, failSummary)
 			}
 			return nil, err
 		}
@@ -293,12 +299,13 @@ func (s *Service) CompleteProbe(ctx context.Context, jobID uuid.UUID, conclusion
 			"Runner 未确认非 OS 数据盘初始化；临时实例将被回收。",
 		))
 	}
-	if err := s.Audits.AppendChecks(ctx, jobID, checks); err != nil {
-		return
-	}
 	summary := "Runner 探针通过；正在自动回收临时实例。"
 	if !passed {
 		summary = "Runner 探针未通过；正在自动回收临时实例。"
+	}
+	if err := s.Audits.AppendChecks(ctx, jobID, checks); err != nil {
+		_ = s.Audits.MarkProbeFinished(ctx, jobID, false, "无法持久化探针检查结果；正在自动回收临时实例。")
+		return
 	}
 	_ = s.Audits.MarkProbeFinished(ctx, jobID, passed, summary)
 }
@@ -439,8 +446,17 @@ func probeCheck(name string, passed bool, passMessage, failMessage string) Check
 func auditUsesRunnerDataDisk(raw []byte) bool {
 	// The durable preflight check does not need to expose raw configuration.
 	// Its message already reports whether the pool passed all data-disk
-	// validation. A matching check name is added by poolPreflight below.
-	return strings.Contains(string(raw), `"runner_data_disk"`)
+	// validation. poolPreflight (service.go) adds the exact check name.
+	var checks []Check
+	if err := json.Unmarshal(raw, &checks); err != nil {
+		return false
+	}
+	for _, check := range checks {
+		if check.Name == "runner_data_disk" {
+			return true
+		}
+	}
+	return false
 }
 
 func ptrTime(value time.Time) *time.Time {

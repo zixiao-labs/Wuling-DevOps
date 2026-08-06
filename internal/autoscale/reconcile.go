@@ -65,8 +65,9 @@ type Reconciler struct {
 }
 
 type poolKey struct {
-	Org  uuid.UUID
-	Pool string
+	Org      uuid.UUID
+	Pool     string
+	Isolated bool // distinct from shared-pool launch backoff
 }
 
 type coolState struct {
@@ -305,7 +306,7 @@ func (r *Reconciler) reconcileIsolatedPool(
 	demand []pipelinestore.IsolatedJobDemand,
 ) (remaining, launched int) {
 	now := time.Now()
-	pk := poolKey{Org: orgID, Pool: pool.Name}
+	pk := poolKey{Org: orgID, Pool: pool.Name, Isolated: true}
 	var provider Provider
 	getProvider := func() Provider {
 		if provider != nil {
@@ -375,7 +376,6 @@ func (r *Reconciler) reconcileIsolatedPool(
 				remaining++
 				continue
 			}
-			r.markIsolatedProvisioningFailure(ctx, *rn.IsolatedJobID)
 		}
 
 		externalID := rn.ExternalID
@@ -417,6 +417,10 @@ func (r *Reconciler) reconcileIsolatedPool(
 		}
 		inFlight--
 		if releaseReservation {
+			// Record provisioning failure only after cleanup succeeded so the
+			// durable audit order matches the real lifecycle. Failed cleanup
+			// leaves cleanup_pending above instead.
+			r.markIsolatedProvisioningFailure(ctx, *rn.IsolatedJobID)
 			// An acquire timeout re-queues the same job for a fresh VM. In
 			// particular, a self-check's one-time probe value must remain
 			// available to that retry; marking its audit cleaned here would
