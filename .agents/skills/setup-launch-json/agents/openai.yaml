@@ -1,0 +1,4 @@
+interface:
+  display_name: "Setup launch.json"
+  short_description: "Create portable, validated DAP launch configurations"
+  default_prompt: "Use $setup-launch-json to inspect this project and create a valid Logos launch configuration."

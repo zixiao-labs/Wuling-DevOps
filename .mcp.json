@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "logos-debug": {
+      "command": "node",
+      "args": [
+        "/Applications/Logos.app/Contents/Resources/debug-mcp/server.mjs",
+        "--workspace",
+        "/Users/logos/WebstormProjects/Wuling-DevOps"
+      ],
+      "cwd": "/Users/logos/WebstormProjects/Wuling-DevOps"
+    }
+  }
+}
