@@ -24,12 +24,14 @@ git push origin "$TAG"
 
 推上去后：
 
-1. **`.github/workflows/release.yml`** 触发，跑 5 个 job：
+1. **`.github/workflows/release.yml`** 触发，跑 7 类 job（其中镜像构建是双架构矩阵）：
    - `build-binaries` —— 跨编译 Linux/amd64+arm64, macOS/amd64+arm64 四份 `wuling-api` + `wuling-migrate`，含 SHA256
+   - `build-runner` —— 构建 Linux/amd64+arm64、macOS/amd64+arm64 和 Windows/amd64 runner
    - `build-frontend` —— `npm run build` + `help:smoke`（预渲染 `dist/help/**`）出 `frontend/dist/`，打成 tar.gz + SHA256
-   - `build-images` —— 推 multi-arch docker 镜像到 `ghcr.io/zixiao-labs/wuling-api:<tag>` 和 `ghcr.io/zixiao-labs/wuling-frontend:<tag>`
+   - `build-images` —— 在原生 x64 / ARM64 runner 上分别构建三个镜像并按 digest 推送，不经过 QEMU
+   - `merge-image-manifests` —— 合并双架构 digest，发布 `wuling-api`、`wuling-frontend` 和 `wuling-help` 的 multi-arch tag
    - `nix-check` —— 跑 `nix flake check`，保证 flake 没烂
-   - `publish-release` —— 等上面 4 个都过了，建 GitHub Release 并挂上全部产物
+   - `publish-release` —— 等上面的构建和校验都通过后，建 GitHub Release 并挂上全部产物
 2. **GHCR** 自动得到 3 个 tag：`<version>`、`latest`、`sha-<7位>`。生产部署用 `<version>` 锁版本，**不要**追 `latest`。
 
 整个流程大约 10–15 分钟，看 GHA 资源争抢情况。
