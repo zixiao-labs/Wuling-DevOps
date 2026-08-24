@@ -264,11 +264,14 @@ func New(d Deps) http.Handler {
 			(&runnerhttp.Handler{
 				Users: d.Store, Runners: d.Runners, Pipelines: d.Pipelines, Secrets: d.Secrets,
 				Verifier: verifier, OAT: oauthH,
-				RegistrationTTL: d.Cfg.Runner.RegistrationTTL,
-				CloneBaseURL:    d.Cfg.OAuth.PublicBaseURL,
-				DefaultTier:     model.TierMedium,
-				OrgConfig:       d.OrgConfig,
-				SelfChecks:      selfChecks,
+				CacheBlobs:          d.Artifacts,
+				CacheMaxUploadBytes: d.Cfg.Pipeline.CacheMaxUploadBytes,
+				CacheTTL:            d.Cfg.Pipeline.CacheTTL,
+				RegistrationTTL:     d.Cfg.Runner.RegistrationTTL,
+				CloneBaseURL:        d.Cfg.OAuth.PublicBaseURL,
+				DefaultTier:         model.TierMedium,
+				OrgConfig:           d.OrgConfig,
+				SelfChecks:          selfChecks,
 			}).Mount(api)
 		}
 		if d.Stage2 != nil {

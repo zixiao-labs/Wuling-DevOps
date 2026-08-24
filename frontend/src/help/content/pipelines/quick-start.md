@@ -60,6 +60,8 @@ steps:
 ```
 
 `actions/setup-node@v4` 的 `cache` 可选值为 `npm`、`pnpm` 或 `yarn`。`actions/setup-rust` 用于配置 Rust 工具链；它的 `cache` input 当前不会启用 Rust 依赖缓存，请不要将其作为缓存保证。
+需要在弹性或隔离 Runner 之间复用目录时，显式使用 `actions/cache@v4`；它会通过 Wuling API
+写入远端 Artifact Service，而不是依赖当前 Runner 的本地磁盘。
 
 ## 矩阵构建
 
@@ -80,3 +82,4 @@ steps:
 
 - 阅读 [流水线概览](/help/pipelines/overview) 了解触发与 job 模型
 - 配置 [自托管 Runner](/help/runners) 在私有网络执行作业
+- 使用 [远端 CI 缓存](/help/pipelines/remote-cache) 加速弹性 Runner

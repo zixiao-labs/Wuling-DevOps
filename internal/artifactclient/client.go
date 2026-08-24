@@ -163,10 +163,14 @@ func (c *Client) Delete(ctx context.Context, key string) error {
 	}
 	defer res.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 1<<20))
-	if res.StatusCode != http.StatusNoContent {
+	switch res.StatusCode {
+	case http.StatusNoContent:
+		return nil
+	case http.StatusNotFound:
+		return ErrNotFound
+	default:
 		return fmt.Errorf("artifact service delete returned HTTP %d", res.StatusCode)
 	}
-	return nil
 }
 
 func (c *Client) authorize(req *http.Request) {

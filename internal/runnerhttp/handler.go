@@ -42,6 +42,12 @@ type Handler struct {
 	SelfChecks *runnercheck.Service
 	Verifier   *auth.Verifier
 	OAT        auth.OATResolver
+	// CacheBlobs stores immutable pipeline-cache archives. It normally points
+	// at the same private Artifact Service client used by package artifacts.
+	CacheBlobs CacheBlobStore
+	// CacheMaxUploadBytes and CacheTTL are operator-configurable cache bounds.
+	CacheMaxUploadBytes int64
+	CacheTTL            time.Duration
 
 	// RegistrationTTL bounds how long a minted registration token is valid.
 	RegistrationTTL time.Duration
@@ -96,6 +102,8 @@ func (h *Handler) Mount(r chi.Router) {
 				r.Patch("/steps/{number}", h.patchStep)
 				r.Post("/complete", h.complete)
 				r.Post("/artifacts/{name}", h.uploadArtifact)
+				r.Post("/cache/restore", h.restoreCache)
+				r.Put("/cache", h.uploadCache)
 			})
 		})
 	})

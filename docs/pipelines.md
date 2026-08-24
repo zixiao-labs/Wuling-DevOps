@@ -48,6 +48,7 @@
 | `pipeline_runs` | 一个工作流文件针对某 commit/事件的一次执行（含解析快照，便于复跑）。 |
 | `pipeline_jobs` | run 内的 job（`runs_on` 标签、`resource_tier`、`needs`、状态、被指派的 runner）。 |
 | `pipeline_steps` | job 内的 step（编号、名称、状态、起止时间）。 |
+| `pipeline_cache_entries` | repo 级远端缓存的不可变 key/version、Blob 引用、校验和与 TTL。 |
 | `pipeline_run_number_seq` | per-repo 的 run 序号分配器（UPSERT 行锁，模式同 `issue_number_seq`）。 |
 
 Job 日志**落盘**（`<RepoRoot>/../pipeline-logs/<run_id>/<job_id>.log`，即
@@ -120,6 +121,7 @@ jobs:
 
 | `uses` | 说明 |
 |--------|------|
+| `actions/cache[@v]` | 通过 API/Artifact Service 在不同 Runner 间恢复与发布 repo 级缓存；仅接受 workspace 相对路径 |
 | `actions/setup-node[@v]` | 安装 Node.js（nodejs.org），可选 `cache: npm\|pnpm\|yarn` 将包管理器缓存重定向到 `<work>/_toolstate` |
 | `pnpm/action-setup[@v]` | 仅安装 pnpm（若无 Node 则隐式安装最新 LTS） |
 | `actions/setup-rust` | 安装 Rust 工具链（rustup）；别名：`dtolnay/rust-toolchain@<ch>`、`actions-rust-lang/setup-rust-toolchain` |
@@ -479,6 +481,9 @@ runner 二进制还认 `WULING_RUNNER_OS`（默认取构建目标：win/mac 构�
 |----|----|----|
 | `WULING_SECRETS_KEY` | （dev 自动生成） | Secrets/凭证主密钥；32B，base64 或 hex。生产必填。 |
 | `WULING_PIPELINE_LOG_DIR` | `./var/pipeline-logs` | job 日志落盘目录。 |
+| `WULING_PIPELINE_CACHE_MAX_UPLOAD_BYTES` | `536870912` | 单个 `actions/cache` archive 上传上限（默认 512 MiB）。 |
+| `WULING_PIPELINE_CACHE_TTL` | `336h` | 已发布缓存的可恢复时间（默认 14 天）。 |
+| `WULING_PIPELINE_CACHE_GC_INTERVAL` | `15m` | 过期缓存 Blob/元数据回收周期。 |
 | `WULING_RUNNER_CONFIG_PROJECT` | `config` | 组织 config 仓库所在 project slug。 |
 | `WULING_RUNNER_CONFIG_REPO` | `config` | 组织 config 仓库 slug。 |
 | `WULING_RUNNER_REGISTRATION_TTL` | `1h` | 注册令牌有效期。 |

@@ -5,9 +5,11 @@ Stage 2 将制品拆成两个边界：
 - `wuling-api` 管理 Package、Version、Release 元数据与项目权限；
 - `wuling-artifacts` 只管理不可变 Blob，可独立扩容和挂载对象存储。
 
-这不是 CI 依赖缓存后端：Artifact Blob 按版本不可变、可下载且受项目权限保护；缓存应使用
-独立 bucket/prefix、允许覆盖并通过短生命周期回收。OSS/S3/R2 的远端缓存策略和账单风险
-见 [pipelines-cache.md](pipelines-cache.md)。
+Artifact 与 Pipeline Cache 的产品语义仍然不同：前者是用户可下载、按版本保留的构建
+输出；后者是可随时丢弃的构建加速数据。不过两者复用同一个私有 Blob Service，缓存对象
+位于 `pipeline-cache/` namespace，由 API 的 TTL/GC 管理，不会暴露为 Package 或 Release。
+`actions/cache` 的行为、限制和 OSS/S3/R2 成本注意事项见
+[pipelines-cache.md](pipelines-cache.md)。
 
 Stage 2.3 增加浏览器手动上传闭环。用户在项目的 Artifacts 页面选择已注册的
 Package、版本号和文件；浏览器只访问 `wuling-api`，由主 API 完成项目权限和版本
@@ -69,6 +71,7 @@ OSS 使用对应地域的 endpoint 和 region。Bucket 必须预先创建，服�
 provider 不应承载制品 Blob。
 
 Blob key 由主 API 生成，格式为
-`projects/{project_id}/packages/{package_id}/{version}`。服务会拒绝空段、绝对路径和
+`projects/{project_id}/packages/{package_id}/{version}`；Pipeline Cache 使用独立的
+`pipeline-cache/{org_id}/{project_id}/{repo_id}/{entry_id}.cache`。服务会拒绝空段、绝对路径和
 `..`，也会拒绝本地元数据保留段 `.metadata`；本地写入先落临时文件再原子替换，
 避免中断上传留下半个制品。

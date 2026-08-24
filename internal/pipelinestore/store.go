@@ -337,6 +337,7 @@ type JobContext struct {
 	RepoID      uuid.UUID
 	RunnerID    *uuid.UUID
 	Status      string
+	Event       string
 	OrgSlug     string
 	ProjectSlug string
 	RepoSlug    string
@@ -348,7 +349,7 @@ func (s *Store) JobCtx(ctx context.Context, jobID uuid.UUID) (*JobContext, error
 	var jc JobContext
 	jc.JobID = jobID
 	err := s.pool.QueryRow(ctx, `
-		SELECT j.run_id, j.org_id, run.project_id, run.repo_id, j.runner_id, j.status,
+		SELECT j.run_id, j.org_id, run.project_id, run.repo_id, j.runner_id, j.status, run.event,
 		       o.slug, p.slug, rp.slug, run.commit_sha
 		FROM pipeline_jobs j
 		JOIN pipeline_runs run ON run.id = j.run_id
@@ -356,7 +357,7 @@ func (s *Store) JobCtx(ctx context.Context, jobID uuid.UUID) (*JobContext, error
 		JOIN projects p ON p.id = run.project_id
 		JOIN repos rp ON rp.id = run.repo_id
 		WHERE j.id = $1
-	`, jobID).Scan(&jc.RunID, &jc.OrgID, &jc.ProjectID, &jc.RepoID, &jc.RunnerID, &jc.Status,
+	`, jobID).Scan(&jc.RunID, &jc.OrgID, &jc.ProjectID, &jc.RepoID, &jc.RunnerID, &jc.Status, &jc.Event,
 		&jc.OrgSlug, &jc.ProjectSlug, &jc.RepoSlug, &jc.CommitSHA)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apperr.NotFound("job")
