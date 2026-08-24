@@ -13,6 +13,7 @@ use crate::api::{AcquiredJob, ApiClient, StepSpec};
 use crate::backend::{
     Backend, ContainerBackend, HostBackend, JobEnv, Platform, ResourceLimits, RunnerOS, StepTimeout,
 };
+use crate::cache::{self, CacheSave};
 use crate::toolcache::ToolCache;
 
 /// Executes jobs in a container or on the host shell, chosen per job from the
@@ -21,7 +22,6 @@ use crate::toolcache::ToolCache;
 pub struct Executor {
     api: ApiClient,
     work_dir: PathBuf,
-    cache_dir: PathBuf,
     tools: ToolCache,
     state_dir: PathBuf,
     default_image: String,
@@ -31,7 +31,7 @@ pub struct Executor {
 }
 
 struct StepCtx {
-    cache_saves: Vec<(String, String)>,
+    cache_saves: Vec<CacheSave>,
     platform: Option<Platform>,
     temp_files: Vec<PathBuf>,
 }
@@ -48,11 +48,9 @@ impl Executor {
         os: RunnerOS,
         limits: ResourceLimits,
     ) -> Self {
-        let cache_dir = work_dir.join("_cache");
         Self {
             api,
             work_dir,
-            cache_dir,
             tools: ToolCache::new(tools_dir),
             state_dir,
             default_image,
@@ -233,9 +231,18 @@ impl Executor {
             }
         }
 
-        for (key, path) in step_ctx.cache_saves {
-            if let Err(e) = self.save_cache(&key, &workspace_abs, &path).await {
-                warn!(error = %e, key, "cache save failed");
+        // A failed build must not publish possibly incomplete dependency
+        // state, and pull-request jobs are restore-only. The server enforces
+        // that trust boundary too. Upload failures remain best-effort and
+        // never change the job conclusion.
+        if !job_failed && job.event != "pull_request" {
+            for save in step_ctx.cache_saves {
+                let key = save.key.clone();
+                if let Err(e) = self.save_cache(job_id, &workspace_abs, save).await {
+                    warn!(error = %e, key, "cache save failed");
+                    self.log(job_id, &format!("[runner] cache upload skipped: {e}\n"))
+                        .await;
+                }
             }
         }
         for path in step_ctx.temp_files {
@@ -268,11 +275,9 @@ impl Executor {
                 return self.do_upload_artifact(&job.job_id, workspace, step).await;
             }
             if action == "actions/cache" {
-                let restored = self.do_cache_restore(&job.job_id, workspace, step).await?;
-                if let (Some(key), Some(path)) = (step.with.get("key"), step.with.get("path")) {
-                    ctx.cache_saves.push((key.clone(), path.clone()));
+                if let Some(save) = self.do_cache_restore(&job.job_id, workspace, step).await? {
+                    ctx.cache_saves.push(save);
                 }
-                let _ = restored;
                 return Ok(true);
             }
 
@@ -377,44 +382,97 @@ impl Executor {
         job_id: &str,
         workspace: &Path,
         step: &StepSpec,
-    ) -> Result<bool> {
+    ) -> Result<Option<CacheSave>> {
         let (key, path) = match (step.with.get("key"), step.with.get("path")) {
             (Some(k), Some(p)) => (k.clone(), p.clone()),
             _ => {
                 self.log(job_id, "[runner] cache: missing `key` or `path`\n")
                     .await;
-                return Ok(false);
+                return Err(anyhow!("actions/cache requires both `key` and `path`"));
             }
         };
-        let dest = match resolve_in_workspace(workspace, &path) {
-            Ok(d) => d,
-            Err(e) => {
-                self.log(job_id, &format!("[runner] cache: {e}\n")).await;
-                return Ok(false);
+        let request = cache::prepare_request(
+            workspace,
+            self.os,
+            &key,
+            &path,
+            step.with.get("restore-keys").map(String::as_str),
+        )?;
+        let save = CacheSave::from(&request);
+        let download = match self
+            .api
+            .restore_cache(
+                job_id,
+                &request.key,
+                &request.version,
+                &request.restore_keys,
+            )
+            .await
+        {
+            Ok(Some(download)) => download,
+            Ok(None) => {
+                self.log(job_id, &format!("[runner] cache miss: {}\n", request.key))
+                    .await;
+                return Ok(Some(save));
+            }
+            Err(error) => {
+                self.log(
+                    job_id,
+                    &format!(
+                        "[runner] cache restore unavailable; continuing without cache: {error}\n"
+                    ),
+                )
+                .await;
+                return Ok(Some(save));
             }
         };
-        let cache_file = self.cache_dir.join(format!("{}.tar", sanitize(&key)));
-        if tokio::fs::try_exists(&cache_file).await.unwrap_or(false) {
-            let into = match dest.parent() {
-                Some(p) if p.starts_with(workspace) => p.to_path_buf(),
-                _ => workspace.to_path_buf(),
-            };
-            untar_into(&cache_file, &into).await?;
-            self.log(job_id, &format!("[runner] cache restored: {key}\n"))
-                .await;
-        } else {
-            self.log(job_id, &format!("[runner] cache miss: {key}\n"))
-                .await;
+
+        let matched_key = download.key.clone();
+        let workspace = workspace.to_path_buf();
+        let staging = self.job_dir(job_id).join("cache-restore-staging");
+        let allowed_paths = request.paths.clone();
+        let restore_result = tokio::task::spawn_blocking(move || {
+            cache::verify_sha256(&download.data, &download.sha256)?;
+            cache::restore_archive(&download.data, &workspace, &staging, &allowed_paths)
+        })
+        .await?;
+        if let Err(error) = restore_result {
+            self.log(
+                job_id,
+                &format!("[runner] cache restore rejected; continuing without cache: {error}\n"),
+            )
+            .await;
+            return Ok(Some(save));
         }
-        Ok(true)
+        self.log(job_id, &format!("[runner] cache restored: {matched_key}\n"))
+            .await;
+
+        if matched_key == request.key {
+            Ok(None)
+        } else {
+            // A restore-key hit still publishes the primary key after a
+            // successful job, matching actions/cache post-step semantics.
+            Ok(Some(save))
+        }
     }
 
-    async fn save_cache(&self, key: &str, workspace: &Path, path: &str) -> Result<()> {
-        let src = resolve_in_workspace(workspace, path)?;
-        tokio::fs::create_dir_all(&self.cache_dir).await?;
-        let cache_file = self.cache_dir.join(format!("{}.tar", sanitize(key)));
-        let tar = tar_path(&src).await?;
-        tokio::fs::write(&cache_file, tar).await?;
+    async fn save_cache(&self, job_id: &str, workspace: &Path, save: CacheSave) -> Result<()> {
+        let archive_workspace = workspace.to_path_buf();
+        let archive_paths = save.paths.clone();
+        let archive = tokio::task::spawn_blocking(move || {
+            cache::create_archive(&archive_workspace, &archive_paths)
+        })
+        .await??;
+        let sha256 = cache::sha256_hex(&archive);
+        let size = archive.len();
+        self.api
+            .upload_cache(job_id, &save.key, &save.version, &sha256, archive)
+            .await?;
+        self.log(
+            job_id,
+            &format!("[runner] cache uploaded: {} ({size} bytes)\n", save.key),
+        )
+        .await;
         Ok(())
     }
 
@@ -469,18 +527,6 @@ fn redact(bytes: &[u8]) -> Vec<u8> {
     out.into_bytes()
 }
 
-fn sanitize(key: &str) -> String {
-    key.chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
 fn resolve_in_workspace(workspace: &Path, rel: &str) -> Result<PathBuf> {
     use std::path::Component;
     let mut out = PathBuf::new();
@@ -523,19 +569,6 @@ async fn tar_path(path: &Path) -> Result<Vec<u8>> {
             builder.finish()?;
         }
         Ok(buf)
-    })
-    .await?
-}
-
-async fn untar_into(tar_file: &Path, dest: &Path) -> Result<()> {
-    let tar_file = tar_file.to_path_buf();
-    let dest = dest.to_path_buf();
-    tokio::task::spawn_blocking(move || -> Result<()> {
-        std::fs::create_dir_all(&dest)?;
-        let f = std::fs::File::open(&tar_file)?;
-        let mut ar = tar::Archive::new(f);
-        ar.unpack(&dest)?;
-        Ok(())
     })
     .await?
 }

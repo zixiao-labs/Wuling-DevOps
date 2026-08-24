@@ -175,6 +175,13 @@ type SecretsConfig struct {
 type PipelineConfig struct {
 	// LogDir is where job logs are appended on disk, one file per job.
 	LogDir string `env:"WULING_PIPELINE_LOG_DIR" envDefault:"./var/pipeline-logs"`
+	// CacheMaxUploadBytes bounds one actions/cache archive before it reaches
+	// the private Artifact Service.
+	CacheMaxUploadBytes int64 `env:"WULING_PIPELINE_CACHE_MAX_UPLOAD_BYTES" envDefault:"536870912"`
+	// CacheTTL controls how long a published cache remains restorable.
+	CacheTTL time.Duration `env:"WULING_PIPELINE_CACHE_TTL" envDefault:"336h"`
+	// CacheGCInterval controls how often expired cache blobs are collected.
+	CacheGCInterval time.Duration `env:"WULING_PIPELINE_CACHE_GC_INTERVAL" envDefault:"15m"`
 }
 
 // ArtifactServiceConfig connects the authenticated core API to the private
@@ -245,6 +252,15 @@ func (c *Config) validate() error {
 	}
 	if c.Storage.AvatarsDir == "" {
 		problems = append(problems, "WULING_AVATARS_DIR must not be empty")
+	}
+	if c.Pipeline.CacheMaxUploadBytes <= 0 {
+		problems = append(problems, "WULING_PIPELINE_CACHE_MAX_UPLOAD_BYTES must be positive")
+	}
+	if c.Pipeline.CacheTTL <= 0 {
+		problems = append(problems, "WULING_PIPELINE_CACHE_TTL must be positive")
+	}
+	if c.Pipeline.CacheGCInterval <= 0 {
+		problems = append(problems, "WULING_PIPELINE_CACHE_GC_INTERVAL must be positive")
 	}
 	artifactURL, artifactURLErr := url.Parse(c.Artifacts.BaseURL)
 	if artifactURLErr != nil || artifactURL.Scheme == "" || artifactURL.Host == "" ||

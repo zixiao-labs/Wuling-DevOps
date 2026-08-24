@@ -65,6 +65,8 @@ pub struct AcquiredJob {
     pub run_number: i64,
     pub job_name: String,
     pub commit_sha: String,
+    #[serde(default)]
+    pub event: String,
     pub spec: JobSpec,
     #[serde(default)]
     pub secrets: HashMap<String, String>,
@@ -92,6 +94,21 @@ struct PatchStepReq<'a> {
 #[derive(Serialize)]
 struct CompleteReq<'a> {
     conclusion: &'a str,
+}
+
+#[derive(Serialize)]
+struct RestoreCacheReq<'a> {
+    key: &'a str,
+    version: &'a str,
+    restore_keys: &'a [String],
+}
+
+/// One cache archive returned by the control plane. Integrity verification is
+/// deliberately performed by the cache module before extraction.
+pub struct CacheDownload {
+    pub key: String,
+    pub sha256: String,
+    pub data: Vec<u8>,
 }
 
 /// HTTP client bound to a base URL and (after registration) a runner token.
@@ -296,6 +313,77 @@ impl ApiClient {
             .await?;
         ensure_ok(resp, "upload_artifact").await
     }
+
+    /// Restore an exact cache key or the first matching restore-key prefix.
+    /// HTTP 204 is an ordinary cache miss.
+    pub async fn restore_cache(
+        &self,
+        job_id: &str,
+        key: &str,
+        version: &str,
+        restore_keys: &[String],
+    ) -> Result<Option<CacheDownload>> {
+        let resp = self
+            .http
+            .post(format!(
+                "{}/runner/jobs/{job_id}/cache/restore",
+                self.api_base
+            ))
+            .bearer_auth(&self.token)
+            .json(&RestoreCacheReq {
+                key,
+                version,
+                restore_keys,
+            })
+            .send()
+            .await
+            .context("restore cache request")?;
+        if resp.status() == reqwest::StatusCode::NO_CONTENT {
+            return Ok(None);
+        }
+        if !resp.status().is_success() {
+            return Err(anyhow!(
+                "restore_cache failed: {} {}",
+                resp.status(),
+                resp.text().await.unwrap_or_default()
+            ));
+        }
+        let matched_key = required_header(&resp, "x-wuling-cache-key")?;
+        let sha256 = required_header(&resp, "x-wuling-cache-sha256")?;
+        let data = resp
+            .bytes()
+            .await
+            .context("read cache download body")?
+            .to_vec();
+        Ok(Some(CacheDownload {
+            key: matched_key,
+            sha256,
+            data,
+        }))
+    }
+
+    /// Publish an immutable cache archive. Both 201 (created) and 200 (a
+    /// concurrent/existing writer won) are successful cache outcomes.
+    pub async fn upload_cache(
+        &self,
+        job_id: &str,
+        key: &str,
+        version: &str,
+        sha256: &str,
+        data: Vec<u8>,
+    ) -> Result<()> {
+        let resp = self
+            .http
+            .put(format!("{}/runner/jobs/{job_id}/cache", self.api_base))
+            .bearer_auth(&self.token)
+            .query(&[("key", key), ("version", version), ("sha256", sha256)])
+            .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+            .body(data)
+            .send()
+            .await
+            .context("upload cache request")?;
+        ensure_ok(resp, "upload_cache").await
+    }
 }
 
 /// Redacts byte values while preserving enough suffix to recognize a secret
@@ -374,6 +462,17 @@ async fn ensure_ok(resp: reqwest::Response, what: &str) -> Result<()> {
         resp.status(),
         resp.text().await.unwrap_or_default()
     ))
+}
+
+fn required_header(resp: &reqwest::Response, name: &str) -> Result<String> {
+    let value = resp
+        .headers()
+        .get(name)
+        .ok_or_else(|| anyhow!("cache response is missing {name}"))?;
+    Ok(value
+        .to_str()
+        .with_context(|| format!("cache response has invalid {name}"))?
+        .to_string())
 }
 
 /// encode_path_segment percent-encodes everything outside the RFC 3986

@@ -6,6 +6,7 @@
 mod actions;
 mod api;
 mod backend;
+mod cache;
 mod config;
 mod executor;
 mod toolcache;

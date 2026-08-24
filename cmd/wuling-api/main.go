@@ -18,6 +18,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/zixiao-labs/wuling-devops/internal/applog"
 	"github.com/zixiao-labs/wuling-devops/internal/artifactclient"
 	"github.com/zixiao-labs/wuling-devops/internal/autoscale"
@@ -166,6 +168,15 @@ func run() error {
 	// Control-plane background loops. The stale-job reaper always runs so that
 	// jobs orphaned by a dead runner get requeued even when autoscaling is off.
 	go runReaper(rootCtx, pipelines, cfg.Runner.ReapAfter, log.With("component", "reaper"))
+	// Cache GC owns deletion of expired cache blobs and removes metadata only
+	// after the Artifact Service confirms the bytes are gone.
+	go runPipelineCacheGC(
+		rootCtx,
+		pipelines,
+		artifacts,
+		cfg.Pipeline.CacheGCInterval,
+		log.With("component", "pipeline-cache-gc"),
+	)
 
 	// The autoscaler reconciles each org's ephemeral runner fleet against its
 	// runner-config.yaml. Disabled via WULING_AUTOSCALER_ENABLED=false.
@@ -260,6 +271,67 @@ func runReaper(ctx context.Context, pipelines *pipelinestore.Store, reapAfter ti
 			} else if n > 0 {
 				log.Info("requeued/failed stale jobs", "count", n)
 			}
+		}
+	}
+}
+
+type pipelineCacheGCStore interface {
+	ListExpiredCaches(context.Context, int) ([]pipelinestore.PipelineCacheEntry, error)
+	DeleteCacheEntry(context.Context, uuid.UUID) error
+}
+
+type pipelineCacheGCBlobs interface {
+	Delete(context.Context, string) error
+}
+
+// runPipelineCacheGC collects once at startup and then periodically. One
+// bounded batch per tick keeps cache cleanup from monopolizing the API process.
+func runPipelineCacheGC(
+	ctx context.Context,
+	store pipelineCacheGCStore,
+	blobs pipelineCacheGCBlobs,
+	interval time.Duration,
+	log *slog.Logger,
+) {
+	if interval <= 0 {
+		log.Error("pipeline cache GC disabled by invalid interval", "interval", interval)
+		return
+	}
+	collectPipelineCacheBatch(ctx, store, blobs, log)
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			collectPipelineCacheBatch(ctx, store, blobs, log)
+		}
+	}
+}
+
+func collectPipelineCacheBatch(
+	ctx context.Context,
+	store pipelineCacheGCStore,
+	blobs pipelineCacheGCBlobs,
+	log *slog.Logger,
+) {
+	entries, err := store.ListExpiredCaches(ctx, 100)
+	if err != nil {
+		if ctx.Err() == nil {
+			log.Warn("list expired pipeline caches failed", "err", err)
+		}
+		return
+	}
+	for _, entry := range entries {
+		if err := blobs.Delete(ctx, entry.BlobKey); err != nil && !errors.Is(err, artifactclient.ErrNotFound) {
+			log.Warn("delete expired pipeline cache blob failed",
+				"entry_id", entry.ID, "blob_key", entry.BlobKey, "err", err)
+			continue
+		}
+		if err := store.DeleteCacheEntry(ctx, entry.ID); err != nil {
+			log.Warn("delete expired pipeline cache metadata failed", "entry_id", entry.ID, "err", err)
 		}
 	}
 }

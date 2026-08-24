@@ -61,8 +61,8 @@ Invoke-WebRequest https://wuling.internal.example/healthz -UseBasicParsing
 
 ## 与 OSS、Workspace 和自动伸缩的关系
 
-- ECS Runner 与同地域 OSS bucket 通信时优先选 OSS 内网 endpoint，并给 Runner 最小
-  bucket/prefix 权限；详细缓存策略见 [pipelines-cache.md](pipelines-cache.md)。
+- Artifact Service 与同地域 OSS bucket 通信时优先选 OSS 内网 endpoint；Runner 只访问
+  Wuling API，不持有 bucket 凭据。详细缓存策略见 [pipelines-cache.md](pipelines-cache.md)。
 - 轻量应用服务器可承载控制面或跳板服务，但它不由本项目的 Runner autoscaler 创建、
   伸缩或销毁。
 - Workspace 仍是后续阶段能力；本指南中的互联、DNS、CIDR 和防火墙约束可复用，但不

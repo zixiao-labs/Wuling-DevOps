@@ -83,6 +83,17 @@ func TestOpenMapsNotFound(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
+func TestDeleteMapsNotFound(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+	client, err := New(server.URL, "", testOptions)
+	require.NoError(t, err)
+	require.ErrorIs(t, client.Delete(context.Background(), "packages/a/1"), ErrNotFound)
+}
+
 func TestPutMapsServiceConflictsAndLimits(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
