@@ -78,11 +78,12 @@ HMAC-SHA256 校验并**常量时间**比较；校验不过一律 401。
 | **Metadata** | Read-only | 强制项，GitHub 自动带上 |
 | **Contents** | **Read-only** | 同步仓库要 clone/fetch，读 `.wuling/workflows/*.yml` 也要它 |
 | **Pull requests** | **Read-only** | `pull_request` 事件触发流水线要读 PR 的 head/base |
-| **Checks** | **Read and write** | 把流水线结果回显到 PR 的 **Checks** 页（结论、摘要、行内注解、重跑按钮） |
-| **Actions** | **Read-only** | 监听 GitHub Actions `workflow_run.completed`，把工作流终态同步到武陵 |
+| **Checks** | **Read and write** | 回显武陵流水线，并把监听到的 Actions/第三方检查终态回显成可用于分支保护的 Check Run |
+| **Actions** | **Read-only** | 监听 GitHub Actions `workflow_run.completed`，把工作流终态同步到武陵并触发回显 |
 
-> 只想「GitHub 推送 → 武陵跑流水线」、不需要回显的话，去掉 Checks 即可，其余只读权限就够。
-> 需要回显就必须给 Checks **读写**——这是唯一需要写权限的地方，`Contents` 仍然保持只读。
+> 只想「GitHub 推送 → 武陵跑流水线」、既不监听第三方 Check 也不需要任何回显时，可以去掉
+> Checks。启用 Actions/第三方检查监听会同时创建武陵监听回显，因此必须给 Checks **读写**——
+> 这是唯一需要写权限的地方，`Contents` 仍然保持只读。
 
 ### Subscribe to events
 
@@ -110,10 +111,12 @@ HMAC-SHA256 校验并**常量时间**比较；校验不过一律 401。
 实现 check run 回显时，下面三条都是「不知道就会中招」的：
 
 1. **`check_run` 事件是广播的。** GitHub 会把 check run 事件发给该仓库上**所有**有 Checks 权限的
-   App，不只是发给创建它的那个。武陵会只读采集所有 provider 的 `completed` 终态；但凡涉及
-   `PATCH`、重跑或自定义按钮，仍必须先比对 `payload.check_run.app.id == 3713023`，绝不修改
-   GitHub Actions 或别家 App 创建的 check run。`check_suite` 的 `requested` / `rerequested`
-   则只发给被请求的 App，不需要这层过滤。
+   App，不只是发给创建它的那个。武陵会只读采集所有 provider 的 `completed` 终态，并另外创建
+   一个 `武陵监听 / <provider> / <check>` 回显；绝不 `PATCH` GitHub Actions 或别家 App 创建的
+   原 Check Run。回显使用 `wuling-monitor:` 前缀的 `external_id`，收到自身回显的 completed 事件时
+   会直接忽略，避免递归和重复通知。其他 `PATCH`、重跑或自定义按钮仍必须先比对
+   `payload.check_run.app.id == 3713023`。`check_suite` 的 `requested` / `rerequested` 则只发给
+   被请求的 App，不需要这层过滤。
 
 2. **注解一次最多 50 条。** `output.annotations` 每请求上限 50；要报更多就得多次 `PATCH`
    同一个 check run，每次追加一批（注解是累加的，不是覆盖）。武陵这边一个 matrix 展开后的
@@ -177,6 +180,8 @@ HMAC-SHA256 校验并**常量时间**比较；校验不过一律 401。
    `color=red`，避免取消、超时或未知结论被误报为通过。每个完成事件还会以
    `github.check.completed` 写入 `notification_outbox`；当前只持久化、不发送，后续通知 worker
    可消费 `delivered_at IS NULL` 的记录并投递站内信、推送或邮件。Webhook 重投不会重复入队。
+   同一个 commit/PR 的 Checks 页还应出现稳定命名的 `武陵监听 / ...` 回显；运行一次后即可在仓库
+   **Settings → Branches** 或 **Rules → Rulesets** 中把该名称选为 required status check。
 
 ---
 

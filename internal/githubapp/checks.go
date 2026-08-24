@@ -10,12 +10,13 @@ import (
 
 // CreateCheckRunRequest is the GitHub Checks API create payload (subset).
 type CreateCheckRunRequest struct {
-	Name        string `json:"name"`
-	HeadSHA     string `json:"head_sha"`
-	Status      string `json:"status,omitempty"`
-	Conclusion  string `json:"conclusion,omitempty"`
-	DetailsURL  string `json:"details_url,omitempty"`
-	ExternalID  string `json:"external_id,omitempty"`
+	Name        string       `json:"name"`
+	HeadSHA     string       `json:"head_sha"`
+	Status      string       `json:"status,omitempty"`
+	Conclusion  string       `json:"conclusion,omitempty"`
+	CompletedAt string       `json:"completed_at,omitempty"`
+	DetailsURL  string       `json:"details_url,omitempty"`
+	ExternalID  string       `json:"external_id,omitempty"`
 	Output      *CheckOutput `json:"output,omitempty"`
 }
 
@@ -28,10 +29,13 @@ type CheckOutput struct {
 
 // UpdateCheckRunRequest patches status/conclusion/output.
 type UpdateCheckRunRequest struct {
-	Status     string       `json:"status,omitempty"`
-	Conclusion string       `json:"conclusion,omitempty"`
-	Output     *CheckOutput `json:"output,omitempty"`
-	DetailsURL string       `json:"details_url,omitempty"`
+	Name        string       `json:"name,omitempty"`
+	Status      string       `json:"status,omitempty"`
+	Conclusion  string       `json:"conclusion,omitempty"`
+	CompletedAt string       `json:"completed_at,omitempty"`
+	Output      *CheckOutput `json:"output,omitempty"`
+	DetailsURL  string       `json:"details_url,omitempty"`
+	ExternalID  string       `json:"external_id,omitempty"`
 }
 
 // CreateCheckRun creates a check run on owner/repo.

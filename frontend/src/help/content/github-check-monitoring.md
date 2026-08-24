@@ -18,6 +18,19 @@ description: 配置 GitHub App 监听 Actions workflow 与第三方 Check，并�
 当前没有按 workflow 名称、分支、provider 或检查名称配置 allowlist / denylist。一次 GitHub Actions
 执行可能同时产生一条 workflow 级状态和多条 job 级 check 状态；武陵会分别保存它们。
 
+每条监听到的终态还会回显为由武陵 GitHub App 创建的独立 Check Run。名称保持稳定，方便在
+GitHub 分支保护或 Rulesets 的 **Require status checks to pass** 中选择：
+
+| 来源 | 回显名称 |
+|------|----------|
+| GitHub Actions workflow | `武陵监听 / GitHub Actions / <workflow 名称>` |
+| GitHub Actions job | `武陵监听 / GitHub Actions / <job 名称>` |
+| 第三方 App | `武陵监听 / <provider> / <check 名称>` |
+
+回显沿用原检查的 commit SHA、终态和详情链接。Webhook 重投或同一 workflow run 重跑时会更新已
+记录的回显 Check Run；武陵会识别并忽略自己创建的监听回显，避免递归回显和重复通知。原 provider
+创建的 Check Run 始终只读，不会被武陵修改。
+
 “监听全部”并不是监听 GitHub 上的所有仓库。事件还必须同时满足三个范围限制：
 
 1. 仓库包含在 GitHub App 当前安装所允许访问的仓库范围内。
@@ -32,10 +45,10 @@ description: 配置 GitHub App 监听 Actions workflow 与第三方 Check，并�
 |------|------|------|
 | **Metadata** | Read-only | GitHub App 必需的仓库元数据权限 |
 | **Actions** | Read-only | 接收 `workflow_run` 并读取 Actions workflow 状态 |
-| **Checks** | Read and write | 接收 `check_run`；武陵还需要创建和更新自己的 Check Run |
+| **Checks** | Read and write | 接收 `check_run`，并为监听到的 Actions/第三方终态创建或更新回显 Check Run |
 
-如果 App 只做状态监听，Checks Read-only 已足够读取检查；当前武陵 App 还会把“武陵 CI”回显到
-GitHub，因此实际部署应使用 **Read and write**。
+当前监听功能包含 Check Run 回显，因此实际部署必须使用 **Read and write**。只有禁用所有 Checks
+回显、完全只读采集的定制部署，才可以降为 Read-only。
 
 修改已安装 App 的权限后，组织管理员必须在
 **Organization Settings → GitHub Apps → Wuling DevOps → Review request** 接受新权限。
@@ -98,6 +111,7 @@ Authorization: Bearer <token>
 - 同一检查重跑时，以较高 `attempt` 为新；同一 attempt 内以较晚 `completed_at` 为新。
   迟到的旧 Webhook 不会覆盖最新结果。
 - 状态与 `github.check.completed` 通知事件在同一数据库事务中写入，Webhook 重投不会产生重复事件。
+- GitHub 不认识的 provider 终态在回显时按 `failure` 处理，避免分支保护被未知结果意外放行。
 
 通知投递服务尚未上线。当前事件会保存在 `notification_outbox`，等待后续 worker 投递站内信、
 移动推送或邮件；这不会影响状态变为 Green/Red。
@@ -108,6 +122,10 @@ Authorization: Bearer <token>
 2. 完成一次 GitHub Actions workflow，控制面日志应出现 `completed check recorded`。
 3. 数据库 `github_check_states` 应出现 workflow/job 状态；成功结果的 `color` 应为 `green`。
 4. `notification_outbox` 应出现 `event_type=github.check.completed` 且 `delivered_at` 为空的记录。
+5. 对应 commit 或 PR 的 Checks 页应出现 `武陵监听 / ...`；`github_check_states.feedback_check_run_id`
+   应保存它的 ID。先让目标检查至少运行一次，再到仓库 **Settings → Branches** 或 **Rules →
+   Rulesets**，把这个稳定名称选为 required status check。
 
 如果 Recent Deliveries 没有对应事件，先检查事件订阅和新权限是否已接受；如果 Delivery 是 200
-但没有状态记录，检查 GitHub 仓库是否已经绑定到正确的武陵仓库。
+但没有状态记录，检查 GitHub 仓库是否已经绑定到正确的武陵仓库。已有状态但没有回显时，优先检查
+Checks 权限是否为 Read and write，以及 installation 是否已经接受新增权限。
