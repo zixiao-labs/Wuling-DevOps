@@ -80,6 +80,11 @@ func CanModerateContent(r string) bool { return RoleLevel(r) >= RoleLevel(RoleMa
 // CanCreateProject gates creating new projects under an org.
 func CanCreateProject(r string) bool { return RoleLevel(r) >= RoleLevel(RoleMaintainer) }
 
+// CanDeleteRepo gates irreversible repository deletion. Developers may write
+// repository content, but only maintainers and owners may remove the repo and
+// all of its associated records.
+func CanDeleteRepo(r string) bool { return RoleLevel(r) >= RoleLevel(RoleMaintainer) }
+
 // CanManageMembers gates listing/adding/removing org members and managing
 // invitations.
 func CanManageMembers(r string) bool { return RoleLevel(r) >= RoleLevel(RoleMaintainer) }

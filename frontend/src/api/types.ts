@@ -493,6 +493,20 @@ export interface CreateRepoRequest {
   visibility?: Visibility;
 }
 
+export interface GitHubRepoLink {
+  linked: boolean;
+  owner?: string;
+  name?: string;
+  full_name?: string;
+  installation_id?: number;
+}
+
+export interface PutGitHubRepoLinkRequest {
+  owner: string;
+  name: string;
+  installation_id: number;
+}
+
 export interface GitRef {
   name: string;
   oid: string;

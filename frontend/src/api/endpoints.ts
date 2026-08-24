@@ -29,6 +29,7 @@ import type {
   CreateRepoRequest,
   CreateSSHKeyRequest,
   GitRef,
+  GitHubRepoLink,
   InvitationStatus,
   Issue,
   IssueComment,
@@ -56,6 +57,7 @@ import type {
   PendingAccountResponse,
   Project,
   PutWikiPageRequest,
+  PutGitHubRepoLinkRequest,
   RegisterRequest,
   Repo,
   SSHKey,
@@ -303,6 +305,17 @@ export const repos = {
     apiPost<Repo>(`/api/v1/orgs/${enc(org)}/projects/${enc(project)}/repos`, body),
   get: (org: string, project: string, repo: string) =>
     apiGet<Repo>(repoBase(org, project, repo)),
+  remove: (org: string, project: string, repo: string) =>
+    apiDelete(repoBase(org, project, repo)),
+
+  githubLink: (org: string, project: string, repo: string) =>
+    apiGet<GitHubRepoLink>(`${repoBase(org, project, repo)}/github-link`),
+  putGithubLink: (
+    org: string,
+    project: string,
+    repo: string,
+    body: PutGitHubRepoLinkRequest,
+  ) => apiPut<GitHubRepoLink>(`${repoBase(org, project, repo)}/github-link`, body),
 
   refs: (org: string, project: string, repo: string) =>
     apiGet<{ refs: GitRef[] }>(`${repoBase(org, project, repo)}/refs`).then((r) => r.refs),

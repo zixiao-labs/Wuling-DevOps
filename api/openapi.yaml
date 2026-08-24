@@ -1178,6 +1178,14 @@ paths:
         "401": { $ref: "#/components/responses/UnauthorizedError" }
         "403": { $ref: "#/components/responses/ForbiddenError" }
         "404": { $ref: "#/components/responses/NotFoundError" }
+    delete:
+      summary: Permanently delete a repo and its bare Git data
+      description: Requires maintainer or above. This action cannot be undone.
+      responses:
+        "204": { description: deleted }
+        "401": { $ref: "#/components/responses/UnauthorizedError" }
+        "403": { $ref: "#/components/responses/ForbiddenError" }
+        "404": { $ref: "#/components/responses/NotFoundError" }
 
   /api/v1/orgs/{org_slug}/projects/{project_slug}/repos/{repo_slug}/refs:
     parameters:

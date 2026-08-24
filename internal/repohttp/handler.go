@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -54,6 +55,7 @@ func (h *Handler) Mount(r chi.Router) {
 		r.Post("/", h.create)
 		r.Route("/{repo_slug}", func(r chi.Router) {
 			r.Get("/", h.get)
+			r.Delete("/", h.delete)
 			r.Get("/refs", h.listRefs)
 			r.Get("/commits", h.listCommits)
 			r.Get("/tree", h.readTree)
@@ -177,6 +179,41 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpapi.WriteJSON(w, http.StatusOK, repo)
+}
+
+func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
+	repo, projectID, orgID, err := h.resolveAndCheck(r, PermWrite)
+	if err != nil {
+		httpapi.RenderError(w, r, err)
+		return
+	}
+	id, err := auth.RequireIdentity(r)
+	if err != nil {
+		httpapi.RenderError(w, r, err)
+		return
+	}
+	role, err := h.Store.MemberRole(r.Context(), orgID, id.UserID)
+	if err != nil {
+		httpapi.RenderError(w, r, err)
+		return
+	}
+	if !auth.CanDeleteRepo(role) {
+		httpapi.RenderError(w, r, apperr.Forbidden("deleting a repo requires maintainer or above"))
+		return
+	}
+
+	// Remove the bare repository first. If the filesystem refuses the delete,
+	// leave the database row intact so the operator can fix permissions and
+	// retry from the same repository URL.
+	if err := os.RemoveAll(h.Layout.Path(orgID, projectID, repo.ID)); err != nil {
+		httpapi.RenderError(w, r, apperr.Wrap(apperr.CodeInternal, "delete bare repo", err))
+		return
+	}
+	if err := h.Store.DeleteRepo(r.Context(), repo.ID); err != nil {
+		httpapi.RenderError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) listRefs(w http.ResponseWriter, r *http.Request) {

@@ -33,6 +33,14 @@ func TestCanWriteRepo(t *testing.T) {
 	assert.False(t, CanWriteRepo(""))
 }
 
+func TestCanDeleteRepo(t *testing.T) {
+	assert.True(t, CanDeleteRepo(RoleOwner))
+	assert.True(t, CanDeleteRepo(RoleMaintainer))
+	assert.False(t, CanDeleteRepo(RoleDeveloper))
+	assert.False(t, CanDeleteRepo(RoleReporter))
+	assert.False(t, CanDeleteRepo(RoleGuest))
+}
+
 func TestCanModerateContent(t *testing.T) {
 	assert.True(t, CanModerateContent(RoleOwner))
 	assert.True(t, CanModerateContent(RoleMaintainer))
