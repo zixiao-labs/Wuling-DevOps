@@ -3,11 +3,13 @@ package githubwebhook
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
-	"github.com/zixiao-labs/wuling-devops/internal/githubapp"
 	"github.com/zixiao-labs/wuling-devops/internal/githttp"
+	"github.com/zixiao-labs/wuling-devops/internal/githubapp"
+	"github.com/zixiao-labs/wuling-devops/internal/notification"
 	"github.com/zixiao-labs/wuling-devops/internal/pipelinetrigger"
 	"github.com/zixiao-labs/wuling-devops/internal/repostore"
 )
@@ -19,6 +21,11 @@ type Processor struct {
 	Links   *LinkStore
 	Layout  *repostore.Layout
 	Trigger *pipelinetrigger.Service
+	// Checks stores terminal states observed from GitHub Actions and third-party
+	// check providers. Notifications is the durable integration point for the
+	// future Wuling notification dispatcher.
+	Checks        *CheckStore
+	Notifications notification.Publisher
 	// PublicBaseURL is used as check-run details_url prefix when non-empty.
 	PublicBaseURL string
 }
@@ -41,6 +48,8 @@ func (p *Processor) Handle(ec EventContext) error {
 		return p.onCheckSuite(ctx, ec)
 	case "check_run":
 		return p.onCheckRun(ctx, ec)
+	case "workflow_run":
+		return p.onWorkflowRun(ctx, ec)
 	case "repository":
 		return p.onRepository(ctx, ec)
 	default:
@@ -364,11 +373,17 @@ func (p *Processor) onCheckRun(ctx context.Context, ec EventContext) error {
 	var payload struct {
 		Action   string `json:"action"`
 		CheckRun struct {
-			ID         int64  `json:"id"`
-			HeadSHA    string `json:"head_sha"`
-			ExternalID string `json:"external_id"`
-			App        struct {
-				ID int64 `json:"id"`
+			ID          int64      `json:"id"`
+			HeadSHA     string     `json:"head_sha"`
+			ExternalID  string     `json:"external_id"`
+			Status      string     `json:"status"`
+			Conclusion  string     `json:"conclusion"`
+			DetailsURL  string     `json:"details_url"`
+			CompletedAt *time.Time `json:"completed_at"`
+			App         struct {
+				ID   int64  `json:"id"`
+				Slug string `json:"slug"`
+				Name string `json:"name"`
 			} `json:"app"`
 			Name string `json:"name"`
 		} `json:"check_run"`
@@ -389,10 +404,31 @@ func (p *Processor) onCheckRun(ctx context.Context, ec EventContext) error {
 	if err := json.Unmarshal(ec.Body, &payload); err != nil {
 		return err
 	}
-	// Broadcast filter — only handle our App's check runs.
+	// Completion is intentionally observed for every provider. We never PATCH
+	// external check runs; the App-ID filter below still gates control actions.
+	if payload.Action == "completed" && payload.CheckRun.Status == "completed" &&
+		payload.CheckRun.ID != 0 && payload.CheckRun.Conclusion != "" {
+		provider := payload.CheckRun.App.Slug
+		if provider == "" {
+			provider = payload.CheckRun.App.Name
+		}
+		if err := p.recordCheckCompletion(ctx, ec, payload.Repository.Owner.Login,
+			payload.Repository.Name, payload.Repository.FullName, CheckCompletion{
+				Source:      "check_run",
+				ExternalID:  fmt.Sprint(payload.CheckRun.ID),
+				Name:        payload.CheckRun.Name,
+				Provider:    provider,
+				HeadSHA:     payload.CheckRun.HeadSHA,
+				Conclusion:  payload.CheckRun.Conclusion,
+				Attempt:     1,
+				DetailsURL:  payload.CheckRun.DetailsURL,
+				CompletedAt: timeOrNow(payload.CheckRun.CompletedAt),
+			}); err != nil {
+			return err
+		}
+	}
+	// Check-run control events are broadcast. Only mutate our own App's runs.
 	if p.AppID != 0 && payload.CheckRun.App.ID != p.AppID {
-		ec.Log.Info("github-webhook: ignoring check_run from other app",
-			"app_id", payload.CheckRun.App.ID)
 		return nil
 	}
 	switch payload.Action {

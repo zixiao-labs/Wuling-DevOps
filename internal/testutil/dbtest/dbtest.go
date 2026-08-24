@@ -64,6 +64,8 @@ func Reset(t *testing.T, pool *db.Pool) {
 	defer cancel()
 	if _, err := pool.Exec(ctx, `
 		TRUNCATE TABLE
+			notification_outbox,
+			github_check_states,
 			github_repo_links,
 			github_webhook_deliveries,
 			repo_commit_index,
