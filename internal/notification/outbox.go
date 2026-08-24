@@ -9,6 +9,8 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/zixiao-labs/wuling-devops/internal/db"
 )
@@ -29,6 +31,11 @@ type Publisher interface {
 	Publish(context.Context, Event) error
 }
 
+// TxPublisher appends an event using a caller-owned database transaction.
+type TxPublisher interface {
+	PublishTx(context.Context, pgx.Tx, Event) error
+}
+
 // Outbox persists events until a notification dispatcher is implemented.
 type Outbox struct {
 	Pool *db.Pool
@@ -40,6 +47,25 @@ func (o *Outbox) Publish(ctx context.Context, event Event) error {
 	if o == nil || o.Pool == nil {
 		return nil
 	}
+	return publish(ctx, o.Pool, event)
+}
+
+// PublishTx appends an event as part of the caller's transaction.
+func (o *Outbox) PublishTx(ctx context.Context, tx pgx.Tx, event Event) error {
+	if o == nil {
+		return nil
+	}
+	if tx == nil {
+		return fmt.Errorf("notification transaction is not configured")
+	}
+	return publish(ctx, tx, event)
+}
+
+type eventExecer interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}
+
+func publish(ctx context.Context, exec eventExecer, event Event) error {
 	if event.DedupeKey == "" || event.Type == "" {
 		return fmt.Errorf("notification event requires dedupe key and type")
 	}
@@ -47,7 +73,7 @@ func (o *Outbox) Publish(ctx context.Context, event Event) error {
 	if err != nil {
 		return fmt.Errorf("marshal notification payload: %w", err)
 	}
-	_, err = o.Pool.Exec(ctx, `
+	_, err = exec.Exec(ctx, `
 		INSERT INTO notification_outbox
 			(id, dedupe_key, event_type, org_id, repo_id, payload)
 		VALUES ($1, $2, $3, NULLIF($4::text, '')::uuid, NULLIF($5::text, '')::uuid, $6::jsonb)

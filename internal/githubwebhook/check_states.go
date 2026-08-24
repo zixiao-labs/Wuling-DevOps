@@ -39,12 +39,30 @@ type CheckStore struct {
 	Pool *db.Pool
 }
 
-// Upsert records a completed check. Re-runs update the same logical resource
-// while the notification dedupe key preserves distinct attempts/completions.
+type checkQueryRower interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+// Upsert records a completed check. Only a higher attempt, or a later
+// completion within the same attempt, replaces the current state. Older
+// out-of-order deliveries return the existing row unchanged.
 func (s *CheckStore) Upsert(ctx context.Context, check CheckCompletion) (*CheckCompletion, error) {
 	if s == nil || s.Pool == nil {
 		return nil, fmt.Errorf("github check store is not configured")
 	}
+	return upsertCheck(ctx, s.Pool, check)
+}
+
+// UpsertTx is Upsert using the caller's transaction. It lets check state and
+// its notification outbox event commit atomically.
+func (s *CheckStore) UpsertTx(ctx context.Context, tx pgx.Tx, check CheckCompletion) (*CheckCompletion, error) {
+	if s == nil || tx == nil {
+		return nil, fmt.Errorf("github check transaction is not configured")
+	}
+	return upsertCheck(ctx, tx, check)
+}
+
+func upsertCheck(ctx context.Context, q checkQueryRower, check CheckCompletion) (*CheckCompletion, error) {
 	if check.ID == uuid.Nil {
 		check.ID = uuid.New()
 	}
@@ -57,23 +75,43 @@ func (s *CheckStore) Upsert(ctx context.Context, check CheckCompletion) (*CheckC
 	if check.Color == "" {
 		check.Color = NormalizeCheckColor(check.Conclusion)
 	}
-	row := s.Pool.QueryRow(ctx, `
+	row := q.QueryRow(ctx, `
 		INSERT INTO github_check_states
 			(id, repo_id, source, external_id, name, provider, head_sha,
 			 status, conclusion, color, attempt, details_url, completed_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7,
 		        'completed', $8, $9, $10, $11, $12)
 		ON CONFLICT (repo_id, source, external_id) DO UPDATE SET
-			name = EXCLUDED.name,
-			provider = EXCLUDED.provider,
-			head_sha = EXCLUDED.head_sha,
-			status = 'completed',
-			conclusion = EXCLUDED.conclusion,
-			color = EXCLUDED.color,
-			attempt = EXCLUDED.attempt,
-			details_url = EXCLUDED.details_url,
-			completed_at = EXCLUDED.completed_at,
-			updated_at = now()
+			name = CASE WHEN (EXCLUDED.attempt, EXCLUDED.completed_at) >
+			                      (github_check_states.attempt, github_check_states.completed_at)
+			            THEN EXCLUDED.name ELSE github_check_states.name END,
+			provider = CASE WHEN (EXCLUDED.attempt, EXCLUDED.completed_at) >
+			                          (github_check_states.attempt, github_check_states.completed_at)
+			                THEN EXCLUDED.provider ELSE github_check_states.provider END,
+			head_sha = CASE WHEN (EXCLUDED.attempt, EXCLUDED.completed_at) >
+			                          (github_check_states.attempt, github_check_states.completed_at)
+			                THEN EXCLUDED.head_sha ELSE github_check_states.head_sha END,
+			status = CASE WHEN (EXCLUDED.attempt, EXCLUDED.completed_at) >
+			                        (github_check_states.attempt, github_check_states.completed_at)
+			              THEN EXCLUDED.status ELSE github_check_states.status END,
+			conclusion = CASE WHEN (EXCLUDED.attempt, EXCLUDED.completed_at) >
+			                            (github_check_states.attempt, github_check_states.completed_at)
+			                  THEN EXCLUDED.conclusion ELSE github_check_states.conclusion END,
+			color = CASE WHEN (EXCLUDED.attempt, EXCLUDED.completed_at) >
+			                       (github_check_states.attempt, github_check_states.completed_at)
+			             THEN EXCLUDED.color ELSE github_check_states.color END,
+			attempt = CASE WHEN (EXCLUDED.attempt, EXCLUDED.completed_at) >
+			                         (github_check_states.attempt, github_check_states.completed_at)
+			               THEN EXCLUDED.attempt ELSE github_check_states.attempt END,
+			details_url = CASE WHEN (EXCLUDED.attempt, EXCLUDED.completed_at) >
+			                             (github_check_states.attempt, github_check_states.completed_at)
+			                   THEN EXCLUDED.details_url ELSE github_check_states.details_url END,
+			completed_at = CASE WHEN (EXCLUDED.attempt, EXCLUDED.completed_at) >
+			                              (github_check_states.attempt, github_check_states.completed_at)
+			                    THEN EXCLUDED.completed_at ELSE github_check_states.completed_at END,
+			updated_at = CASE WHEN (EXCLUDED.attempt, EXCLUDED.completed_at) >
+			                            (github_check_states.attempt, github_check_states.completed_at)
+			                  THEN now() ELSE github_check_states.updated_at END
 		RETURNING id, repo_id, source, external_id, name, provider, head_sha,
 		          conclusion, color, attempt, details_url, completed_at
 	`, check.ID, check.RepoID, check.Source, check.ExternalID, check.Name,

@@ -25,7 +25,7 @@ type Processor struct {
 	// check providers. Notifications is the durable integration point for the
 	// future Wuling notification dispatcher.
 	Checks        *CheckStore
-	Notifications notification.Publisher
+	Notifications notification.TxPublisher
 	// PublicBaseURL is used as check-run details_url prefix when non-empty.
 	PublicBaseURL string
 }
