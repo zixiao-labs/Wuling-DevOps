@@ -30,6 +30,7 @@ import (
 	"github.com/zixiao-labs/wuling-devops/internal/model"
 	"github.com/zixiao-labs/wuling-devops/internal/mrhttp"
 	"github.com/zixiao-labs/wuling-devops/internal/mrstore"
+	"github.com/zixiao-labs/wuling-devops/internal/notification"
 	"github.com/zixiao-labs/wuling-devops/internal/oauthhttp"
 	"github.com/zixiao-labs/wuling-devops/internal/oauthstore"
 	"github.com/zixiao-labs/wuling-devops/internal/orgconfig"
@@ -300,6 +301,8 @@ func New(d Deps) http.Handler {
 				Links:         githubLinks,
 				Layout:        d.Layout,
 				Trigger:       trigger,
+				Checks:        &githubwebhook.CheckStore{Pool: d.Pool},
+				Notifications: &notification.Outbox{Pool: d.Pool},
 				PublicBaseURL: d.Cfg.OAuth.PublicBaseURL,
 			}
 			if key, kerr := githubapp.LoadPrivateKey(d.Cfg.GithubApp.PrivateKey, d.Cfg.GithubApp.PrivateKeyPath); kerr != nil {

@@ -1,4 +1,4 @@
-# GitHub 集成：Webhook 触发流水线 + 仓库自动同步
+# GitHub 集成：Webhook 触发流水线、仓库同步与外部检查状态
 
 本文只讲**运维要改什么**。代码契约见 `docs/pipelines.md`。
 
@@ -79,6 +79,7 @@ HMAC-SHA256 校验并**常量时间**比较；校验不过一律 401。
 | **Contents** | **Read-only** | 同步仓库要 clone/fetch，读 `.wuling/workflows/*.yml` 也要它 |
 | **Pull requests** | **Read-only** | `pull_request` 事件触发流水线要读 PR 的 head/base |
 | **Checks** | **Read and write** | 把流水线结果回显到 PR 的 **Checks** 页（结论、摘要、行内注解、重跑按钮） |
+| **Actions** | **Read-only** | 监听 GitHub Actions `workflow_run.completed`，把工作流终态同步到武陵 |
 
 > 只想「GitHub 推送 → 武陵跑流水线」、不需要回显的话，去掉 Checks 即可，其余只读权限就够。
 > 需要回显就必须给 Checks **读写**——这是唯一需要写权限的地方，`Contents` 仍然保持只读。
@@ -91,6 +92,7 @@ HMAC-SHA256 校验并**常量时间**比较；校验不过一律 401。
 - ✅ **Pull request** —— PR 打开/同步时触发
 - ✅ **Check suite** —— 有人推代码时 GitHub 自动建 check suite，`requested` / `rerequested` 是我们建 check run 的信号
 - ✅ **Check run** —— check run 建好后的 `created` 是「可以开跑」的信号；`rerequested` 是单条重跑；`requested_action` 是自定义按钮被点
+- ✅ **Workflow run** —— GitHub Actions 工作流完成时同步 `conclusion`、attempt 和详情链接
 - ✅ **Repository** —— 仓库改名、转移时更新映射
 
 另外两个**不用勾**、也勾不了，但一定会收到，服务端必须能处理：
@@ -108,9 +110,10 @@ HMAC-SHA256 校验并**常量时间**比较；校验不过一律 401。
 实现 check run 回显时，下面三条都是「不知道就会中招」的：
 
 1. **`check_run` 事件是广播的。** GitHub 会把 check run 事件发给该仓库上**所有**有 Checks 权限的
-   App，不只是发给创建它的那个。所以处理前必须先比对
-   `payload.check_run.app.id == 3713023`，否则会去响应别家 App（甚至 GitHub Actions）的 check run。
-   `check_suite` 的 `requested` / `rerequested` 则只发给被请求的 App，不需要这层过滤。
+   App，不只是发给创建它的那个。武陵会只读采集所有 provider 的 `completed` 终态；但凡涉及
+   `PATCH`、重跑或自定义按钮，仍必须先比对 `payload.check_run.app.id == 3713023`，绝不修改
+   GitHub Actions 或别家 App 创建的 check run。`check_suite` 的 `requested` / `rerequested`
+   则只发给被请求的 App，不需要这层过滤。
 
 2. **注解一次最多 50 条。** `output.annotations` 每请求上限 50；要报更多就得多次 `PATCH`
    同一个 check run，每次追加一批（注解是累加的，不是覆盖）。武陵这边一个 matrix 展开后的
@@ -168,6 +171,12 @@ HMAC-SHA256 校验并**常量时间**比较；校验不过一律 401。
    conclusion 的 `UpdateCheckRun` 尚未接到 pipeline 终态（见 handoff 后续增强）。
    PR 上没出现但 Delivery 里 `check_suite` 是绿的，多半是 Checks 权限没生效（回 §0）
    或 `check_run.app.id` 过滤把自己也滤掉了。
+5. **外部检查同步**：完成一次 GitHub Actions workflow，Recent Deliveries 中应同时能看到订阅到的
+   `workflow_run`（工作流级）以及相应 `check_run`（job/第三方检查级）。只有 `status=completed`
+   的事件会落入 `github_check_states`：`conclusion=success` 归一为 `color=green`，其余终态归一为
+   `color=red`，避免取消、超时或未知结论被误报为通过。每个完成事件还会以
+   `github.check.completed` 写入 `notification_outbox`；当前只持久化、不发送，后续通知 worker
+   可消费 `delivered_at IS NULL` 的记录并投递站内信、推送或邮件。Webhook 重投不会重复入队。
 
 ---
 
