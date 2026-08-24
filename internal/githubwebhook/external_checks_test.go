@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/zixiao-labs/wuling-devops/internal/db"
+	"github.com/zixiao-labs/wuling-devops/internal/githubapp"
 	"github.com/zixiao-labs/wuling-devops/internal/githubwebhook"
 	"github.com/zixiao-labs/wuling-devops/internal/notification"
 	"github.com/zixiao-labs/wuling-devops/internal/testutil/dbtest"
@@ -112,6 +113,136 @@ func TestProcessor_WorkflowRunCompletionTracksAttemptAndFailure(t *testing.T) {
 		WHERE event_type = 'github.check.completed' AND repo_id = $1
 	`, repoID).Scan(&color))
 	assert.Equal(t, githubwebhook.CheckColorRed, color)
+}
+
+func TestProcessor_WorkflowRunCompletionEchoesStableRequiredCheck(t *testing.T) {
+	proc, checks, _, repoID := linkedCheckProcessor(t)
+	app := &fakeAppClient{createID: 9001}
+	proc.App = app
+	body := []byte(`{
+		"action":"completed",
+		"workflow_run":{
+			"id":456789,
+			"name":"CI",
+			"head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			"status":"completed",
+			"conclusion":"failure",
+			"html_url":"https://github.com/acme/app/actions/runs/456789",
+			"run_attempt":2,
+			"updated_at":"2026-08-24T10:00:00Z"
+		},
+		"repository":{"name":"app","full_name":"acme/app","owner":{"login":"acme"}}
+	}`)
+	event := githubwebhook.EventContext{
+		DeliveryID: "workflow-run-feedback",
+		Event:      "workflow_run",
+		Body:       body,
+		Log:        discardLogger(),
+	}
+
+	require.NoError(t, proc.Handle(event))
+	require.Len(t, app.creates, 1)
+	created := app.creates[0]
+	assert.Equal(t, int64(42), app.installationIDs[0])
+	assert.Equal(t, "installation-token", created.token)
+	assert.Equal(t, "acme", created.owner)
+	assert.Equal(t, "app", created.repo)
+	assert.Equal(t, "武陵监听 / GitHub Actions / CI", created.body.Name)
+	assert.Equal(t, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", created.body.HeadSHA)
+	assert.Equal(t, "completed", created.body.Status)
+	assert.Equal(t, "failure", created.body.Conclusion)
+	assert.Equal(t, "2026-08-24T10:00:00Z", created.body.CompletedAt)
+	assert.Equal(t, "https://github.com/acme/app/actions/runs/456789", created.body.DetailsURL)
+	assert.Equal(t, "wuling-monitor:workflow_run:456789", created.body.ExternalID)
+	require.NotNil(t, created.body.Output)
+	assert.Equal(t, created.body.Name, created.body.Output.Title)
+
+	stored, err := checks.Get(context.Background(), repoID, "workflow_run", "456789")
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.Equal(t, int64(9001), stored.FeedbackCheckRunID)
+
+	// Processor-level replay reuses the persisted feedback ID. GitHub delivery
+	// de-duplication happens one layer above and is covered separately.
+	require.NoError(t, proc.Handle(event))
+	require.Len(t, app.creates, 1)
+	require.Len(t, app.updates, 1)
+	assert.Equal(t, int64(9001), app.updates[0].checkRunID)
+	assert.Equal(t, created.body.Name, app.updates[0].body.Name)
+	assert.Equal(t, created.body.ExternalID, app.updates[0].body.ExternalID)
+	assert.Equal(t, created.body.CompletedAt, app.updates[0].body.CompletedAt)
+}
+
+func TestProcessor_ThirdPartyCheckCompletionEchoesProviderContext(t *testing.T) {
+	proc, checks, _, repoID := linkedCheckProcessor(t)
+	app := &fakeAppClient{createID: 9002}
+	proc.App = app
+	body := []byte(`{
+		"action":"completed",
+		"check_run":{
+			"id":7654321,
+			"name":"codecov/project",
+			"head_sha":"cccccccccccccccccccccccccccccccccccccccc",
+			"status":"completed",
+			"conclusion":"success",
+			"details_url":"https://app.codecov.io/gh/acme/app/commit/cccc",
+			"completed_at":"2026-08-24T11:00:00Z",
+			"app":{"id":254,"slug":"codecov","name":"Codecov"}
+		},
+		"repository":{"name":"app","full_name":"acme/app","owner":{"login":"acme"}}
+	}`)
+
+	require.NoError(t, proc.Handle(githubwebhook.EventContext{
+		DeliveryID: "third-party-feedback",
+		Event:      "check_run",
+		Body:       body,
+		Log:        discardLogger(),
+	}))
+	require.Len(t, app.creates, 1)
+	created := app.creates[0]
+	assert.Equal(t, "武陵监听 / codecov / codecov/project", created.body.Name)
+	assert.Equal(t, "success", created.body.Conclusion)
+	assert.Equal(t, "wuling-monitor:check_run:7654321", created.body.ExternalID)
+
+	stored, err := checks.Get(context.Background(), repoID, "check_run", "7654321")
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.Equal(t, int64(9002), stored.FeedbackCheckRunID)
+}
+
+func TestProcessor_OwnFeedbackCheckCompletionIsIgnored(t *testing.T) {
+	proc, checks, pool, repoID := linkedCheckProcessor(t)
+	app := &fakeAppClient{createID: 9003}
+	proc.App = app
+	body := []byte(`{
+		"action":"completed",
+		"check_run":{
+			"id":9001,
+			"name":"武陵监听 / GitHub Actions / CI",
+			"external_id":"wuling-monitor:workflow_run:456789",
+			"head_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			"status":"completed",
+			"conclusion":"failure",
+			"completed_at":"2026-08-24T11:00:00Z",
+			"app":{"id":3713023,"slug":"wuling-devops","name":"Wuling DevOps"}
+		},
+		"repository":{"name":"app","full_name":"acme/app","owner":{"login":"acme"}}
+	}`)
+
+	require.NoError(t, proc.Handle(githubwebhook.EventContext{
+		DeliveryID: "own-feedback",
+		Event:      "check_run",
+		Body:       body,
+		Log:        discardLogger(),
+	}))
+	assert.Empty(t, app.creates)
+	assert.Empty(t, app.updates)
+	stored, err := checks.Get(context.Background(), repoID, "check_run", "9001")
+	require.NoError(t, err)
+	assert.Nil(t, stored)
+	var count int
+	require.NoError(t, pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM notification_outbox`).Scan(&count))
+	assert.Zero(t, count)
 }
 
 func TestCheckStore_OutOfOrderCompletionPreservesLatestState(t *testing.T) {
@@ -285,4 +416,59 @@ func (p rollbackPublisher) PublishTx(ctx context.Context, tx pgx.Tx, event notif
 		return err
 	}
 	return errors.New("force notification rollback")
+}
+
+type checkCreateCall struct {
+	token string
+	owner string
+	repo  string
+	body  githubapp.CreateCheckRunRequest
+}
+
+type checkUpdateCall struct {
+	token      string
+	owner      string
+	repo       string
+	checkRunID int64
+	body       githubapp.UpdateCheckRunRequest
+}
+
+type fakeAppClient struct {
+	createID        int64
+	installationIDs []int64
+	creates         []checkCreateCall
+	updates         []checkUpdateCall
+}
+
+func (f *fakeAppClient) InstallationToken(installationID int64) (string, error) {
+	f.installationIDs = append(f.installationIDs, installationID)
+	return "installation-token", nil
+}
+
+func (f *fakeAppClient) CreateCheckRun(
+	token, owner, repo string,
+	body githubapp.CreateCheckRunRequest,
+) (int64, error) {
+	f.creates = append(f.creates, checkCreateCall{
+		token: token,
+		owner: owner,
+		repo:  repo,
+		body:  body,
+	})
+	return f.createID, nil
+}
+
+func (f *fakeAppClient) UpdateCheckRun(
+	token, owner, repo string,
+	checkRunID int64,
+	body githubapp.UpdateCheckRunRequest,
+) error {
+	f.updates = append(f.updates, checkUpdateCall{
+		token:      token,
+		owner:      owner,
+		repo:       repo,
+		checkRunID: checkRunID,
+		body:       body,
+	})
+	return nil
 }

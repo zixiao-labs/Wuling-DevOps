@@ -17,7 +17,7 @@ import (
 // Processor handles verified webhook events after the MVP accept path.
 type Processor struct {
 	AppID   int64
-	App     *githubapp.Client
+	App     AppClient
 	Links   *LinkStore
 	Layout  *repostore.Layout
 	Trigger *pipelinetrigger.Service
@@ -28,6 +28,15 @@ type Processor struct {
 	Notifications notification.TxPublisher
 	// PublicBaseURL is used as check-run details_url prefix when non-empty.
 	PublicBaseURL string
+}
+
+// AppClient is the GitHub App boundary used by webhook processing. The
+// concrete githubapp.Client authenticates with an installation token; the
+// interface keeps event-to-Check feedback independently testable.
+type AppClient interface {
+	InstallationToken(installationID int64) (string, error)
+	CreateCheckRun(token, owner, repo string, body githubapp.CreateCheckRunRequest) (int64, error)
+	UpdateCheckRun(token, owner, repo string, checkRunID int64, body githubapp.UpdateCheckRunRequest) error
 }
 
 // Handle dispatches by X-GitHub-Event.
@@ -404,10 +413,13 @@ func (p *Processor) onCheckRun(ctx context.Context, ec EventContext) error {
 	if err := json.Unmarshal(ec.Body, &payload); err != nil {
 		return err
 	}
-	// Completion is intentionally observed for every provider. We never PATCH
-	// external check runs; the App-ID filter below still gates control actions.
+	// Completion is intentionally observed for every provider. Feedback checks
+	// created by this App are excluded so their completed webhook cannot create
+	// a feedback loop or duplicate the notification stream.
+	isFeedback := p.AppID != 0 && payload.CheckRun.App.ID == p.AppID &&
+		strings.HasPrefix(payload.CheckRun.ExternalID, feedbackExternalIDPrefix)
 	if payload.Action == "completed" && payload.CheckRun.Status == "completed" &&
-		payload.CheckRun.ID != 0 && payload.CheckRun.Conclusion != "" {
+		payload.CheckRun.ID != 0 && payload.CheckRun.Conclusion != "" && !isFeedback {
 		provider := payload.CheckRun.App.Slug
 		if provider == "" {
 			provider = payload.CheckRun.App.Name
@@ -423,7 +435,7 @@ func (p *Processor) onCheckRun(ctx context.Context, ec EventContext) error {
 				Attempt:     1,
 				DetailsURL:  payload.CheckRun.DetailsURL,
 				CompletedAt: timeOrNow(payload.CheckRun.CompletedAt),
-			}); err != nil {
+			}, p.AppID == 0 || payload.CheckRun.App.ID != p.AppID); err != nil {
 			return err
 		}
 	}

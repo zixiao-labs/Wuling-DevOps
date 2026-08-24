@@ -32,6 +32,9 @@ type CheckCompletion struct {
 	Attempt     int
 	DetailsURL  string
 	CompletedAt time.Time
+	// FeedbackCheckRunID is the Wuling-owned GitHub Check Run that mirrors this
+	// observed external result. Zero means no feedback has been created yet.
+	FeedbackCheckRunID int64
 }
 
 // CheckStore keeps the latest terminal state for each GitHub check resource.
@@ -113,14 +116,16 @@ func upsertCheck(ctx context.Context, q checkQueryRower, check CheckCompletion) 
 			                            (github_check_states.attempt, github_check_states.completed_at)
 			                  THEN now() ELSE github_check_states.updated_at END
 		RETURNING id, repo_id, source, external_id, name, provider, head_sha,
-		          conclusion, color, attempt, details_url, completed_at
+		          conclusion, color, attempt, details_url, completed_at,
+		          COALESCE(feedback_check_run_id, 0)
 	`, check.ID, check.RepoID, check.Source, check.ExternalID, check.Name,
 		check.Provider, check.HeadSHA, check.Conclusion, check.Color, check.Attempt,
 		check.DetailsURL, check.CompletedAt)
 	var saved CheckCompletion
 	if err := row.Scan(&saved.ID, &saved.RepoID, &saved.Source, &saved.ExternalID,
 		&saved.Name, &saved.Provider, &saved.HeadSHA, &saved.Conclusion,
-		&saved.Color, &saved.Attempt, &saved.DetailsURL, &saved.CompletedAt); err != nil {
+		&saved.Color, &saved.Attempt, &saved.DetailsURL, &saved.CompletedAt,
+		&saved.FeedbackCheckRunID); err != nil {
 		return nil, fmt.Errorf("upsert github check state: %w", err)
 	}
 	return &saved, nil
@@ -130,20 +135,46 @@ func upsertCheck(ctx context.Context, q checkQueryRower, check CheckCompletion) 
 func (s *CheckStore) Get(ctx context.Context, repoID uuid.UUID, source, externalID string) (*CheckCompletion, error) {
 	row := s.Pool.QueryRow(ctx, `
 		SELECT id, repo_id, source, external_id, name, provider, head_sha,
-		       conclusion, color, attempt, details_url, completed_at
+		       conclusion, color, attempt, details_url, completed_at,
+		       COALESCE(feedback_check_run_id, 0)
 		FROM github_check_states
 		WHERE repo_id = $1 AND source = $2 AND external_id = $3
 	`, repoID, source, externalID)
 	var check CheckCompletion
 	if err := row.Scan(&check.ID, &check.RepoID, &check.Source, &check.ExternalID,
 		&check.Name, &check.Provider, &check.HeadSHA, &check.Conclusion,
-		&check.Color, &check.Attempt, &check.DetailsURL, &check.CompletedAt); err != nil {
+		&check.Color, &check.Attempt, &check.DetailsURL, &check.CompletedAt,
+		&check.FeedbackCheckRunID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("get github check state: %w", err)
 	}
 	return &check, nil
+}
+
+// SetFeedbackCheckRunID links an observed external result to the Wuling-owned
+// Check Run created for it, making webhook retries update rather than duplicate
+// the branch-protection context.
+func (s *CheckStore) SetFeedbackCheckRunID(ctx context.Context, id uuid.UUID, checkRunID int64) error {
+	if s == nil || s.Pool == nil {
+		return fmt.Errorf("github check store is not configured")
+	}
+	if id == uuid.Nil || checkRunID <= 0 {
+		return fmt.Errorf("invalid github feedback check run link")
+	}
+	tag, err := s.Pool.Exec(ctx, `
+		UPDATE github_check_states
+		SET feedback_check_run_id = $1, updated_at = now()
+		WHERE id = $2
+	`, checkRunID, id)
+	if err != nil {
+		return fmt.Errorf("link github feedback check run: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("link github feedback check run: check state not found")
+	}
+	return nil
 }
 
 // NormalizeCheckColor maps GitHub terminal conclusions to Wuling's compact

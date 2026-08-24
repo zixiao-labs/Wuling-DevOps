@@ -2408,7 +2408,35 @@ export interface paths {
         };
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Permanently delete a repo and its bare Git data
+         * @description Requires maintainer or above. This action cannot be undone.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    org_slug: components["parameters"]["OrgSlug"];
+                    project_slug: components["parameters"]["ProjectSlug"];
+                    repo_slug: components["parameters"]["RepoSlug"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description deleted */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["UnauthorizedError"];
+                403: components["responses"]["ForbiddenError"];
+                404: components["responses"]["NotFoundError"];
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;
