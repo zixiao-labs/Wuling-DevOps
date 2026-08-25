@@ -499,12 +499,14 @@ export interface GitHubRepoLink {
   name?: string;
   full_name?: string;
   installation_id?: number;
+  install_url?: string;
 }
 
 export interface PutGitHubRepoLinkRequest {
   owner: string;
   name: string;
-  installation_id: number;
+  /** Optional legacy override; the server resolves this from owner/name when App auth is configured. */
+  installation_id?: number;
 }
 
 export interface GitRef {

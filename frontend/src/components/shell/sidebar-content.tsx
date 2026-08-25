@@ -188,7 +188,7 @@ function ProjectSidebar({ orgSlug, projectSlug }: { orgSlug: string; projectSlug
         <NavItem to={`${base}/repos`} icon={Code} label="仓库" />
       </SidebarSection>
       <SidebarSection label="持续集成">
-        <NavItem to={`${base}/pipelines`} icon={Rocket} label="Pipelines" />
+        <NavItem to={`${base}/pipelines`} icon={Rocket} label="Pipelines" badge="Beta" />
         <NavItem to={`${base}/test-plans`} icon={Flask} label="Test Plans" />
         <NavItem to={`${base}/artifacts`} icon={Boxes3} label="Artifacts" />
         <NavItem to={`${base}/secrets`} icon={Key} label="机密" />

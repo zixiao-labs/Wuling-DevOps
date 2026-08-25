@@ -33,6 +33,7 @@ import {
 import { parseGitHubRepository } from "@/features/repositories/github-link";
 
 type Strategy = RepoSettings["merge_strategies"][number];
+const GITHUB_APP_INSTALL_URL = "https://github.com/apps/wuling-devops/installations/new";
 
 export default function RepositorySettingsPage() {
   const org = useOrgCtx();
@@ -50,7 +51,6 @@ export default function RepositorySettingsPage() {
   const [githubLink, setGithubLink] = useState<GitHubRepoLink | null>(null);
   const [githubLoading, setGithubLoading] = useState(true);
   const [githubRepository, setGithubRepository] = useState("");
-  const [installationID, setInstallationID] = useState("");
   const [githubError, setGithubError] = useState<ApiError | null>(null);
   const [linking, setLinking] = useState(false);
   const [linkSaved, setLinkSaved] = useState(false);
@@ -63,9 +63,7 @@ export default function RepositorySettingsPage() {
   const base = `/orgs/${encodeURIComponent(org.slug)}/projects/${encodeURIComponent(project.slug)}/repos/${encodeURIComponent(repo)}`;
   const reposPath = `/orgs/${encodeURIComponent(org.slug)}/projects/${encodeURIComponent(project.slug)}/repos`;
   const parsedGitHubRepo = parseGitHubRepository(githubRepository);
-  const numericInstallationID = Number(installationID);
-  const installationIDIsValid =
-    Number.isSafeInteger(numericInstallationID) && numericInstallationID > 0;
+  const githubInstallURL = githubLink?.install_url ?? GITHUB_APP_INSTALL_URL;
 
   useEffect(() => {
     let cancelled = false;
@@ -97,7 +95,6 @@ export default function RepositorySettingsPage() {
         setGithubLink(link);
         if (link.linked) {
           setGithubRepository(link.full_name ?? `${link.owner}/${link.name}`);
-          setInstallationID(String(link.installation_id ?? ""));
         }
       })
       .catch((err) => {
@@ -162,18 +159,16 @@ export default function RepositorySettingsPage() {
 
   async function saveGitHubLink(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!parsedGitHubRepo || !installationIDIsValid || !canManage) return;
+    if (!parsedGitHubRepo || !canManage) return;
     setLinking(true);
     setLinkSaved(false);
     setGithubError(null);
     try {
       const link = await reposApi.putGithubLink(org.slug, project.slug, repo, {
         ...parsedGitHubRepo,
-        installation_id: numericInstallationID,
       });
       setGithubLink(link);
       setGithubRepository(link.full_name ?? `${link.owner}/${link.name}`);
-      setInstallationID(String(link.installation_id ?? ""));
       setLinkSaved(true);
     } catch (err) {
       setGithubError(err as ApiError);
@@ -335,6 +330,23 @@ export default function RepositorySettingsPage() {
             <div className="py-2 text-[12.5px] text-muted">正在读取关联状态…</div>
           ) : (
             <form onSubmit={saveGitHubLink} className="grid max-w-2xl gap-4">
+              <div className="flex flex-col gap-3 rounded-md border border-[var(--border)] bg-[var(--surface-secondary)] px-3 py-3 sm:flex-row sm:items-center">
+                <LogoGithub width={18} height={18} className="shrink-0 text-fg" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-[12.5px] font-medium text-fg">Wuling DevOps GitHub App</div>
+                  <div className="mt-0.5 text-[11.5px] leading-relaxed text-muted">
+                    先授予公开 App 访问目标仓库的权限；关联时会自动识别 Installation ID。
+                  </div>
+                </div>
+                <a
+                  href={githubInstallURL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex h-8 shrink-0 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 text-[12px] font-medium text-fg transition-colors hover:bg-[var(--surface-tertiary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
+                >
+                  {githubLink?.linked ? "配置 GitHub App" : "安装 GitHub App"}
+                </a>
+              </div>
               {githubLink?.linked && githubLink.full_name ? (
                 <div className="rounded-md border border-[var(--border)] bg-[var(--surface-secondary)] px-3 py-2 text-[12.5px] text-fg">
                   当前关联：
@@ -361,27 +373,10 @@ export default function RepositorySettingsPage() {
               >
                 <Label>GitHub 仓库</Label>
                 <Input placeholder="owner/repository 或 GitHub URL" />
-                <Description>支持 owner/name、HTTPS URL 或 SSH clone URL。</Description>
-                <FieldError>请输入有效的 GitHub owner/name 或仓库 URL。</FieldError>
-              </TextField>
-              <TextField
-                name="installation_id"
-                type="number"
-                value={installationID}
-                onChange={(value) => {
-                  setInstallationID(value);
-                  setLinkSaved(false);
-                }}
-                isRequired
-                isDisabled={!canManage}
-                isInvalid={installationID.length > 0 && !installationIDIsValid}
-              >
-                <Label>GitHub App Installation ID</Label>
-                <Input placeholder="12345678" inputMode="numeric" min={1} />
                 <Description>
-                  可从 GitHub App 安装设置页 URL 或 installation webhook payload 获取。
+                  支持 owner/name、HTTPS URL 或 SSH clone URL；Installation ID 由服务端自动获取。
                 </Description>
-                <FieldError>Installation ID 必须是正整数。</FieldError>
+                <FieldError>请输入有效的 GitHub owner/name 或仓库 URL。</FieldError>
               </TextField>
               {!canManage ? (
                 <p className="text-[12.5px] text-muted">需要 Maintainer 或 Owner 权限才能修改关联。</p>
@@ -400,7 +395,7 @@ export default function RepositorySettingsPage() {
                 <Button
                   type="submit"
                   isPending={linking}
-                  isDisabled={!canManage || !parsedGitHubRepo || !installationIDIsValid}
+                  isDisabled={!canManage || !parsedGitHubRepo}
                 >
                   {linking ? "关联中…" : githubLink?.linked ? "更新关联" : "关联 GitHub 仓库"}
                 </Button>

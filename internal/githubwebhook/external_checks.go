@@ -115,8 +115,14 @@ func (p *Processor) echoCheckCompletion(
 	link *RepoLink,
 	check *CheckCompletion,
 ) error {
-	if p.App == nil || check == nil || check.HeadSHA == "" {
-		return nil
+	if check == nil {
+		return fmt.Errorf("echo github check completion: check is nil")
+	}
+	if check.HeadSHA == "" {
+		return fmt.Errorf("echo github check completion: head SHA is empty")
+	}
+	if p.App == nil {
+		return githubAppUnavailable("echo github check completion")
 	}
 	token, err := p.App.InstallationToken(link.InstallationID)
 	if err != nil {

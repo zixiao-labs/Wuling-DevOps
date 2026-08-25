@@ -84,9 +84,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !claimed {
-			log.Info("github-webhook: duplicate delivery ignored")
-			httpapi.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "duplicate": true})
-			return
+			if !replayableCheckCompletion(event, action) || h.Process == nil {
+				log.Info("github-webhook: duplicate delivery ignored")
+				httpapi.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "duplicate": true})
+				return
+			}
+			// Terminal external-check processing is idempotent at the state,
+			// notification, and feedback Check Run layers. Replaying it repairs
+			// deliveries that an older server accepted while App credentials were
+			// unavailable. Events that can create pipeline runs remain strictly
+			// delivery-deduplicated.
+			log.Info("github-webhook: replaying duplicate check completion")
 		}
 	}
 
@@ -118,6 +126,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func replayableCheckCompletion(event, action string) bool {
+	return action == "completed" && (event == "check_run" || event == "workflow_run")
 }
 
 func peekAction(body []byte) string {

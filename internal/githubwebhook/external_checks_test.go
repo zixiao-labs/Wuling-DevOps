@@ -32,6 +32,7 @@ func TestNormalizeCheckColor(t *testing.T) {
 
 func TestProcessor_ExternalCheckRunCompletionBecomesGreenAndEnqueuesNotification(t *testing.T) {
 	proc, checks, pool, repoID := linkedCheckProcessor(t)
+	proc.App = &fakeAppClient{createID: 8001}
 	body := []byte(`{
 		"action":"completed",
 		"check_run":{
@@ -76,6 +77,7 @@ func TestProcessor_ExternalCheckRunCompletionBecomesGreenAndEnqueuesNotification
 
 func TestProcessor_WorkflowRunCompletionTracksAttemptAndFailure(t *testing.T) {
 	proc, checks, pool, repoID := linkedCheckProcessor(t)
+	proc.App = &fakeAppClient{createID: 8002}
 	body := []byte(`{
 		"action":"completed",
 		"workflow_run":{
@@ -208,6 +210,63 @@ func TestProcessor_ThirdPartyCheckCompletionEchoesProviderContext(t *testing.T) 
 	require.NoError(t, err)
 	require.NotNil(t, stored)
 	assert.Equal(t, int64(9002), stored.FeedbackCheckRunID)
+}
+
+func TestProcessor_CheckCompletionWithoutAppFailsInsteadOfReturningSuccess(t *testing.T) {
+	proc, checks, _, repoID := linkedCheckProcessor(t)
+	body := []byte(`{
+		"action":"completed",
+		"check_run":{
+			"id":7654322,
+			"name":"build",
+			"head_sha":"cccccccccccccccccccccccccccccccccccccccc",
+			"status":"completed",
+			"conclusion":"success",
+			"completed_at":"2026-08-24T11:00:00Z",
+			"app":{"id":15368,"slug":"github-actions","name":"GitHub Actions"}
+		},
+		"repository":{"name":"app","full_name":"acme/app","owner":{"login":"acme"}}
+	}`)
+	event := githubwebhook.EventContext{
+		DeliveryID: "missing-app-feedback",
+		Event:      "check_run",
+		Body:       body,
+		Log:        discardLogger(),
+	}
+
+	err := proc.Handle(event)
+	require.ErrorContains(t, err, "github app client is not configured")
+
+	// Observation remains durable, while a GitHub redelivery can retry only
+	// the missing feedback after the operator fixes the App credentials.
+	stored, getErr := checks.Get(context.Background(), repoID, "check_run", "7654322")
+	require.NoError(t, getErr)
+	require.NotNil(t, stored)
+	assert.Zero(t, stored.FeedbackCheckRunID)
+
+	app := &fakeAppClient{createID: 9004}
+	proc.App = app
+	require.NoError(t, proc.Handle(event))
+	require.Len(t, app.creates, 1)
+	assert.Equal(t, int64(9004), storedFeedbackID(t, checks, repoID, "check_run", "7654322"))
+}
+
+func TestProcessor_CheckSuiteWithoutAppFailsInsteadOfReturningSuccess(t *testing.T) {
+	proc, _, _, _ := linkedCheckProcessor(t)
+	body := []byte(`{
+		"action":"requested",
+		"check_suite":{"head_sha":"dddddddddddddddddddddddddddddddddddddddd"},
+		"repository":{"name":"app","full_name":"acme/app","owner":{"login":"acme"}},
+		"installation":{"id":42}
+	}`)
+
+	err := proc.Handle(githubwebhook.EventContext{
+		DeliveryID: "missing-app-check-suite",
+		Event:      "check_suite",
+		Body:       body,
+		Log:        discardLogger(),
+	})
+	require.ErrorContains(t, err, "github app client is not configured")
 }
 
 func TestProcessor_OwnFeedbackCheckCompletionIsIgnored(t *testing.T) {
@@ -405,6 +464,19 @@ func linkedCheckProcessor(t *testing.T) (*githubwebhook.Processor, *githubwebhoo
 
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+func storedFeedbackID(
+	t *testing.T,
+	checks *githubwebhook.CheckStore,
+	repoID uuid.UUID,
+	source, externalID string,
+) int64 {
+	t.Helper()
+	stored, err := checks.Get(context.Background(), repoID, source, externalID)
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	return stored.FeedbackCheckRunID
 }
 
 type rollbackPublisher struct {

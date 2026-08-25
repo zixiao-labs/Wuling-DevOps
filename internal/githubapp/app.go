@@ -7,9 +7,11 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -19,6 +21,14 @@ import (
 )
 
 const apiBase = "https://api.github.com"
+
+// PublicInstallationURL is the public Wuling DevOps GitHub App install flow.
+// GitHub lets the user select an account and the repositories to grant.
+const PublicInstallationURL = "https://github.com/apps/wuling-devops/installations/new"
+
+// ErrRepositoryInstallationNotFound means the App is not installed for the
+// repository, or the installation has not granted the App access to it.
+var ErrRepositoryInstallationNotFound = errors.New("github app installation not found for repository")
 
 // Client talks to the GitHub App API.
 type Client struct {
@@ -135,6 +145,32 @@ func (c *Client) InstallationToken(installationID int64) (string, error) {
 	c.tokens[installationID] = cachedToken{token: parsed.Token, expiresAt: parsed.ExpiresAt}
 	c.mu.Unlock()
 	return parsed.Token, nil
+}
+
+// RepositoryInstallation resolves the installation that can access owner/repo.
+// This endpoint is authenticated with the App JWT, so callers never need to
+// ask the user to find or copy an installation ID from GitHub settings.
+func (c *Client) RepositoryInstallation(owner, repo string) (int64, error) {
+	jwtStr, err := c.AppJWT()
+	if err != nil {
+		return 0, fmt.Errorf("create github app JWT: %w", err)
+	}
+	var out struct {
+		ID int64 `json:"id"`
+	}
+	endpoint := fmt.Sprintf("%s/repos/%s/%s/installation", apiBase,
+		url.PathEscape(owner), url.PathEscape(repo))
+	if err := c.doJSON(jwtStr, http.MethodGet, endpoint, nil, &out); err != nil {
+		var apiErr *APIError
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+			return 0, fmt.Errorf("%w: %s/%s", ErrRepositoryInstallationNotFound, owner, repo)
+		}
+		return 0, fmt.Errorf("get github repository installation: %w", err)
+	}
+	if out.ID <= 0 {
+		return 0, fmt.Errorf("get github repository installation: response has no installation id")
+	}
+	return out.ID, nil
 }
 
 // CloneURL builds an authenticated HTTPS clone URL for a repository.

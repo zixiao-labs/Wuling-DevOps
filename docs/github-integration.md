@@ -150,10 +150,13 @@ HMAC-SHA256 校验并**常量时间**比较；校验不过一律 401。
 `PUT /api/v1/orgs/{org}/projects/{project}/repos/{repo}/github-link`
 
 ```json
-{ "owner": "acme", "name": "app", "installation_id": 12345678 }
+{ "owner": "acme", "name": "app" }
 ```
 
-未绑定的 GitHub 仓库事件会被忽略（不 5xx）。
+控制面使用 GitHub App JWT 自动调用仓库 installation 查询接口，不需要用户从设置页复制
+`installation_id`。如果 App 尚未安装或没有被授予该仓库，绑定 API 会返回可操作的 400，并附带
+公开 App 安装地址 `https://github.com/apps/wuling-devops/installations/new`。未绑定的 GitHub 仓库
+事件会被忽略（不 5xx）。
 
 `WULING_OAUTH_GITHUB_CLIENT_ID` / `..._SECRET` 保持不变——**登录走的仍然是同一个 App 的 OAuth 凭据**，
 这里新增的是 App 自身的身份（JWT 私钥），两者并存、互不影响。
@@ -173,7 +176,11 @@ HMAC-SHA256 校验并**常量时间**比较；校验不过一律 401。
    当前 MVP 只在 `check_suite` 上 `CreateCheckRun`；随流水线推进到 in progress /
    conclusion 的 `UpdateCheckRun` 尚未接到 pipeline 终态（见 handoff 后续增强）。
    PR 上没出现但 Delivery 里 `check_suite` 是绿的，多半是 Checks 权限没生效（回 §0）
-   或 `check_run.app.id` 过滤把自己也滤掉了。
+   或部署环境只配了 Webhook secret、没有同时配置 `WULING_GITHUB_APP_ID` 和 App 私钥。后一种
+   配置缺失现在会返回 500，修复变量后可在 Recent Deliveries 中直接 **Redeliver**；旧版本会
+   静默返回 200，需要特别检查控制面启动日志里的 `app private key unavailable`。升级后的服务会
+   对 `check_run.completed` / `workflow_run.completed` 安全重放重复 delivery，因此旧的绿色 200
+   delivery 也可以直接 Redeliver；会创建 run 的 push/PR 等事件仍严格去重。
 5. **外部检查同步**：完成一次 GitHub Actions workflow，Recent Deliveries 中应同时能看到订阅到的
    `workflow_run`（工作流级）以及相应 `check_run`（job/第三方检查级）。只有 `status=completed`
    的事件会落入 `github_check_states`：`conclusion=success` 归一为 `color=green`，其余终态归一为

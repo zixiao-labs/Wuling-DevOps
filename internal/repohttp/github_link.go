@@ -1,11 +1,13 @@
 package repohttp
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/zixiao-labs/wuling-devops/internal/apperr"
 	"github.com/zixiao-labs/wuling-devops/internal/auth"
+	"github.com/zixiao-labs/wuling-devops/internal/githubapp"
 	"github.com/zixiao-labs/wuling-devops/internal/githubwebhook"
 	"github.com/zixiao-labs/wuling-devops/internal/httpapi"
 )
@@ -13,7 +15,7 @@ import (
 type putGithubLinkReq struct {
 	Owner          string `json:"owner"           validate:"required,min=1,max=128"`
 	Name           string `json:"name"            validate:"required,min=1,max=128"`
-	InstallationID int64  `json:"installation_id" validate:"required,gt=0"`
+	InstallationID int64  `json:"installation_id" validate:"omitempty,gt=0"`
 }
 
 func (h *Handler) getGithubLink(w http.ResponseWriter, r *http.Request) {
@@ -32,7 +34,10 @@ func (h *Handler) getGithubLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if link == nil || !link.Active {
-		httpapi.WriteJSON(w, http.StatusOK, map[string]any{"linked": false})
+		httpapi.WriteJSON(w, http.StatusOK, map[string]any{
+			"linked":      false,
+			"install_url": githubapp.PublicInstallationURL,
+		})
 		return
 	}
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{
@@ -41,6 +46,7 @@ func (h *Handler) getGithubLink(w http.ResponseWriter, r *http.Request) {
 		"name":            link.Name,
 		"installation_id": link.InstallationID,
 		"full_name":       link.Owner + "/" + link.Name,
+		"install_url":     githubapp.PublicInstallationURL,
 	})
 }
 
@@ -73,10 +79,35 @@ func (h *Handler) putGithubLink(w http.ResponseWriter, r *http.Request) {
 		httpapi.RenderError(w, r, err)
 		return
 	}
+	owner := strings.TrimSpace(req.Owner)
+	name := strings.TrimSpace(req.Name)
+	installationID := req.InstallationID
+	if h.GithubInstallations != nil {
+		installationID, err = h.GithubInstallations.RepositoryInstallation(owner, name)
+		if errors.Is(err, githubapp.ErrRepositoryInstallationNotFound) {
+			httpapi.RenderError(w, r, apperr.Validation(
+				"Wuling DevOps GitHub App is not installed or cannot access this repository",
+				map[string]any{
+					"install_url": githubapp.PublicInstallationURL,
+					"repository":  owner + "/" + name,
+				},
+			))
+			return
+		}
+		if err != nil {
+			httpapi.RenderError(w, r, apperr.Wrap(apperr.CodeUnavailable,
+				"could not resolve the GitHub App installation", err))
+			return
+		}
+	} else if installationID <= 0 {
+		httpapi.RenderError(w, r, apperr.New(apperr.CodeUnavailable,
+			"automatic GitHub App installation lookup is not configured"))
+		return
+	}
 	link, err := h.GithubLinks.Upsert(r.Context(), githubwebhook.RepoLink{
-		InstallationID: req.InstallationID,
-		Owner:          strings.TrimSpace(req.Owner),
-		Name:           strings.TrimSpace(req.Name),
+		InstallationID: installationID,
+		Owner:          owner,
+		Name:           name,
 		OrgID:          orgID,
 		ProjectID:      projectID,
 		RepoID:         repo.ID,
@@ -91,5 +122,6 @@ func (h *Handler) putGithubLink(w http.ResponseWriter, r *http.Request) {
 		"name":            link.Name,
 		"installation_id": link.InstallationID,
 		"full_name":       link.Owner + "/" + link.Name,
+		"install_url":     githubapp.PublicInstallationURL,
 	})
 }
