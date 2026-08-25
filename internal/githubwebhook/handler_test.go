@@ -3,6 +3,7 @@ package githubwebhook_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -106,6 +107,34 @@ func TestDuplicateDelivery_OK(t *testing.T) {
 	assert.Equal(t, true, out["duplicate"])
 }
 
+func TestDuplicateCheckCompletion_IsReplayedForWriteBackRecovery(t *testing.T) {
+	pool := dbtest.Open(t)
+	dbtest.Reset(t, pool)
+
+	attempts := 0
+	h := &githubwebhook.Handler{
+		Secret: webhookSecret,
+		Store:  &githubwebhook.Store{Pool: pool},
+		Log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Process: func(githubwebhook.EventContext) error {
+			attempts++
+			return nil
+		},
+	}
+	mux := mount(h)
+	body := []byte(`{"action":"completed"}`)
+	sig := githubwebhook.SignBody(webhookSecret, body)
+
+	first := post(t, mux, "check_run", "delivery-check-replay-1", body, sig)
+	defer first.Body.Close()
+	require.Equal(t, http.StatusOK, first.StatusCode)
+
+	replayed := post(t, mux, "check_run", "delivery-check-replay-1", body, sig)
+	defer replayed.Body.Close()
+	assert.Equal(t, http.StatusOK, replayed.StatusCode)
+	assert.Equal(t, 2, attempts)
+}
+
 func TestUnknownEvent_Accepted(t *testing.T) {
 	pool := dbtest.Open(t)
 	dbtest.Reset(t, pool)
@@ -122,4 +151,35 @@ func TestUnknownEvent_Accepted(t *testing.T) {
 	res := post(t, mux, "pull_request", "delivery-pr-1", body, sig)
 	defer res.Body.Close()
 	assert.Equal(t, http.StatusAccepted, res.StatusCode)
+}
+
+func TestProcessFailure_ReleasesDeliveryForRedelivery(t *testing.T) {
+	pool := dbtest.Open(t)
+	dbtest.Reset(t, pool)
+
+	attempts := 0
+	h := &githubwebhook.Handler{
+		Secret: webhookSecret,
+		Store:  &githubwebhook.Store{Pool: pool},
+		Log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Process: func(githubwebhook.EventContext) error {
+			attempts++
+			if attempts == 1 {
+				return errors.New("temporary checks write-back failure")
+			}
+			return nil
+		},
+	}
+	mux := mount(h)
+	body := []byte(`{"action":"completed"}`)
+	sig := githubwebhook.SignBody(webhookSecret, body)
+
+	failed := post(t, mux, "check_run", "delivery-retry-1", body, sig)
+	defer failed.Body.Close()
+	require.Equal(t, http.StatusInternalServerError, failed.StatusCode)
+
+	retried := post(t, mux, "check_run", "delivery-retry-1", body, sig)
+	defer retried.Body.Close()
+	assert.Equal(t, http.StatusOK, retried.StatusCode)
+	assert.Equal(t, 2, attempts)
 }

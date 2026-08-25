@@ -8,6 +8,19 @@ import (
 	"net/http"
 )
 
+// APIError preserves the response status for callers that need to translate
+// specific GitHub failures (for example, an App not installed on a repo) into
+// a user-facing action instead of an opaque 500.
+type APIError struct {
+	Method     string
+	URL        string
+	StatusCode int
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("github %s %s -> %d", e.Method, e.URL, e.StatusCode)
+}
+
 // CreateCheckRunRequest is the GitHub Checks API create payload (subset).
 type CreateCheckRunRequest struct {
 	Name        string       `json:"name"`
@@ -80,7 +93,7 @@ func (c *Client) doJSON(token, method, url string, in, out any) error {
 	defer res.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 	if res.StatusCode/100 != 2 {
-		return fmt.Errorf("github %s %s -> %d", method, url, res.StatusCode)
+		return &APIError{Method: method, URL: url, StatusCode: res.StatusCode}
 	}
 	if out == nil || len(body) == 0 {
 		return nil

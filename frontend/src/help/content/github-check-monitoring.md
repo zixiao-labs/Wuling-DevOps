@@ -95,13 +95,14 @@ Authorization: Bearer <token>
 
 {
   "owner": "acme",
-  "name": "app",
-  "installation_id": 12345678
+  "name": "app"
 }
 ```
 
-`installation_id` 可以在 GitHub App 安装设置页 URL 或 installation Webhook payload 中找到。
-绑定完成后不需要重启控制面，也不需要修改业务仓库的 workflow 文件。
+控制面会使用 App JWT 根据 `owner/name` 自动获取 `installation_id`，不需要用户打开 GitHub 设置页
+查找或复制。若 App 尚未安装或未获准访问该仓库，先打开
+`https://github.com/apps/wuling-devops/installations/new` 选择账户和仓库，再重新关联。绑定完成后
+不需要重启控制面，也不需要修改业务仓库的 workflow 文件。
 
 ## 状态与通知语义
 
@@ -127,5 +128,9 @@ Authorization: Bearer <token>
    Rulesets**，把这个稳定名称选为 required status check。
 
 如果 Recent Deliveries 没有对应事件，先检查事件订阅和新权限是否已接受；如果 Delivery 是 200
-但没有状态记录，检查 GitHub 仓库是否已经绑定到正确的武陵仓库。已有状态但没有回显时，优先检查
-Checks 权限是否为 Read and write，以及 installation 是否已经接受新增权限。
+但没有状态记录，检查事件是否为上表要求的 completed 终态，以及 GitHub 仓库是否已经绑定到正确的
+武陵仓库。已有状态但没有回显时，优先检查 Checks 权限是否为 Read and write、installation 是否已经
+接受新增权限，以及控制面是否同时配置了 `WULING_GITHUB_APP_ID` 和 App 私钥。缺少 App 身份时新版
+控制面会让 delivery 返回 500；修好配置后可在 Recent Deliveries 中 **Redeliver**，不会丢失已记录状态。
+旧版本已经返回 200 的 completed delivery 也可在升级后重投；终态检查会幂等重放，而 push/PR 等
+会创建新流水线的事件继续严格去重。

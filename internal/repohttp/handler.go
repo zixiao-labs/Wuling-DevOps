@@ -37,6 +37,15 @@ type Handler struct {
 	// GithubLinks binds Wuling repos to GitHub App installation repos.
 	// When nil, github-link routes return 503.
 	GithubLinks *githubwebhook.LinkStore
+	// GithubInstallations resolves the installation ID from owner/repo using
+	// the GitHub App JWT. It removes the installation-ID copy/paste step from
+	// the public App linking flow.
+	GithubInstallations GitHubInstallationResolver
+}
+
+// GitHubInstallationResolver is implemented by githubapp.Client.
+type GitHubInstallationResolver interface {
+	RepositoryInstallation(owner, repo string) (int64, error)
 }
 
 // Permission is the access level required by a resolveAndCheck call.

@@ -1321,22 +1321,30 @@ paths:
                   name: { type: string }
                   full_name: { type: string }
                   installation_id: { type: integer, format: int64 }
+                  install_url: { type: string, format: uri }
         "401": { $ref: "#/components/responses/UnauthorizedError" }
         "404": { $ref: "#/components/responses/NotFoundError" }
     put:
       summary: Bind this Wuling repo to a GitHub App installation repository
-      description: Requires maintainer or above. Webhook push/PR handling only runs for linked repos.
+      description: |
+        Requires maintainer or above. The server uses its GitHub App JWT to
+        resolve the installation ID from owner/name; clients do not need to
+        copy it from GitHub settings. installation_id remains an optional
+        compatibility fallback when App authentication is unavailable.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [owner, name, installation_id]
+              required: [owner, name]
               properties:
                 owner: { type: string }
                 name: { type: string }
-                installation_id: { type: integer, format: int64 }
+                installation_id:
+                  type: integer
+                  format: int64
+                  description: Optional legacy fallback; normally resolved automatically.
       responses:
         "200":
           description: linked
@@ -1350,10 +1358,12 @@ paths:
                   name: { type: string }
                   full_name: { type: string }
                   installation_id: { type: integer, format: int64 }
+                  install_url: { type: string, format: uri }
         "400": { $ref: "#/components/responses/ValidationError" }
         "401": { $ref: "#/components/responses/UnauthorizedError" }
         "403": { $ref: "#/components/responses/ForbiddenError" }
         "404": { $ref: "#/components/responses/NotFoundError" }
+        "503": { description: GitHub App authentication or installation lookup unavailable }
 
   # ---------------- issues ----------------
 

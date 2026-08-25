@@ -1,7 +1,10 @@
 package repohttp
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +17,9 @@ import (
 	"github.com/zixiao-labs/wuling-devops/internal/apperr"
 	"github.com/zixiao-labs/wuling-devops/internal/auth"
 	"github.com/zixiao-labs/wuling-devops/internal/config"
+	"github.com/zixiao-labs/wuling-devops/internal/db"
+	"github.com/zixiao-labs/wuling-devops/internal/githubapp"
+	"github.com/zixiao-labs/wuling-devops/internal/githubwebhook"
 	"github.com/zixiao-labs/wuling-devops/internal/model"
 	"github.com/zixiao-labs/wuling-devops/internal/repostore"
 	"github.com/zixiao-labs/wuling-devops/internal/testutil/dbtest"
@@ -22,8 +28,11 @@ import (
 
 type deleteFixture struct {
 	router   http.Handler
+	pool     *db.Pool
 	store    *userstore.Store
 	repo     *model.Repo
+	layout   *repostore.Layout
+	verifier *auth.Verifier
 	repoPath string
 	apiPath  string
 	token    string
@@ -74,14 +83,18 @@ func newDeleteFixture(t *testing.T, role string) deleteFixture {
 	token, _, err := issuer.Issue(actor.ID, actor.Username)
 	require.NoError(t, err)
 
-	handler := &Handler{Store: store, Layout: layout, Verifier: auth.NewVerifier(jwtConfig)}
+	verifier := auth.NewVerifier(jwtConfig)
+	handler := &Handler{Store: store, Layout: layout, Verifier: verifier}
 	router := chi.NewRouter()
 	router.Route("/api/v1", func(api chi.Router) { handler.Mount(api) })
 
 	return deleteFixture{
 		router:   router,
+		pool:     pool,
 		store:    store,
 		repo:     repo,
+		layout:   layout,
+		verifier: verifier,
 		repoPath: repoPath,
 		apiPath:  "/api/v1/orgs/" + org.Slug + "/projects/" + project.Slug + "/repos/" + repo.Slug,
 		token:    token,
@@ -125,4 +138,98 @@ func TestDeleteRepoAllowsMaintainer(t *testing.T) {
 	_, err := fixture.store.GetRepoByID(t.Context(), fixture.repo.ID)
 	require.Error(t, err)
 	require.Equal(t, apperr.CodeNotFound, apperr.As(err).Code)
+}
+
+func TestPutGithubLinkResolvesInstallationAutomatically(t *testing.T) {
+	fixture := newDeleteFixture(t, auth.RoleOwner)
+	resolver := &fakeInstallationResolver{id: 4242}
+	router, links := fixture.githubLinkRouter(resolver)
+
+	response := fixture.putGithubLink(t, router, `{"owner":"acme","name":"app"}`)
+	require.Equal(t, http.StatusOK, response.Code)
+	var body struct {
+		InstallationID int64  `json:"installation_id"`
+		InstallURL     string `json:"install_url"`
+	}
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+	require.Equal(t, int64(4242), body.InstallationID)
+	require.Equal(t, githubapp.PublicInstallationURL, body.InstallURL)
+	require.Equal(t, "acme", resolver.owner)
+	require.Equal(t, "app", resolver.repo)
+
+	stored, err := links.GetByRepoID(t.Context(), fixture.repo.ID)
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	require.Equal(t, int64(4242), stored.InstallationID)
+}
+
+func TestPutGithubLinkNotInstalledReturnsInstallAction(t *testing.T) {
+	fixture := newDeleteFixture(t, auth.RoleOwner)
+	resolver := &fakeInstallationResolver{
+		err: fmt.Errorf("lookup: %w", githubapp.ErrRepositoryInstallationNotFound),
+	}
+	router, _ := fixture.githubLinkRouter(resolver)
+
+	response := fixture.putGithubLink(t, router, `{"owner":"acme","name":"app"}`)
+	require.Equal(t, http.StatusBadRequest, response.Code)
+	var body struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
+	require.Equal(t, string(apperr.CodeValidation), body.Error.Code)
+	require.Equal(t, githubapp.PublicInstallationURL, body.Error.Details["install_url"])
+}
+
+func TestPutGithubLinkKeepsLegacyInstallationIDFallback(t *testing.T) {
+	fixture := newDeleteFixture(t, auth.RoleOwner)
+	router, links := fixture.githubLinkRouter(nil)
+
+	response := fixture.putGithubLink(t, router,
+		`{"owner":"acme","name":"app","installation_id":777}`)
+	require.Equal(t, http.StatusOK, response.Code)
+	stored, err := links.GetByRepoID(t.Context(), fixture.repo.ID)
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	require.Equal(t, int64(777), stored.InstallationID)
+}
+
+func (f deleteFixture) githubLinkRouter(resolver GitHubInstallationResolver) (http.Handler, *githubwebhook.LinkStore) {
+	links := &githubwebhook.LinkStore{Pool: f.pool}
+	handler := &Handler{
+		Store: f.store, Layout: f.layout, Verifier: f.verifier,
+		GithubLinks: links, GithubInstallations: resolver,
+	}
+	router := chi.NewRouter()
+	router.Route("/api/v1", func(api chi.Router) { handler.Mount(api) })
+	return router, links
+}
+
+func (f deleteFixture) putGithubLink(
+	t *testing.T,
+	router http.Handler,
+	body string,
+) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPut, f.apiPath+"/github-link", bytes.NewBufferString(body))
+	req.Header.Set("Authorization", "Bearer "+f.token)
+	req.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, req)
+	return response
+}
+
+type fakeInstallationResolver struct {
+	id    int64
+	err   error
+	owner string
+	repo  string
+}
+
+func (r *fakeInstallationResolver) RepositoryInstallation(owner, repo string) (int64, error) {
+	r.owner = owner
+	r.repo = repo
+	return r.id, r.err
 }

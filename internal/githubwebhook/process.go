@@ -39,6 +39,10 @@ type AppClient interface {
 	UpdateCheckRun(token, owner, repo string, checkRunID int64, body githubapp.UpdateCheckRunRequest) error
 }
 
+func githubAppUnavailable(operation string) error {
+	return fmt.Errorf("%s: github app client is not configured; set WULING_GITHUB_APP_ID and WULING_GITHUB_APP_PRIVATE_KEY or WULING_GITHUB_APP_PRIVATE_KEY_PATH", operation)
+}
+
 // Handle dispatches by X-GitHub-Event.
 func (p *Processor) Handle(ec EventContext) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -353,8 +357,11 @@ func (p *Processor) onCheckSuite(ctx context.Context, ec EventContext) error {
 		owner, name = splitFullName(payload.Repository.FullName)
 	}
 	link, err := p.Links.GetByFullName(ctx, owner, name)
-	if err != nil || link == nil || p.App == nil {
+	if err != nil || link == nil {
 		return err
+	}
+	if p.App == nil {
+		return githubAppUnavailable("create github check run")
 	}
 	instID := payload.Installation.ID
 	if instID == 0 {
@@ -462,8 +469,11 @@ func (p *Processor) onCheckRun(ctx context.Context, ec EventContext) error {
 			owner, name = splitFullName(payload.Repository.FullName)
 		}
 		link, err := p.Links.GetByFullName(ctx, owner, name)
-		if err != nil || link == nil || p.App == nil {
+		if err != nil || link == nil {
 			return err
+		}
+		if p.App == nil {
+			return githubAppUnavailable("update github check run")
 		}
 		instID := payload.Installation.ID
 		if instID == 0 {

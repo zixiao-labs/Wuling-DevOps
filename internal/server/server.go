@@ -131,6 +131,29 @@ func New(d Deps) http.Handler {
 		d.Cfg.Autoscale.Enabled,
 	)
 
+	// Build one App-authenticated GitHub client and share it between repository
+	// linking (automatic installation lookup) and webhook processing. The
+	// public App flow only needs owner/repo from the user; the server resolves
+	// the installation with its short-lived App JWT.
+	var githubAppClient *githubapp.Client
+	if d.Cfg.GithubApp.AppID == 0 {
+		if d.Cfg.GithubApp.WebhookSecret != "" || d.Cfg.GithubApp.PrivateKey != "" ||
+			d.Cfg.GithubApp.PrivateKeyPath != "" {
+			d.Log.Warn("github-app: WULING_GITHUB_APP_ID unset; installation lookup, sync, and checks disabled")
+		}
+	} else if key, err := githubapp.LoadPrivateKey(
+		d.Cfg.GithubApp.PrivateKey,
+		d.Cfg.GithubApp.PrivateKeyPath,
+	); err != nil {
+		d.Log.Warn("github-app: private key unavailable; installation lookup, sync, and checks disabled", "err", err)
+	} else {
+		githubAppClient = githubapp.New(d.Cfg.GithubApp.AppID, key, nil)
+	}
+	var githubInstallations repohttp.GitHubInstallationResolver
+	if githubAppClient != nil {
+		githubInstallations = githubAppClient
+	}
+
 	r := chi.NewRouter()
 	r.Use(httpapi.RequestIDMiddleware)
 	r.Use(httpapi.LoggingMiddleware(d.Log))
@@ -224,7 +247,7 @@ func New(d Deps) http.Handler {
 		githubLinks := &githubwebhook.LinkStore{Pool: d.Pool}
 		(&repohttp.Handler{
 			Store: d.Store, Layout: d.Layout, Verifier: verifier, OAT: oauthH,
-			GithubLinks: githubLinks,
+			GithubLinks: githubLinks, GithubInstallations: githubInstallations,
 		}).Mount(api)
 
 		(&issuehttp.Handler{
@@ -308,12 +331,8 @@ func New(d Deps) http.Handler {
 				Notifications: &notification.Outbox{Pool: d.Pool},
 				PublicBaseURL: d.Cfg.OAuth.PublicBaseURL,
 			}
-			if key, kerr := githubapp.LoadPrivateKey(d.Cfg.GithubApp.PrivateKey, d.Cfg.GithubApp.PrivateKeyPath); kerr != nil {
-				d.Log.Warn("github-webhook: app private key unavailable; sync/checks disabled", "err", kerr)
-			} else if d.Cfg.GithubApp.AppID == 0 {
-				d.Log.Warn("github-webhook: WULING_GITHUB_APP_ID unset; sync/checks disabled")
-			} else {
-				proc.App = githubapp.New(d.Cfg.GithubApp.AppID, key, nil)
+			if githubAppClient != nil {
+				proc.App = githubAppClient
 			}
 			wh.Process = proc.Handle
 			wh.Mount(api)

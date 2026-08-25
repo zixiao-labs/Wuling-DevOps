@@ -2706,6 +2706,8 @@ export interface paths {
                             full_name?: string;
                             /** Format: int64 */
                             installation_id?: number;
+                            /** Format: uri */
+                            install_url?: string;
                         };
                     };
                 };
@@ -2715,7 +2717,10 @@ export interface paths {
         };
         /**
          * Bind this Wuling repo to a GitHub App installation repository
-         * @description Requires maintainer or above. Webhook push/PR handling only runs for linked repos.
+         * @description Requires maintainer or above. The server uses its GitHub App JWT to
+         *     resolve the installation ID from owner/name; clients do not need to
+         *     copy it from GitHub settings. installation_id remains an optional
+         *     compatibility fallback when App authentication is unavailable.
          */
         put: {
             parameters: {
@@ -2733,8 +2738,11 @@ export interface paths {
                     "application/json": {
                         owner: string;
                         name: string;
-                        /** Format: int64 */
-                        installation_id: number;
+                        /**
+                         * Format: int64
+                         * @description Optional legacy fallback; normally resolved automatically.
+                         */
+                        installation_id?: number;
                     };
                 };
             };
@@ -2752,6 +2760,8 @@ export interface paths {
                             full_name?: string;
                             /** Format: int64 */
                             installation_id?: number;
+                            /** Format: uri */
+                            install_url?: string;
                         };
                     };
                 };
@@ -2759,6 +2769,13 @@ export interface paths {
                 401: components["responses"]["UnauthorizedError"];
                 403: components["responses"]["ForbiddenError"];
                 404: components["responses"]["NotFoundError"];
+                /** @description GitHub App authentication or installation lookup unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
             };
         };
         post?: never;
