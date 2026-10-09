@@ -1,6 +1,8 @@
 # Wuling-DevOps
 
-武陵DevOps（玩终末地的都懂）
+## 已归档
+
+由于技术债务过多，需要重新开发，将移动到[新仓库](https://github.com/wuling-dev/wuling)
 
 ## 🚀快速开始
 
